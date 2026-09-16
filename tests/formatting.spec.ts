@@ -1,0 +1,344 @@
+import { expect, test, type Locator, type Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
+
+const errors = new WeakMap<Page, string[]>();
+test.beforeEach(({ page }) => { errors.set(page, []); page.on('pageerror', error => errors.get(page)!.push(error.message)); });
+test.afterEach(({ page }) => { expect(errors.get(page)).toEqual([]); });
+
+async function selectAll(editor: Locator) {
+  await editor.focus();
+  await editor.press('Meta+a');
+}
+async function rows(page: Page, kind: 'notes' | 'tasks') {
+  return (await (await page.request.get('/api/export')).json())[kind] as { id: number; content: string; parent_id: number | null; source_task_id?: number }[];
+}
+
+for (const kind of ['notes', 'tasks'] as const) {
+  test(`formatting shortcuts render and persist as Markdown in ${kind}`, async ({ page }) => {
+    await page.goto('/');
+    const composer = page.getByRole('textbox', { name: kind === 'notes' ? 'New journal bullet' : 'New to-do', exact: true });
+    const formats = [
+      ['bold', 'Meta+b', 'strong', '**'],
+      ['italic', 'Meta+i', 'em', '*'],
+      ['underline', 'Meta+u', 'u', '++'],
+      ['strike', 'Meta+Shift+x', 's', '~~'],
+      ['code', 'Meta+Shift+c', 'code', '`'],
+    ];
+    for (const [name, shortcut, tag, delimiter] of formats) {
+      const text = `${kind} ${name}`;
+      await composer.fill(text);
+      await selectAll(composer);
+      await composer.press(shortcut);
+      await expect(composer.locator(tag)).toHaveText(text);
+      if (tag === 'code') {
+        await expect(composer.locator('code')).toHaveCSS('color', 'rgb(82, 99, 95)');
+        await expect(composer.locator('code')).toHaveCSS('font-family', /monospace/);
+      }
+      await composer.press('Enter');
+      await expect(composer).toHaveText('');
+      await expect(page.getByRole('group', { name: text, exact: true }).locator(tag)).toHaveText(text);
+      expect((await rows(page, kind)).some(row => row.content === `${delimiter}${text}${delimiter}`)).toBe(true);
+    }
+    // Formatting can be toggled before typing, and Tab still nests a formatted bullet.
+    await composer.press('Tab');
+    await expect(composer.locator('xpath=ancestor::li[1]')).toHaveAttribute('data-depth', '1');
+    await composer.press('Meta+b');
+    await composer.pressSequentially(`${kind} nested bold`);
+    await expect(composer.locator('strong')).toHaveText(`${kind} nested bold`);
+    await composer.press('Enter');
+    await expect(composer).toHaveText('');
+    await page.reload();
+    const child = page.getByRole('group', { name: `${kind} nested bold`, exact: true });
+    await expect(child).toBeHidden();
+    await page.getByRole('button', { name: `Expand ${kind} code`, exact: true }).click();
+    await expect(child.locator('strong')).toHaveText(`${kind} nested bold`);
+    await expect(child.locator('xpath=ancestor::li[1]')).toHaveAttribute('data-depth', '1');
+    if (kind === 'tasks') {
+      await page.getByRole('button', { name: 'Complete tasks nested bold', exact: true }).click();
+      await expect(page.getByRole('group', { name: 'finished tasks code', exact: true }).locator('code')).toHaveText('tasks code');
+      await expect(page.getByRole('group', { name: 'finished tasks nested bold', exact: true }).locator('strong')).toHaveText('tasks nested bold');
+      expect((await rows(page, 'notes')).some(row => row.content === 'finished **tasks nested bold**')).toBe(true);
+    }
+    await expect(page.locator('[style]')).toHaveCount(0);
+  });
+}
+
+test('link shortcut requires selected text and uses only a URL field', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { value: {
+    readText: async () => { throw new DOMException('Denied', 'NotAllowedError'); },
+  } }));
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
+  await expect(composer).toBeFocused();
+  await composer.press('Meta+k');
+  const dialog = page.getByRole('dialog', { name: 'Link', exact: true });
+  await expect(dialog).toBeHidden();
+  await composer.fill('Project notes');
+  await composer.press('ArrowRight');
+  await composer.press('Meta+k');
+  await expect(dialog).toBeHidden();
+  await selectAll(composer); await composer.press('Meta+b'); await composer.press('Meta+k');
+  const field = dialog.getByRole('textbox', { name: 'Link URL' });
+  await expect(field).toBeFocused();
+  await expect(dialog.getByRole('textbox')).toHaveCount(1);
+  await expect(dialog.getByRole('button')).toHaveCount(0);
+  await expect(dialog).toHaveCSS('opacity', '1');
+  expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations).toEqual([]);
+  await field.fill('example.com/project'); await field.press('Enter');
+  await expect(dialog).toBeHidden();
+  await expect(composer.locator('a strong, strong a')).toHaveText('Project notes');
+  await composer.press('Enter');
+  const preview = page.getByRole('group', { name: 'Project notes', exact: true });
+  await expect(preview.getByRole('link')).toHaveAttribute('href', 'https://example.com/project');
+  const stored = (await rows(page, 'notes')).find(row => row.content.includes('example.com/project'))!;
+  expect(stored.content).toContain('**');
+  await page.reload();
+  await preview.focus(); await preview.press('Enter');
+  const editor = page.getByRole('textbox', { name: 'Edit note', exact: true });
+  await selectAll(editor); await editor.press('Meta+k');
+  await expect(field).toHaveValue('https://example.com/project');
+  await field.fill('javascript:alert(1)'); await field.press('Enter');
+  await expect(dialog).toBeVisible();
+  expect(await field.evaluate((el: HTMLInputElement) => el.validity.valid)).toBe(false);
+  await field.fill('https://example.com/revised'); await field.press('Enter');
+  await expect(dialog).toBeHidden();
+  await expect(editor.getByRole('link')).toHaveAttribute('href', 'https://example.com/revised');
+  // Link labels are edited directly in the document, with their other marks intact.
+  await selectAll(editor); await editor.pressSequentially('Updated project notes');
+  await expect(editor.getByRole('link')).toHaveText('Updated project notes');
+  await expect(editor.locator('strong')).toHaveText('Updated project notes');
+  await selectAll(editor); await editor.press('Meta+k');
+  await field.fill(''); await field.press('Enter');
+  await expect(dialog).toBeHidden();
+  await expect(editor.getByRole('link')).toHaveCount(0);
+  await expect(editor.locator('strong')).toHaveText('Updated project notes');
+  await editor.press('Enter');
+  await expect(page.getByRole('group', { name: 'Updated project notes', exact: true })).toBeVisible();
+  expect((await rows(page, 'notes')).find(row => row.id === stored.id)!.content).toBe('**Updated project notes**');
+});
+
+test('link field prefills clipboard URLs and never overwrites typing', async ({ page }) => {
+  await page.addInitScript(() => {
+    let call = 0;
+    Object.defineProperty(navigator, 'clipboard', { value: { readText: () => {
+      call++;
+      if (call === 1) return Promise.resolve('https://example.com/copied');
+      if (call === 2) return Promise.resolve('copied text that is not a URL');
+      return new Promise<string>(resolve => { (window as unknown as { resolveClipboard: (value: string) => void }).resolveClipboard = resolve; });
+    } } });
+  });
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'New to-do', exact: true });
+  await composer.fill('Clipboard link'); await selectAll(composer); await composer.press('Meta+k');
+  const dialog = page.getByRole('dialog', { name: 'Link', exact: true });
+  const field = dialog.getByRole('textbox', { name: 'Link URL' });
+  await expect(field).toHaveValue('https://example.com/copied');
+  await field.press('Enter'); await expect(dialog).toBeHidden();
+  await expect(composer.getByRole('link')).toHaveAttribute('href', 'https://example.com/copied');
+  // Ordinary clipboard text leaves the existing link available for editing.
+  await selectAll(composer); await composer.press('Meta+k');
+  await expect(field).toHaveValue('https://example.com/copied');
+  await field.press('Escape'); await expect(dialog).toBeHidden();
+  await selectAll(composer); await composer.press('Meta+k');
+  await field.fill('https://example.com/typed');
+  await page.evaluate(() => (window as unknown as { resolveClipboard: (value: string) => void }).resolveClipboard('https://example.com/late'));
+  await expect(field).toHaveValue('https://example.com/typed');
+  await field.press('Enter'); await expect(dialog).toBeHidden();
+  await expect(composer.getByRole('link')).toHaveAttribute('href', 'https://example.com/typed');
+  await composer.press('Enter');
+  await expect(page.getByRole('group', { name: 'Clipboard link', exact: true })).toBeVisible();
+  expect((await rows(page, 'tasks')).some(row => row.content === '[Clipboard link](https://example.com/typed)')).toBe(true);
+});
+
+test('undo, redo, clear formatting and literal code backticks survive reload', async ({ page }) => {
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
+  await composer.fill('Reversible formatting');
+  await selectAll(composer); await composer.press('Meta+b');
+  await expect(composer.locator('strong')).toHaveCount(1);
+  await composer.press('Meta+z');
+  await expect(composer.locator('strong')).toHaveCount(0);
+  await composer.press('Meta+Shift+z');
+  await expect(composer.locator('strong')).toHaveCount(1);
+  await composer.press('Meta+Backslash');
+  await expect(composer.locator('strong')).toHaveCount(0);
+  await composer.fill('`a` + ``b`` <tag>');
+  await selectAll(composer); await composer.press('Meta+Shift+c');
+  await composer.press('Enter');
+  const preview = page.getByRole('group', { name: '`a` + ``b`` <tag>', exact: true });
+  await expect(preview.locator('code')).toHaveText('`a` + ``b`` <tag>');
+  expect((await rows(page, 'notes')).some(row => row.content === '``` `a` + ``b`` <tag> ```')).toBe(true);
+  await page.reload();
+  await expect(preview.locator('code')).toHaveText('`a` + ``b`` <tag>');
+  await preview.click();
+  await expect(page.getByRole('textbox', { name: 'Edit note' }).locator('code')).toHaveText('`a` + ``b`` <tag>');
+});
+
+test('plain text and safe pasted formatting retain content through editing and reload', async ({ page }) => {
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
+  const literal = 'Use <JIRA link>, <b>literal tag</b>, &amp;, **literal stars**, ++plain plus++, ~~plain tildes~~';
+  await composer.fill(literal);
+  await composer.press('Enter');
+  const preview = page.getByRole('group', { name: literal, exact: true });
+  await expect(preview).toBeVisible();
+  await page.reload();
+  await expect(preview).toHaveText(literal);
+  await expect(preview.locator('strong, u, s')).toHaveCount(0);
+  await preview.click();
+  await expect(page.getByRole('textbox', { name: 'Edit note' })).toHaveText(literal);
+  await page.getByRole('textbox', { name: 'Edit note' }).press('Enter');
+  await composer.focus();
+  await composer.evaluate(element => {
+    const data = new DataTransfer();
+    data.setData('text/html', '<p><strong>Pasted bold</strong> and <em>italic</em> <a href="javascript:alert(1)">unsafe</a> <a href="https://example.com/pasted">safe</a></p>');
+    element.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+  });
+  await expect(composer.locator('strong')).toHaveText('Pasted bold');
+  await expect(composer.getByRole('link', { name: 'unsafe' })).toHaveCount(0);
+  await expect(composer.getByRole('link', { name: 'safe' })).toHaveAttribute('href', 'https://example.com/pasted');
+  await composer.press('Enter');
+  await expect(page.getByRole('group', { name: 'Pasted bold and italic unsafe safe', exact: true }).locator('strong')).toHaveText('Pasted bold');
+  await page.reload();
+  await expect(page.getByRole('group', { name: 'Pasted bold and italic unsafe safe', exact: true }).locator('strong')).toHaveText('Pasted bold');
+  await expect(page.locator('[style]')).toHaveCount(0);
+});
+
+test('Ctrl shortcuts work on Windows and block formatting saves valid Markdown', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'platform', { get: () => 'Win32' }));
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
+  await expect(composer).toBeFocused();
+  await composer.fill('Windows bold');
+  await composer.press('Control+a'); await composer.press('Control+b');
+  await expect(composer.locator('strong')).toHaveText('Windows bold');
+  await composer.press('Control+z'); await expect(composer.locator('strong')).toHaveCount(0);
+  await composer.press('Control+y'); await expect(composer.locator('strong')).toHaveCount(1);
+  await composer.press('Enter');
+  await expect(composer).toHaveText('');
+  await composer.fill('Windows code');
+  await composer.press('Control+a'); await composer.press('Control+Shift+c');
+  await expect(composer.locator('code')).toHaveText('Windows code');
+  await composer.press('Enter');
+  await expect(composer).toHaveText('');
+  await composer.pressSequentially('Small heading');
+  await composer.press('Control+Alt+2');
+  await expect(composer.locator('h2')).toHaveText('Small heading');
+  await composer.press('Enter');
+  await expect(composer).toHaveText('');
+  await composer.pressSequentially('A quoted thought');
+  await composer.press('Control+Shift+b');
+  await expect(composer.locator('blockquote')).toHaveText('A quoted thought');
+  await composer.press('Enter');
+  await expect(composer).toHaveText('');
+  await composer.press('Control+Alt+c');
+  await composer.pressSequentially('first line');
+  await composer.press('Enter');
+  await composer.pressSequentially('```');
+  await composer.press('Enter');
+  await composer.pressSequentially('third line');
+  await expect(composer.locator('pre code')).toHaveText('first line\n```\nthird line');
+  await composer.press('Control+Enter');
+  await expect(composer).toHaveText('');
+  await composer.pressSequentially('Line one');
+  await composer.press('Shift+Enter');
+  await composer.pressSequentially('Line two');
+  await composer.press('Enter');
+  await expect(composer).toHaveText('');
+  const content = (await rows(page, 'notes')).map(row => row.content);
+  expect(content).toContain('**Windows bold**');
+  expect(content).toContain('`Windows code`');
+  expect(content).toContain('## Small heading');
+  expect(content).toContain('> A quoted thought');
+  expect(content).toContain('````\nfirst line\n```\nthird line\n````');
+  expect(content).toContain('Line one\\\nLine two');
+  await page.reload();
+  await expect(page.getByRole('group', { name: 'Small heading', exact: true }).locator('h2')).toHaveText('Small heading');
+  await expect(page.getByRole('group', { name: 'first line ``` third line', exact: true }).locator('pre code')).toHaveText('first line\n```\nthird line');
+});
+
+for (const kind of ['notes', 'tasks'] as const) {
+  test(`Command Shift C formats a mouse selection in saved ${kind}`, async ({ page, request }) => {
+    const journal = await (await request.get('/api/journal')).json();
+    const content = `Select ${kind === 'tasks' ? '**this**' : 'this'} code with the mouse ${kind}`;
+    await request.post(`/api/${kind}`, { data: { date: journal.today, content } });
+    await page.goto('/');
+    const preview = page.getByRole('group', { name: `Select this code with the mouse ${kind}`, exact: true });
+    const points = await preview.evaluate(element => {
+      const at = (offset: number): [Node, number] => {
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const length = node.textContent!.length;
+          if (offset <= length) return [node, offset];
+          offset -= length;
+        }
+        throw new Error('Selection exceeds text length');
+      };
+      const range = document.createRange();
+      range.setStart(...at(7)); range.setEnd(...at(16));
+      const rect = range.getBoundingClientRect();
+      return { x: rect.x, y: rect.y + rect.height / 2, end: rect.right };
+    });
+    // Check both drag directions, including text that already contains a mark.
+    await page.mouse.move(kind === 'tasks' ? points.end : points.x, points.y);
+    await page.mouse.down();
+    await page.mouse.move(kind === 'tasks' ? points.x : points.end, points.y, { steps: 8 });
+    await page.mouse.up();
+    const editor = page.getByRole('textbox', { name: kind === 'notes' ? 'Edit note' : 'Edit to-do', exact: true });
+    await expect(editor).toBeFocused();
+    await page.keyboard.press('Meta+Shift+c');
+    await expect(editor.locator('code')).toHaveText('this code');
+    await editor.press('Enter');
+    await expect(preview.locator('code')).toHaveText('this code');
+    expect((await rows(page, kind)).some(row => row.content === `Select \`this code\` with the mouse ${kind}`)).toBe(true);
+  });
+}
+
+for (const kind of ['notes', 'tasks'] as const) {
+  test(`right-click edits link text and URL in saved and active ${kind}`, async ({ page, request }) => {
+    await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { value: {
+      readText: async () => { throw new Error('Context editing must not read the clipboard'); },
+    } }));
+    const journal = await (await request.get('/api/journal')).json();
+    const created = await (await request.post(`/api/${kind}`, { data: {
+      date: journal.today, content: `Before [**Original ${kind} link**](https://example.com/original) after`,
+    } })).json();
+    await page.goto('/');
+    const savedLink = page.getByRole('link', { name: `Original ${kind} link`, exact: true });
+    await savedLink.click({ button: 'right' });
+    const dialog = page.getByRole('dialog', { name: 'Link', exact: true });
+    const textField = dialog.getByRole('textbox', { name: 'Link text', exact: true });
+    const urlField = dialog.getByRole('textbox', { name: 'Link URL', exact: true });
+    await expect(dialog.getByRole('textbox')).toHaveCount(2);
+    await expect(dialog.locator('label')).toHaveCount(0);
+    await expect(dialog.getByRole('button')).toHaveCount(0);
+    await expect(dialog.getByRole('textbox').first()).toHaveValue(`Original ${kind} link`);
+    await expect(dialog.getByRole('textbox').last()).toHaveValue('https://example.com/original');
+    await expect(textField).toBeFocused();
+    await textField.fill(`Short ${kind}`);
+    await urlField.fill('https://example.com/changed');
+    await urlField.press('Enter');
+    await expect(dialog).toBeHidden();
+    const editor = page.getByRole('textbox', { name: kind === 'notes' ? 'Edit note' : 'Edit to-do', exact: true });
+    await expect(editor).toBeFocused();
+    await expect(editor.getByRole('link')).toHaveText(`Short ${kind}`);
+    await expect(editor.getByRole('link')).toHaveAttribute('href', 'https://example.com/changed');
+    await expect(editor.locator('strong')).toHaveText(`Short ${kind}`);
+    // Right-click also works without first leaving the editor.
+    await editor.getByRole('link').click({ button: 'right' });
+    await expect(textField).toHaveValue(`Short ${kind}`);
+    await expect(urlField).toHaveValue('https://example.com/changed');
+    await textField.fill(`Final ${kind}`);
+    await textField.press('Enter');
+    await expect(dialog).toBeHidden();
+    await expect(editor.getByRole('link')).toHaveText(`Final ${kind}`);
+    await editor.press('Enter');
+    await expect(page.getByRole('group', { name: `Before Final ${kind} after`, exact: true })).toBeVisible();
+    const content = (await rows(page, kind)).find(row => row.id === created.id)!.content;
+    expect(content).toContain(`Final ${kind}`);
+    expect(content).toContain('**');
+    expect(content).toContain('(https://example.com/changed)');
+    await page.reload();
+    await expect(page.getByRole('link', { name: `Final ${kind}`, exact: true })).toHaveAttribute('href', 'https://example.com/changed');
+  });
+}
