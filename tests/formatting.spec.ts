@@ -14,6 +14,40 @@ async function rows(page: Page, kind: 'notes' | 'tasks') {
 }
 
 for (const kind of ['notes', 'tasks'] as const) {
+  test(`link boundaries follow words while interior spaces stay linked in ${kind}`, async ({ page, request }) => {
+    const { today } = await (await request.get('/api/journal')).json();
+    const url = 'https://example.com/guide';
+    const cases = [
+      { label: 'guide', caret: 5, text: ' next word', linked: 'guide', visible: 'guide next word', markdown: `[guide](${url}) next word` },
+      { label: 'guide', caret: 5, text: 'book notes', linked: 'guidebook', visible: 'guidebook notes', markdown: `[guidebook](${url}) notes` },
+      { label: 'guide', caret: 0, text: 'read ', linked: 'guide', visible: 'read guide', markdown: `read [guide](${url})` },
+      { label: 'guide', caret: 0, text: 'pre', linked: 'preguide', visible: 'preguide', markdown: `[preguide](${url})` },
+      { label: 'guide notes', caret: 6, text: 'project ', linked: 'guide project notes', visible: 'guide project notes', markdown: `[guide project notes](${url})` },
+      { label: 'guide notes', caret: 5, text: ' and more', linked: 'guide and more notes', visible: 'guide and more notes', markdown: `[guide and more notes](${url})` },
+    ];
+    for (const scenario of cases) {
+      const item = await (await request.post(`/api/${kind}`, { data: { date: today, content: `[${scenario.label}](${url})` } })).json();
+      await page.goto('/');
+      const preview = page.locator(`[data-kind="${kind}"][data-item-id="${item.id}"] [role="group"]`).first();
+      await preview.focus(); await preview.press('Enter');
+      const editor = page.getByRole('textbox', { name: kind === 'notes' ? 'Edit note' : 'Edit to-do', exact: true });
+      await expect(editor).toBeFocused();
+      await editor.press('Meta+ArrowUp');
+      for (let i = 0; i < scenario.caret; i++) await editor.press('ArrowRight');
+      await editor.pressSequentially(scenario.text);
+      await expect(editor).toHaveText(scenario.visible);
+      await expect(editor.locator('a')).toHaveText(scenario.linked);
+      await editor.press('Enter');
+      await expect(preview.locator('a')).toHaveText(scenario.linked);
+      await expect.poll(async () => (await rows(page, kind)).find(row => row.id === item.id)?.content).toBe(scenario.markdown);
+      await page.reload();
+      await expect(preview.locator('a')).toHaveText(scenario.linked);
+      await expect(preview.locator('a')).toHaveAttribute('href', url);
+    }
+  });
+}
+
+for (const kind of ['notes', 'tasks'] as const) {
   test(`formatting shortcuts render and persist as Markdown in ${kind}`, async ({ page }) => {
     await page.goto('/');
     const composer = page.getByRole('textbox', { name: kind === 'notes' ? 'New journal bullet' : 'New to-do', exact: true });

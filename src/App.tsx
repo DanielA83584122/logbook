@@ -13,6 +13,7 @@ import { JournalContext, flushDrafts } from './JournalContext';
 import { Modal } from './components/Modal';
 import { SearchModal, type SearchHit } from './components/SearchModal';
 import { documentUndo, recordCompletion } from './documentHistory';
+import { compactViewport, timerOnlyViewport } from './layout';
 
 const JOURNAL_PAGE_SIZE = 14;
 const REPOSITORY_URL = import.meta.env.VITE_REPOSITORY_URL || 'https://github.com/divyavenn/still';
@@ -22,19 +23,23 @@ const Page = styled.div`
   --left-margin: calc((100vw - var(--document-width)) * .54);
   --right-margin: calc(100vw - var(--document-width) - var(--left-margin));
   --page-top: 48px;
+  --todo-heading-height: 44px;
+  @media(pointer: coarse) { --todo-heading-height: 48px; }
   height: 100dvh; overflow-x: hidden; overflow-y: auto; display: flex; flex-direction: column;
-  @media(max-width: 640px) { --document-width: calc(100vw - 64px); --page-top: 176px; }
+  @media ${compactViewport} {
+    --document-width: min(680px, calc(100vw - 48px)); --page-top: 24px;
+    --left-margin: calc((100vw - var(--document-width)) / 2); --right-margin: var(--left-margin);
+  }
 `;
 const TopArea = styled.div`
   display: grid; grid-template-columns: minmax(0, 1fr) 88px; gap: 24px; align-items: start;
-  flex-shrink: 0; padding-right: 12px; margin-bottom: 8px; min-height: 88px;
-  @media(max-width: 640px) { display: contents; }
+  flex-shrink: 0; padding-right: 12px; margin-bottom: 8px; min-height: calc(var(--todo-heading-height) + 88px);
+  @media ${compactViewport} { display: flex; justify-content: center; padding: 0; min-height: 88px; margin-bottom: 20px; }
 `;
 const Toolbar = styled.div`
   display: flex; flex-direction: column; align-items: center; gap: 4px; width: 88px;
-  position: fixed; top: 48px; right: calc(var(--right-margin) + 12px); z-index: 5;
-  @media(max-width: 640px) { position: fixed; top: 64px; right: 24px; }
-  @media(max-width: 300px), (max-height: 230px) { position: fixed; inset: 0; width: auto; justify-content: center; align-items: center; }
+  position: sticky; top: calc(var(--page-top) + var(--todo-heading-height)); margin-top: var(--todo-heading-height); z-index: 5;
+  @media ${compactViewport} { position: static; margin-top: 0; }
 `;
 const TimerButton = styled.button`
   ${press}; height: 72px; width: 72px; flex-shrink: 0; border: 0; border-radius: 50%; background: var(--timer); color: var(--timer-ink);
@@ -45,16 +50,11 @@ const TimerButton = styled.button`
   &[aria-pressed='true']:hover { background: var(--timer-running-hover); }
   &[aria-pressed='true']::before { border-color: var(--timer-running-ring); }
   font-size: 13px; font-variant-numeric: tabular-nums;
-  @media(max-width: 300px), (max-height: 230px) {
-    width: min(96px, calc(100vw - 40px), calc(100dvh - 40px));
-    height: min(96px, calc(100vw - 40px), calc(100dvh - 40px));
-  }
 `;
 const PageControls = styled.div`
   position: fixed; top: 20px; right: 24px; z-index: 6;
   display: flex; align-items: center; gap: 0;
-  @media(max-width: 640px) { top: 12px; right: 12px; }
-  @media(max-width: 300px), (max-height: 230px) { display: none; }
+  @media ${compactViewport} { display: none; }
 `;
 const pageControl = css`
   ${press}; position: relative; display: grid; place-items: center;
@@ -78,17 +78,15 @@ const SoundMenu = styled.div`display: grid; gap: 8px; padding: 4px; button { jus
 const Main = styled.main`
   width: var(--document-width); margin: var(--page-top) var(--right-margin) 0 var(--left-margin);
   flex: 1; display: flex; flex-direction: column; min-height: 0;
-  @media(max-width: 300px), (max-height: 230px) { display: contents; }
-  @media(min-width: 641px) and (max-height: 230px) { > div:first-child { display: contents; } }
 `;
 const LogViewport = styled.div`
   flex: 1; min-height: min(240px, max(64px, calc(100dvh - 160px))); overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain;
   padding: 4px 12px 24px 8px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent;
-  @media(max-width: 640px) { min-height: 0; }
-  @media(max-width: 300px), (max-height: 230px) { display: none; }
+  @media ${compactViewport} { min-height: 0; }
+  @media ${timerOnlyViewport} { display: none; }
 `;
 const Toast = styled.div`position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%); z-index: 30; max-width: min(540px, calc(100% - 32px)); display: flex; align-items: center; gap: 12px; padding: 7px 8px 7px 19px; background: var(--surface); border-radius: 12px; box-shadow: 0 0 0 1px #00000007, 0 4px 24px #31392b19; font-size: 12px;`;
-const ConnectionState = styled.div`padding: 50px 0; display: grid; gap: 16px; justify-items: start; @media(max-width: 300px), (max-height: 230px) { display: none; }`;
+const ConnectionState = styled.div`padding: 50px 0; display: grid; gap: 16px; justify-items: start; @media ${compactViewport} { display: none; }`;
 
 export default function App() {
   const [data, setData] = useState<JournalData | null>(null);

@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import styled from 'styled-components';
 import type { Tag } from '../JournalContext';
+import { compactViewport } from '../layout';
 
 const Backdrop = styled.div<{ $open: boolean }>`
   position: fixed; inset: 0; z-index: 40;
@@ -10,7 +11,7 @@ const Backdrop = styled.div<{ $open: boolean }>`
   pointer-events: none;
   transition: opacity 140ms ease-out, visibility 140ms;
   body:has(dialog[open]) & { display: none; }
-  @media(max-width: 300px), (max-height: 230px) { display: none; }
+  @media ${compactViewport} { display: none; }
 `;
 const Rail = styled.nav<{ $open: boolean }>`
   --sidebar-width: max(var(--left-margin), min(280px, calc(100vw - 48px)));
@@ -18,7 +19,7 @@ const Rail = styled.nav<{ $open: boolean }>`
   width: ${({ $open }) => $open ? 'var(--sidebar-width)' : 'calc(var(--left-margin) / 2)'};
   outline: none;
   body:has(dialog[open]) & { display: none; }
-  @media(max-width: 300px), (max-height: 230px) { display: none; }
+  @media ${compactViewport} { display: none; }
 `;
 const Panel = styled.div<{ $open: boolean }>`
   position: absolute; inset: 0 auto 0 0; width: var(--sidebar-width);

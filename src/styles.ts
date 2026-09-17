@@ -5,10 +5,10 @@ export const GlobalStyle = createGlobalStyle`
   @font-face { font-family: 'Sohne'; src: url('/fonts/sohne-italic.woff2') format('woff2'); font-weight: 400; font-style: italic; font-display: swap; }
   :root {
     color-scheme: light;
-    --paper: #e4e7e9; --ink: #1e1e1e; --muted: #596167; --line: #c6cbc8; --sage: #535d59; --soft: #dbe1e5;
+    --paper: #e4e7e9; --ink: #1c1c1c; --muted: #596167; --line: #c6cbc8; --sage: #535d59; --soft: #dbe1e5;
     --surface: #eef1f3; --field: #f6f8fa; --date-bg: #d2dbe2; --tag-bg: #d7deda; --tag-ink: #4e5b55;
     --code-bg: #dce1dc; --code-ink: #52635f; --quote: #59635e; --selection: #cbd5dc; --focus: #788487;
-    --link: #2167b0; --url: #6d5597; --checkbox: #777b7e; --scrollbar: #b8c0bc;
+    --link: #2169b0; --url: #6d5597; --checkbox: #777b7e; --scrollbar: #b8c0bc;
     --timer-ring: #9da8b0; --timer: #59636b; --timer-hover: #646f77; --timer-ink: #f5f5f3;
     --timer-running: #48675e; --timer-running-hover: #547469; --timer-running-ring: #6b8980;
     --primary: #303b40; --primary-hover: #45535a; --primary-ink: #ffffff;

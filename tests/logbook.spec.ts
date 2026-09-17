@@ -42,7 +42,7 @@ test('untouched bullets and to-dos disappear on blur or Backspace', async ({ pag
   const note = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
   await note.press('Backspace');
   await expect(note).toBeHidden();
-  await page.getByRole('button', { name: 'Add journal bullet', exact: true }).click();
+  await page.getByRole('region', { name: /^Today,/ }).getByRole('button', { name: 'Add journal bullet', exact: true }).click();
   await expect(note).toBeFocused();
   await page.getByRole('button', { name: 'Start focus timer', exact: true }).focus();
   await expect(note).toBeHidden();
@@ -61,7 +61,7 @@ test('untouched bullets and to-dos disappear on blur or Backspace', async ({ pag
 });
 
 test('session times edit inline without exposing or changing the date', async ({ page, request }) => {
-  const { today } = await (await request.get('/api/journal')).json();
+  const today = '2026-09-02'; // A past day keeps manual sessions valid at any test run time.
   await request.post('/api/sessions', { data: { started_at: new Date(`${today}T10:15:00`).toISOString(), duration_seconds: 1500 } });
   await page.goto('/');
   await page.getByRole('button', { name: `Focus sessions for ${today}` }).click();
@@ -116,6 +116,7 @@ for (const kind of ['notes', 'tasks'] as const) {
     await expect(page.getByRole('group', { name: `Folded grandchild ${kind}`, exact: true })).toBeHidden();
     await childRow.click();
     const editor = page.getByRole('textbox', { name: kind === 'notes' ? 'Edit note' : 'Edit to-do', exact: true });
+    await expect(editor).toBeFocused();
     await editor.fill(`Saved child ${kind}`);
     await page.getByRole('button', { name: `Collapse Fold ${kind}`, exact: true }).click();
     await expect(expand).toHaveAttribute('aria-expanded', 'false');
@@ -147,6 +148,10 @@ for (const kind of ['notes', 'tasks'] as const) {
       await expect(composer).toHaveText('');
       const row = page.getByRole('group', { name: `Nested ${kind} level ${level}`, exact: true });
       await expect(row.locator('xpath=ancestor::li[1]')).toHaveAttribute('data-depth', String(level));
+      if (level) {
+        const parent = page.getByRole('group', { name: `Nested ${kind} level ${level - 1}`, exact: true });
+        expect((await row.boundingBox())!.x - (await parent.boundingBox())!.x).toBe(kind === 'notes' ? 32 : 28);
+      }
     }
     const deepest = page.getByRole('group', { name: `Nested ${kind} level 4`, exact: true });
     await deepest.click();
@@ -221,7 +226,7 @@ test('write, autosave, complete a to-do, use the timer, and edit sessions', asyn
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('button', { name: /Edit duration of session/ })).toHaveCount(1);
   await dialog.getByRole('button', { name: /Edit duration of session/ }).click();
-  await dialog.getByLabel('Start time').fill('07:00');
+  await dialog.getByLabel('Start time').fill('00:00');
   await dialog.getByLabel('Duration', { exact: true }).fill('30s');
   await dialog.getByLabel('Duration', { exact: true }).press('Enter');
   await expect(dialog.getByRole('button', { name: /Edit duration of session/ })).toHaveText('30s');

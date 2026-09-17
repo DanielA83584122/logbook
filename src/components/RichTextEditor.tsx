@@ -2,6 +2,7 @@ import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'reac
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import { Markdown } from '@tiptap/markdown';
 import type { Mark, Node as DocumentNode } from '@tiptap/pm/model';
+import { TextSelection } from '@tiptap/pm/state';
 import styled from 'styled-components';
 import { formattingExtensions, documentWithTags, serializeBullet, richTextStyles, safeHref } from '../markdown';
 import { Field } from '../styles';
@@ -97,6 +98,8 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
   const urlEdited = useRef(false);
   const urlField = useRef<HTMLInputElement>(null);
   const previousSelectAll = useRef(false);
+  const linkPrefix = useRef<{ from: number; to: number; mark: Mark; doc: DocumentNode } | null>(null);
+  const linkReplacement = useRef<{ to: number; mark: Mark; doc: DocumentNode } | null>(null);
   const editor: Editor | null = useEditor({
     extensions: [...formattingExtensions(), Markdown, TagDecorations],
     content: documentWithTags(value, bulletTags), injectCSS: false, immediatelyRender: true,
@@ -118,12 +121,67 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
         },
       },
       handleTextInput(view, from, to, text) {
-        if (from === to || view.composing) return false;
+        if (view.composing) return false;
+        if (from === to) {
+          const { state } = view;
+          const replacement = linkReplacement.current;
+          linkReplacement.current = null;
+          // Replacing a selected linked label is one edit, including spaces.
+          // Keep its URL until the user moves the caret or leaves the editor.
+          if (replacement?.doc === state.doc && replacement.to === from) {
+            const tr = state.tr.insertText(text, from, to).addMark(from, from + text.length, replacement.mark);
+            tr.setSelection(TextSelection.create(tr.doc, from + text.length));
+            linkReplacement.current = { ...replacement, to: from + text.length, doc: tr.doc };
+            view.dispatch(tr.scrollIntoView());
+            return true;
+          }
+          const at = state.doc.resolve(from);
+          const before = at.nodeBefore, after = at.nodeAfter;
+          const left = before?.isText ? before.marks.find(mark => mark.type.name === 'link') : undefined;
+          const right = after?.isText ? after.marks.find(mark => mark.type.name === 'link') : undefined;
+          const marks = state.storedMarks ?? at.marks();
+          const previous = linkPrefix.current;
+          linkPrefix.current = null;
+          const prefix = previous?.doc === state.doc && previous.to === from && right?.eq(previous.mark) ? previous : null;
+          if (marks.some(mark => mark.type.name === 'code') || left && right && left.eq(right) && !prefix) return false;
+          if (!left && !right && !marks.some(mark => mark.type.name === 'link')) return false;
+
+          // Link marks are inclusive in Tiptap. At an edge, only the attached
+          // word should inherit the URL; a separating space stays plain.
+          const tr = state.tr.insertText(text, from, to);
+          tr.removeMark(from, from + text.length, state.schema.marks.link);
+          if (prefix || right && !/^\s/u.test(after?.text ?? '')) {
+            const mark = prefix?.mark ?? right!;
+            const spaces = [...text.matchAll(/\s/gu)];
+            const split = spaces.length ? from + spaces.at(-1)!.index! + 1 : from;
+            const start = prefix?.from ?? from;
+            // A prefix initially belongs to the same word. If a space is
+            // subsequently typed, detach that prefix from the original link.
+            if (spaces.length) tr.removeMark(start, split, state.schema.marks.link);
+            if (split < from + text.length) {
+              tr.addMark(split, from + text.length, mark);
+              linkPrefix.current = { from: spaces.length ? split : start, to: from + text.length, mark, doc: tr.doc };
+            }
+          } else if (left && !/\s$/u.test(before?.text ?? '')) {
+            const space = text.search(/\s/u);
+            const end = from + (space < 0 ? text.length : space);
+            if (end > from) tr.addMark(from, end, left);
+          }
+          tr.setSelection(TextSelection.create(tr.doc, from + text.length)).setStoredMarks(null);
+          view.dispatch(tr.scrollIntoView());
+          return true;
+        }
+        linkPrefix.current = null;
+        linkReplacement.current = null;
         // Replacing a whole linked label (including Select All) keeps its URL
         // and shared formatting, just like editing characters inside the link.
         const commonMarks = sharedMarks(view.state.doc, from, to);
-        if (!commonMarks.some(mark => mark.type.name === 'link')) return false;
-        view.dispatch(view.state.tr.deleteSelection().ensureMarks(commonMarks).insertText(text).scrollIntoView());
+        const link = commonMarks.find(mark => mark.type.name === 'link');
+        if (!link) return false;
+        const tr = view.state.tr.deleteSelection().ensureMarks(commonMarks).insertText(text);
+        // Select All can include the paragraph itself, so use the mapped caret.
+        linkReplacement.current = { to: tr.selection.from, mark: link, doc: tr.doc };
+        view.dispatch(tr.scrollIntoView());
         return true;
       },
       handleKeyDown(view, event) {
@@ -156,7 +214,7 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
           const last = $from.depth > 0 && $from.after(1) === view.state.doc.content.size;
           const direction = event.key === 'ArrowUp' && first && view.endOfTextblock('up') ? 'up'
             : event.key === 'ArrowDown' && last && view.endOfTextblock('down') ? 'down'
-            : event.key === 'Backspace' && from === 1 && view.state.doc.textContent ? 'backspace'
+            : event.key === 'Backspace' && from === 1 ? 'backspace'
             : event.key === 'Delete' && from === view.state.doc.content.size - 1 ? 'delete' : null;
           if (direction && callbacks.current.onBoundary) { event.preventDefault(); callbacks.current.onBoundary(direction); return true; }
         }
@@ -187,8 +245,12 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
       updateSuggestion(editor);
       commitTypedTags(editor);
     },
-    onSelectionUpdate({ editor }) { updateSuggestion(editor); },
-    onBlur({ event }) { previousSelectAll.current = false; suggest(null); if (!linkOpen.current) { if (editor) commitTypedTags(editor, true); callbacks.current.onBlur(event); } },
+    onSelectionUpdate({ editor }) {
+      if (!editor.state.selection.empty || editor.state.selection.from !== linkPrefix.current?.to) linkPrefix.current = null;
+      if (!editor.state.selection.empty || editor.state.selection.from !== linkReplacement.current?.to) linkReplacement.current = null;
+      updateSuggestion(editor);
+    },
+    onBlur({ event }) { linkPrefix.current = null; linkReplacement.current = null; previousSelectAll.current = false; suggest(null); if (!linkOpen.current) { if (editor) commitTypedTags(editor, true); callbacks.current.onBlur(event); } },
   });
 
   const updateSuggestion = (current: Editor) => {

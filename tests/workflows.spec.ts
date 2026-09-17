@@ -113,7 +113,7 @@ test('medium layouts stay readable and selected tags stay in the hover sidebar',
 });
 
 test('short sessions have exact totals, inline editing, add/delete controls, and no labels', async ({ page, request }) => {
-  const { today } = await (await request.get('/api/journal')).json();
+  const today = '2026-09-03'; // Use a past day so sessions cannot accidentally be in the future.
   await request.post('/api/sessions', { data: { started_at: new Date(`${today}T05:00:13`).toISOString(), duration_seconds: 30 } });
   await page.goto('/');
   await page.getByRole('button', { name: `Focus sessions for ${today}`, exact: true }).click();

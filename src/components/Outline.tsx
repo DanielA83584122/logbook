@@ -19,9 +19,9 @@ const OutlineSurface = styled.div`
 `;
 const List = styled.ul`list-style: none; padding: 0; margin: 0;`;
 const Children = styled(List)<{ $task: boolean }>`
-  padding-left: ${({ $task }) => $task ? '28px' : '20px'};
-  @media(max-width: 900px) { padding-left: ${({ $task }) => $task ? '20px' : '12px'}; }
-  @media(max-width: 440px) { padding-left: ${({ $task }) => $task ? '12px' : '8px'}; }
+  padding-left: ${({ $task }) => $task ? '28px' : '32px'};
+  @media(max-width: 900px) { padding-left: ${({ $task }) => $task ? '20px' : '24px'}; }
+  @media(max-width: 440px) { padding-left: 16px; }
 `;
 const popOut = keyframes`0% { opacity: 1; transform: scale(1); } 40% { opacity: .8; transform: scale(1.012); } 100% { opacity: 0; transform: translateY(-3px) scale(.985); }`;
 const slideIn = keyframes`from { opacity: 0; transform: translateY(-7px); } to { opacity: 1; transform: translateY(0); }`;
@@ -63,8 +63,9 @@ const Branch = styled.div<{ $open: boolean }>`
     > ${Children} > ${Item} > ${Row} { transition: none; }
   }
 `;
-const ComposerTarget = styled.button`
+const ComposerTarget = styled.button<{ $floating: boolean }>`
   display: block; width: 100%; min-height: var(--bullet-row-height); padding: 0; border: 0; background: transparent;
+  ${({ $floating }) => $floating && 'position: absolute; top: 100%; height: 20px; min-height: 20px;'}
   @media(pointer: coarse) { min-height: 44px; }
 `;
 const Marker = styled.span<{ $task: boolean }>`
@@ -187,6 +188,7 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
   const pendingLinkEdit = useRef(false);
   const queue = useRef<Promise<number | null>>(Promise.resolve(null));
   const lock = useRef(false);
+  const restoringFocus = useRef(false);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -198,16 +200,17 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
     if (mounted.current) setDraft(next);
   }, [key]);
   const focus = () => requestAnimationFrame(() => {
-    if (selectionActive.current) return;
+    if (selectionActive.current) { restoringFocus.current = false; return; }
     input.current?.focus({ preventScroll: false }, pendingSelection.current);
     if (pendingLinkEdit.current) input.current?.editLink();
     pendingSelection.current = undefined;
     pendingLinkEdit.current = false;
+    restoringFocus.current = false;
   });
   const dismissEmptyDraft = () => {
     if (lock.current) return false;
     const snapshot = current.current;
-    if (snapshot.mode !== 'new' || snapshot.id !== null || snapshot.content.trim() || snapshot.tags.length) return false;
+    if (snapshot.id !== null || snapshot.content.trim() || snapshot.tags.length) return false;
     persist(blank(records.current, false));
     return true;
   };
@@ -221,7 +224,7 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
         if (!snapshot.content.trim() && !snapshot.tags.length) {
           if (snapshot.id) {
             await editDocument([{ kind, id: snapshot.id, delete: true }], snapshot.clientId);
-            persist({ ...current.current, id: null, saved: '', savedTags: [], clientId: crypto.randomUUID() });
+            persist({ ...current.current, id: null, saved: '', savedTags: [] });
             await refresh();
           }
           setFailed(false); return null;
@@ -282,7 +285,7 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
 
   const run = async (action: () => Promise<void>, restoreFocus = true) => {
     if (lock.current) return;
-    lock.current = true; setBusy(true);
+    lock.current = true; restoringFocus.current = restoreFocus; setBusy(true);
     try { await action(); }
     catch (error) { notify(errorMessage(error)); }
     finally { lock.current = false; if (mounted.current) { setBusy(false); if (restoreFocus) focus(); } }
@@ -341,6 +344,11 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
     } finally { setCompleting(null); }
   }, false);
 
+  const beginBullet = () => void run(async () => {
+    await save();
+    persist(blank(records.current, true));
+  });
+
   useEffect(() => {
     const navigate = (event: Event) => {
       const detail = (event as CustomEvent<{ key: string; id: number | null; end: boolean }>).detail;
@@ -351,8 +359,10 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
         select(row, undefined, undefined, { anchor: offset, head: offset });
       } else if (detail.id === null) { persist(blank(records.current, true)); focus(); }
     };
+    const append = (event: Event) => { if ((event as CustomEvent<string>).detail === key) beginBullet(); };
     window.addEventListener('still-navigate-bullet', navigate);
-    return () => window.removeEventListener('still-navigate-bullet', navigate);
+    window.addEventListener('still-new-bullet', append);
+    return () => { window.removeEventListener('still-navigate-bullet', navigate); window.removeEventListener('still-new-bullet', append); };
   });
   const boundary = (direction: 'up' | 'down' | 'backspace' | 'delete') => void run(async () => {
     const currentElement = surface.current?.querySelector('[contenteditable]')?.closest('li');
@@ -360,7 +370,12 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
     const index = elements.findIndex(el => el === currentElement);
     const backwards = direction === 'up' || direction === 'backspace';
     const adjacent = elements[index + (backwards ? -1 : 1)];
-    if (!adjacent) return;
+    if (!adjacent || (direction === 'backspace' || direction === 'delete') && adjacent.dataset.outlineKey !== key) {
+      if (direction === 'backspace' && !current.current.content.trim() && !current.current.tags.length) {
+        await save(); persist(blank(records.current, false));
+      }
+      return;
+    }
     const id = adjacent.dataset.itemId === 'draft' ? null : Number(adjacent.dataset.itemId);
     if (direction === 'up' || direction === 'down') {
       await save();
@@ -373,7 +388,12 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
     if (!other) return;
     const snapshot = current.current;
     const ownId = await save();
-    if (!ownId) return;
+    if (!ownId) {
+      persist({ ...blank([], true), mode: 'edit', id: other.id, content: other.content, saved: other.content,
+        tags: other.tags ?? [], savedTags: other.tags ?? [], parentId: other.parent_id });
+      pendingSelection.current = { anchor: markdownText(other.content).length, head: markdownText(other.content).length };
+      return;
+    }
     const first = backwards ? other : { ...other, id: ownId, content: snapshot.content, tags: snapshot.tags };
     const second = backwards ? { ...other, id: ownId, content: snapshot.content, tags: snapshot.tags } : other;
     const content = mergeMarkdown(first.content, second.content), tags = [...new Set([...first.tags ?? [], ...second.tags ?? []])];
@@ -492,9 +512,15 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
       onBoundary={boundary} onSelectDocument={selectDocument}
       onChange={(content, tags) => persist({ ...current.current, content, tags: [...new Set([...tags, ...(current.current.hiddenTag && (content.trim() || tags.length) ? [current.current.hiddenTag] : [])])] })}
       onBlur={event => {
+        const blurredClientId = draft.clientId;
+        // Enter and nesting can remount the editor before its next-frame focus.
+        // That structural blur must not dismiss the draft being moved.
+        if (restoringFocus.current || current.current.clientId !== blurredClientId) return;
         if (event?.relatedTarget instanceof Node && surface.current?.contains(event.relatedTarget)) { void save().catch(() => {}); return; }
         if (!lock.current && dismissEmptyDraft()) return;
-        void save().catch(() => {});
+        void save().then(() => {
+          if (!restoringFocus.current && current.current.clientId === blurredClientId && !surface.current?.contains(document.activeElement)) dismissEmptyDraft();
+        }).catch(() => {});
       }}
       onKeyDown={event => {
         if (event.isComposing || busy) return;
@@ -571,8 +597,8 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
     if (event.key === 'Backspace' || event.key === 'Delete') { event.preventDefault(); replaceDocument(); }
     else if (!mod && event.key.length === 1) { event.preventDefault(); replaceDocument(event.key); }
     else if (event.key === 'Escape') { event.preventDefault(); selectionActive.current = false; setSelectedAll(false); window.getSelection()?.removeAllRanges(); focus(); }
-  }}>{renderChildren(null, 0)}{composer && !draft.active && <ComposerTarget type="button"
+  }}>{renderChildren(null, 0)}{(!draft.active || draft.mode === 'edit') && <ComposerTarget type="button" $floating={kind === 'notes' && !composer}
     aria-label={kind === 'tasks' ? 'Add to-do' : 'Add journal bullet'}
-    onClick={() => { persist(blank(records.current, true)); focus(); }} />}
+    onClick={beginBullet} />}
     <VisuallyHidden>Tab indents. Shift Tab outdents. Enter adds a sibling. Shift Enter adds a line break. Select all twice selects this list.</VisuallyHidden></OutlineSurface>;
 }
