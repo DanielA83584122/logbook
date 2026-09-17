@@ -9,13 +9,13 @@ import { RichTextEditor, type RichTextHandle, type TextOffsets } from './RichTex
 import { documentUndo, editDocument, recordEdit } from '../documentHistory';
 
 const MAX_LEVELS = 8;
-const OutlineSurface = styled.div<{ $task: boolean }>`
+const OutlineSurface = styled.div`
   position: relative; outline: none;
-  --bullet-size: ${({ $task }) => $task ? '18px' : '16px'};
-  --bullet-row-height: ${({ $task }) => $task ? '40px' : '32px'};
-  --bullet-padding: ${({ $task }) => $task ? '7px 0' : '5px 0'};
-  --bullet-line-height: 1.3;
-  --bullet-paragraph-gap: .25em;
+  --bullet-size: 15px;
+  --bullet-row-height: 28px;
+  --bullet-padding: 4px 0;
+  --bullet-line-height: 1.2;
+  --bullet-paragraph-gap: .2em;
 `;
 const List = styled.ul`list-style: none; padding: 0; margin: 0;`;
 const Children = styled(List)<{ $task: boolean }>`
@@ -64,7 +64,7 @@ const Branch = styled.div<{ $open: boolean }>`
   }
 `;
 const ComposerTarget = styled.button`
-  display: block; width: 100%; min-height: 40px; padding: 0; border: 0; background: transparent;
+  display: block; width: 100%; min-height: var(--bullet-row-height); padding: 0; border: 0; background: transparent;
   @media(pointer: coarse) { min-height: 44px; }
 `;
 const Marker = styled.span<{ $task: boolean }>`
@@ -80,7 +80,7 @@ const DraftItem = styled(Item)<{ $emptyTask: boolean }>`
   `}
 `;
 const Checkbox = styled.button<{ $checked?: boolean }>`
-  position: relative; display: flex; align-items: center; justify-content: center; width: 40px; min-width: 40px; height: 40px;
+  position: relative; display: flex; align-items: center; justify-content: center; width: 40px; min-width: 40px; height: var(--bullet-row-height);
   border: 0; padding: 0; background: transparent; border-radius: 3px;
   &::before { content: ''; width: 14px; height: 14px; border: 1.5px solid var(--checkbox); border-radius: 2px; }
   &:hover::before { background: var(--soft); }
@@ -551,7 +551,7 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
     </Item>);
     return parentId === null ? <List>{content}</List> : <Children $task={kind === 'tasks'}>{content}</Children>;
   };
-  return <OutlineSurface ref={surface} $task={kind === 'tasks'} tabIndex={-1} onPointerDown={() => { selectionActive.current = false; setSelectedAll(false); }} onCopyCapture={event => {
+  return <OutlineSurface ref={surface} tabIndex={-1} onPointerDown={() => { selectionActive.current = false; setSelectedAll(false); }} onCopyCapture={event => {
     if (!selectionActive.current) return;
     event.preventDefault(); event.stopPropagation(); copyDocument(event.clipboardData);
   }} onCutCapture={event => { if (selectionActive.current) { event.preventDefault(); event.stopPropagation(); copyDocument(event.clipboardData); replaceDocument(); } }}
