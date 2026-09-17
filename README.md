@@ -13,7 +13,7 @@ npm install
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173**. Vite proxies `/api` to FastAPI on port 8000. On another machine, use any Python 3.12+ executable to create `.venv`.
+Open **http://127.0.0.1:5173**. Vite proxies `/api`, `/journal.md`, `/llms.txt`, `/openapi.json`, and `/docs` to FastAPI on port 8000. On another machine, use any Python 3.12+ executable to create `.venv`.
 
 For one server serving the production build:
 
@@ -125,10 +125,26 @@ This is a single-user application bound to `127.0.0.1`, without authentication. 
 
 ## Agent API
 
+Agents can start at **`/llms.txt`**, then read **`/api/agent/journal`** for structured JSON or **`/journal.md`** for Markdown. These representations work without JavaScript and include collapsed descendants and history beyond the browser's loaded page. The HTML advertises them through alternate links, and the production server adds HTTP `Link` headers. A no-JavaScript browser gets a link to the Markdown document. No controls are added to the interactive interface.
+
+```sh
+curl 'http://127.0.0.1:8000/api/agent/journal?start=2026-09-01&end=2026-09-17&timezone=America%2FLos_Angeles'
+curl 'http://127.0.0.1:8000/journal.md?tag=work&q=design&timezone=America%2FLos_Angeles'
+```
+
+The versioned JSON includes ISO dates, original `content_markdown`, separate tags, explicit `{text, url}` links, stable `(kind, id)` keys, ordered `children`, task completion relationships, and numeric focus durations in seconds. Completed and running durations are separate. Sessions crossing midnight expose both their whole duration and `seconds_on_day`, so daily sums do not double-count time.
+
+Date ranges are inclusive and default to the last 30 calendar days, including zero days. `limit` paginates 1–100 dates; follow `next_url` until null. `tag` and `q` filter bullets while retaining matching descendants and ancestor context (`matched: false`); focus totals remain unfiltered because sessions are not assigned to tags. `tasks=visible|all|none` selects the current task snapshot independently of the note date range. The next-page URL omits tasks to prevent repetition. Each response uses a read-only SQLite snapshot and includes only saved data. `/llms.txt` documents the full contract and query semantics; OpenAPI defines the recursive response schema.
+
+The production homepage supports the same queries with `Accept: application/json` or `Accept: text/markdown`. On Vite, use the explicit representation URLs. Agents need network access to the running site, just like a browser; no data is sent to an external LLM service.
+
 Interactive OpenAPI docs: **http://127.0.0.1:8000/docs**. Machine-readable schema: `/openapi.json`.
 
 | Endpoint | Purpose |
 | --- | --- |
+| `GET /llms.txt` | Agent discovery guide, data contract, and query examples |
+| `GET /api/agent/journal` | Read-only, versioned document tree with date/text/tag filters, links, tasks, focus totals, and session allocations |
+| `GET /journal.md` | The same filtered document as Markdown, without JavaScript |
 | `GET /api/tags` | Existing tag names and counts from notes and open tasks |
 | `GET /api/search?q=...&offset=0&limit=40` | Archive-wide search with paginated results and parent/date references |
 | `POST /api/document/edit` | Atomic batch of create/edit/delete/move operations, returning an undo operation ID |

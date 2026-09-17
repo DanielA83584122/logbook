@@ -7,8 +7,8 @@ import re
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -18,6 +18,7 @@ from .stats import EMPTY_TOTALS, daily_totals, parse, slices, stamp
 from .hierarchy import descendants, next_position, place, remove_preserving_children, validate_parent
 from .tasks import visible_tasks
 from .history import snapshot, record, restore
+from .agent import AgentJournal, AgentQuery, DISCOVERY_LINKS, READ_HEADERS, markdown_journal, read_journal
 
 
 def utcnow():
@@ -588,14 +589,76 @@ def export():
                    for table in ("days", "notes", "tasks", "sessions")}}
 
 
+def agent_snapshot(query):
+    zone = get_zone(query.timezone)
+    now = utcnow()
+    try:
+        end = query.end or now.astimezone(zone).date()
+        start = query.start or end - timedelta(days=29)
+        if not 1 <= (end - start).days + 1 <= 3660:
+            raise ValueError('Choose an ordered date range of at most 3,660 days.')
+        query = query.model_copy(update={
+            'start': start, 'end': end, 'tag': normalize_tag(query.tag) if query.tag else None,
+            'q': query.q.strip() if query.q else None,
+        })
+        with connection() as db:
+            db.execute('BEGIN')
+            return read_journal(db, query, zone, now)
+    except (ValueError, OverflowError) as error:
+        raise HTTPException(422, str(error))
+
+
+class AgentJSONResponse(JSONResponse):
+    def render(self, content):
+        return json.dumps(content, ensure_ascii=False, allow_nan=False, indent=2).encode('utf-8')
+
+
+class MarkdownResponse(PlainTextResponse):
+    media_type = 'text/markdown'
+
+
+@app.get('/api/agent/journal', response_model=AgentJournal, response_class=AgentJSONResponse, tags=['Agent reads'],
+         summary='Read a queryable logbook snapshot, including collapsed descendants',
+         description='Read-only, versioned JSON. All calendar days are included; q/tag filter bullets, never focus totals. '
+                     'Times are UTC and durations are seconds. next_url preserves filters and omits repeated to-dos.')
+def agent_journal(query: Annotated[AgentQuery, Query()], response: Response):
+    response.headers.update(READ_HEADERS)
+    return agent_snapshot(query)
+
+
+@app.get('/journal.md', response_class=MarkdownResponse, tags=['Agent reads'], summary='Read the same query as Markdown, without JavaScript')
+def agent_markdown(query: Annotated[AgentQuery, Query()]):
+    return MarkdownResponse(markdown_journal(agent_snapshot(query)), headers=READ_HEADERS)
+
+
+@app.get('/llms.txt', response_class=PlainTextResponse, tags=['Agent reads'], summary='Discover the logbook data contract and query examples')
+def agent_guide():
+    return PlainTextResponse(Path(__file__).with_name('agent-guide.md').read_text(), headers={'Link': DISCOVERY_LINKS})
+
+
 dist = Path(os.environ.get('STILL_DIST_PATH', Path(__file__).resolve().parents[1] / 'dist'))
 if dist.is_dir():
     app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
     app.mount("/fonts", StaticFiles(directory=dist / "fonts"), name="fonts")
 
     @app.get("/")
-    def index():
-        return FileResponse(dist / "index.html")
+    def index(request: Request, query: Annotated[AgentQuery, Query()]):
+        choices = []
+        for index, part in enumerate(request.headers.get('accept', 'text/html').split(',')):
+            media, *parameters = part.strip().lower().split(';')
+            try:
+                quality = next((float(p.strip()[2:]) for p in parameters if p.strip().startswith('q=')), 1)
+            except ValueError:
+                continue
+            if quality > 0 and media in ('text/html', '*/*', 'application/json', 'text/markdown'):
+                choices.append((quality, -index, media))
+        preferred = max(choices)[2] if choices else 'text/html'
+        headers = {**READ_HEADERS, 'Vary': 'Accept'}
+        if preferred == 'text/markdown':
+            return MarkdownResponse(markdown_journal(agent_snapshot(query)), headers=headers)
+        if preferred == 'application/json':
+            return AgentJSONResponse(agent_snapshot(query).model_dump(mode='json'), headers=headers)
+        return FileResponse(dist / "index.html", headers=headers)
 
     @app.get("/favicon.svg")
     def favicon():
