@@ -11,8 +11,9 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
+from psycopg.types.json import Jsonb
 
-from .db import connection, ensure_day, initialize
+from .db import SCHEMA_VERSION, close_pool, connection, ensure_day, initialize
 from .tags import bullet_dict, list_tags, matching_ids, normalize_tag, normalize_tags
 from .stats import EMPTY_TOTALS, daily_totals, parse, slices, stamp
 from .hierarchy import descendants, next_position, place, remove_preserving_children, validate_parent
@@ -35,7 +36,10 @@ def get_zone(name):
 @asynccontextmanager
 async def lifespan(_app):
     initialize()
-    yield
+    try:
+        yield
+    finally:
+        close_pool()
 
 
 app = FastAPI(title="Still Logbook API", version="1.0.0", lifespan=lifespan,
@@ -91,7 +95,7 @@ class StopTimer(BaseModel):
 
 def required(db, table, item_id):
     # table names are internal constants, never supplied by the caller.
-    row = db.execute(f"SELECT * FROM {table} WHERE id = ?", (item_id,)).fetchone()
+    row = db.execute(f"SELECT * FROM {table} WHERE id = %s", (item_id,)).fetchone()
     if not row:
         raise HTTPException(404, "That item no longer exists.")
     return bullet_dict(row)
@@ -106,7 +110,7 @@ def session_dict(row, now=None):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "storage": "sqlite"}
+    return {"status": "ok", "storage": "postgresql"}
 
 
 @app.get("/api/journal")
@@ -120,22 +124,22 @@ def journal(timezone: str = "UTC", before: CalendarDate | None = None, tag: str 
     now = utcnow()
     today = now.astimezone(zone).date().isoformat()
     with connection() as db:
-        ensure_day(db, today, stamp(now))
         sessions = [dict(r) for r in db.execute("SELECT * FROM sessions ORDER BY started_at")]
         totals = daily_totals(sessions, zone, now)
         dates = {r["date"] for r in db.execute("SELECT date FROM days")}
         dates.update(totals)
+        dates.add(today)
         note_ids = matching_ids(db, "notes", tag) if tag else None
         task_ids = set(matching_ids(db, "tasks", tag)) if tag else None
         if note_ids is not None:
-            dates = {r[0] for r in db.execute("SELECT DISTINCT days.date FROM days JOIN notes ON notes.day_id = days.id WHERE notes.id IN (SELECT value FROM json_each(?))", (json.dumps(note_ids),))}
+            dates = {r["date"] for r in db.execute("SELECT DISTINCT days.date FROM days JOIN notes ON notes.day_id = days.id WHERE notes.id = ANY(%s)", (note_ids,))}
         if tag:
             dates.add(today)
         ordered = sorted((d for d in dates if (before is None or d < before.isoformat()) and (on is None or d == str(on))), reverse=True)
         selected = ordered[:limit]
         notes = {}
         if selected:
-            placeholders = ",".join("?" for _ in selected)
+            placeholders = ",".join("%s" for _ in selected)
             for row in db.execute(f"SELECT notes.*, days.date FROM notes JOIN days ON notes.day_id = days.id WHERE days.date IN ({placeholders}) ORDER BY notes.position, notes.id", selected):
                 if note_ids is None or row["id"] in note_ids:
                     notes.setdefault(row["date"], []).append(bullet_dict(row))
@@ -174,15 +178,14 @@ class DocumentBatch(BaseModel):
 @app.post('/api/document/edit')
 def edit_document(body: DocumentBatch, timezone: str = "UTC"):
     now = stamp(utcnow())
-    with connection() as db:
-        db.execute('BEGIN IMMEDIATE')
+    with connection(write=True) as db:
         before = snapshot(db)
         results = []
         for change in body.changes:
             table = change.kind
             item_id = change.id
             if item_id is None and change.client_id:
-                existing = db.execute(f'SELECT id FROM {table} WHERE client_id = ?', (change.client_id,)).fetchone()
+                existing = db.execute(f'SELECT id FROM {table} WHERE client_id = %s', (change.client_id,)).fetchone()
                 item_id = existing['id'] if existing else None
             row = required(db, table, item_id) if item_id else None
             if table == 'tasks' and row and row['completed_at']:
@@ -199,23 +202,24 @@ def edit_document(body: DocumentBatch, timezone: str = "UTC"):
                     value = Content(content=change.content, tags=change.tags if change.tags is not None else (row or {}).get('tags', []))
                 except ValueError as error:
                     raise HTTPException(422, str(error))
-                encoded = json.dumps(value.tags or [])
+                encoded = value.tags or []
                 if row:
                     if row['content'] != value.content or row['tags'] != (value.tags or []):
-                        db.execute(f'UPDATE {table} SET content = ?, tags = ? WHERE id = ?', (value.content, encoded, item_id))
+                        db.execute(f'UPDATE {table} SET content = %s, tags = %s WHERE id = %s', (value.content, Jsonb(encoded), item_id))
                         if table == 'notes':
-                            db.execute('UPDATE notes SET updated_at = ? WHERE id = ?', (now, item_id))
+                            db.execute('UPDATE notes SET updated_at = %s WHERE id = %s', (now, item_id))
                 else:
                     if table == 'notes':
                         if not change.date:
                             raise HTTPException(422, 'A note needs a date.')
                         day_id = ensure_day(db, change.date, now)
                         validate_parent(db, table, change.parent_id, day_id)
-                        cursor = db.execute('INSERT INTO notes(day_id, content, tags, created_at, updated_at, parent_id, client_id) VALUES (?, ?, ?, ?, ?, ?, ?)', (day_id, value.content, encoded, now, now, change.parent_id, change.client_id))
+                        cursor = db.execute('INSERT INTO notes(day_id, content, tags, created_at, updated_at, parent_id, client_id) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id', (day_id, value.content, Jsonb(encoded), now, now, change.parent_id, change.client_id))
+                        item_id = cursor.fetchone()['id']
                     else:
                         validate_parent(db, table, change.parent_id)
-                        cursor = db.execute('INSERT INTO tasks(content, tags, created_at, parent_id, client_id) VALUES (?, ?, ?, ?, ?)', (value.content, encoded, now, change.parent_id, change.client_id))
-                    item_id = cursor.lastrowid
+                        cursor = db.execute('INSERT INTO tasks(content, tags, created_at, parent_id, client_id) VALUES (%s, %s, %s, %s, %s) RETURNING id', (value.content, Jsonb(encoded), now, change.parent_id, change.client_id))
+                        item_id = cursor.fetchone()['id']
                     place(db, table, item_id, change.parent_id, change.after_id)
             results.append(required(db, table, item_id))
         parents = [before['tasks'][change.id]['parent_id'] for change in body.changes if change.kind == 'tasks' and change.id in before['tasks']]
@@ -233,8 +237,7 @@ class HistoryBatch(HistoryDirection):
 
 @app.post('/api/document/history')
 def restore_document_batch(body: HistoryBatch):
-    with connection() as db:
-        db.execute('BEGIN IMMEDIATE')
+    with connection(write=True) as db:
         for operation in body.operations:
             restore(db, operation, body.redo)
     return {'restored': True}
@@ -242,8 +245,7 @@ def restore_document_batch(body: HistoryBatch):
 
 @app.post('/api/document/history/{operation_id}')
 def restore_document(operation_id: str, body: HistoryDirection):
-    with connection() as db:
-        db.execute('BEGIN IMMEDIATE')
+    with connection(write=True) as db:
         restore(db, operation_id, body.redo)
     return {'restored': True}
 
@@ -263,73 +265,68 @@ def search(q: Annotated[str, Query(min_length=1, max_length=200)],
 @app.post("/api/notes", status_code=201)
 def add_note(body: NewNote):
     now = stamp(utcnow())
-    with connection() as db:
-        db.execute("BEGIN IMMEDIATE")
+    with connection(write=True) as db:
         if body.client_id:
-            existing = db.execute("SELECT notes.*, days.date FROM notes JOIN days ON days.id = notes.day_id WHERE client_id = ?", (body.client_id,)).fetchone()
+            existing = db.execute("SELECT notes.*, days.date FROM notes JOIN days ON days.id = notes.day_id WHERE client_id = %s", (body.client_id,)).fetchone()
             if existing:
-                tags = body.tags if body.tags is not None else json.loads(existing["tags"])
-                db.execute("UPDATE notes SET content = ?, tags = ?, updated_at = ? WHERE id = ?", (body.content, json.dumps(tags), now, existing["id"]))
+                tags = body.tags if body.tags is not None else existing["tags"]
+                db.execute("UPDATE notes SET content = %s, tags = %s, updated_at = %s WHERE id = %s", (body.content, Jsonb(tags), now, existing["id"]))
                 return {**bullet_dict(existing), "content": body.content, "tags": tags, "updated_at": now}
         day_id = ensure_day(db, body.date, now)
         validate_parent(db, "notes", body.parent_id, day_id)
-        cursor = db.execute("INSERT INTO notes(day_id, content, created_at, updated_at, client_id, parent_id) VALUES (?, ?, ?, ?, ?, ?)",
-                            (day_id, body.content, now, now, body.client_id, body.parent_id))
-        db.execute("UPDATE notes SET tags = ? WHERE id = ?", (json.dumps(body.tags or []), cursor.lastrowid))
-        place(db, "notes", cursor.lastrowid, body.parent_id, body.after_id)
-        return {**required(db, "notes", cursor.lastrowid), "date": str(body.date)}
+        cursor = db.execute("INSERT INTO notes(day_id, content, created_at, updated_at, client_id, parent_id, tags) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                            (day_id, body.content, now, now, body.client_id, body.parent_id, Jsonb(body.tags or [])))
+        item_id = cursor.fetchone()['id']
+        place(db, "notes", item_id, body.parent_id, body.after_id)
+        return {**required(db, "notes", item_id), "date": str(body.date)}
 
 
 @app.patch("/api/notes/{note_id}")
 def edit_note(note_id: int, body: Content):
-    with connection() as db:
+    with connection(write=True) as db:
         note = required(db, "notes", note_id)
         tags = body.tags if body.tags is not None else note["tags"]
-        db.execute("UPDATE notes SET content = ?, tags = ?, updated_at = ? WHERE id = ?", (body.content, json.dumps(tags), stamp(utcnow()), note_id))
+        db.execute("UPDATE notes SET content = %s, tags = %s, updated_at = %s WHERE id = %s", (body.content, Jsonb(tags), stamp(utcnow()), note_id))
         return required(db, "notes", note_id)
 
 
 @app.delete("/api/notes/{note_id}", status_code=204)
 def delete_note(note_id: int):
-    with connection() as db:
-        db.execute("BEGIN IMMEDIATE")
+    with connection(write=True) as db:
         required(db, "notes", note_id)
         remove_preserving_children(db, "notes", note_id)
 
 
 @app.patch("/api/notes/{note_id}/location")
 def move_note(note_id: int, body: BulletLocation):
-    with connection() as db:
-        db.execute("BEGIN IMMEDIATE")
+    with connection(write=True) as db:
         place(db, "notes", note_id, body.parent_id, body.after_id)
-        db.execute("UPDATE notes SET updated_at = ? WHERE id = ?", (stamp(utcnow()), note_id))
+        db.execute("UPDATE notes SET updated_at = %s WHERE id = %s", (stamp(utcnow()), note_id))
         return required(db, "notes", note_id)
 
 
 @app.post("/api/tasks", status_code=201)
 def add_task(body: NewBullet):
-    with connection() as db:
-        db.execute("BEGIN IMMEDIATE")
+    with connection(write=True) as db:
         if body.client_id:
-            existing = db.execute("SELECT * FROM tasks WHERE client_id = ?", (body.client_id,)).fetchone()
+            existing = db.execute("SELECT * FROM tasks WHERE client_id = %s", (body.client_id,)).fetchone()
             if existing:
                 if existing["completed_at"]:
                     raise HTTPException(409, "That to-do has already been completed.")
-                tags = body.tags if body.tags is not None else json.loads(existing["tags"])
-                db.execute("UPDATE tasks SET content = ?, tags = ? WHERE id = ?", (body.content, json.dumps(tags), existing["id"]))
+                tags = body.tags if body.tags is not None else existing["tags"]
+                db.execute("UPDATE tasks SET content = %s, tags = %s WHERE id = %s", (body.content, Jsonb(tags), existing["id"]))
                 return {**bullet_dict(existing), "content": body.content, "tags": tags}
         validate_parent(db, "tasks", body.parent_id)
-        cursor = db.execute("INSERT INTO tasks(content, created_at, parent_id, client_id) VALUES (?, ?, ?, ?)",
-                            (body.content, stamp(utcnow()), body.parent_id, body.client_id))
-        db.execute("UPDATE tasks SET tags = ? WHERE id = ?", (json.dumps(body.tags or []), cursor.lastrowid))
-        place(db, "tasks", cursor.lastrowid, body.parent_id, body.after_id)
-        return required(db, "tasks", cursor.lastrowid)
+        cursor = db.execute("INSERT INTO tasks(content, created_at, parent_id, client_id, tags) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                            (body.content, stamp(utcnow()), body.parent_id, body.client_id, Jsonb(body.tags or [])))
+        item_id = cursor.fetchone()['id']
+        place(db, "tasks", item_id, body.parent_id, body.after_id)
+        return required(db, "tasks", item_id)
 
 
 @app.patch("/api/tasks/{task_id}/location")
 def move_task(task_id: int, body: BulletLocation, timezone: str = "UTC"):
-    with connection() as db:
-        db.execute("BEGIN IMMEDIATE")
+    with connection(write=True) as db:
         task = required(db, "tasks", task_id)
         if task["completed_at"]:
             raise HTTPException(409, "Cannot move a completed to-do.")
@@ -340,12 +337,12 @@ def move_task(task_id: int, body: BulletLocation, timezone: str = "UTC"):
 
 @app.patch("/api/tasks/{task_id}")
 def edit_task(task_id: int, body: Content):
-    with connection() as db:
+    with connection(write=True) as db:
         task = required(db, "tasks", task_id)
         if task["completed_at"]:
             raise HTTPException(409, "That task is already in your journal.")
         tags = body.tags if body.tags is not None else task["tags"]
-        db.execute("UPDATE tasks SET content = ?, tags = ? WHERE id = ?", (body.content, json.dumps(tags), task_id))
+        db.execute("UPDATE tasks SET content = %s, tags = %s WHERE id = %s", (body.content, Jsonb(tags), task_id))
         return required(db, "tasks", task_id)
 
 
@@ -361,13 +358,14 @@ def finish_task(db, task, now, day_id):
     child = task
     while child and not child['completed_at']:
         position = next_position(db, "notes", None, day_id)
-        cursor = db.execute("INSERT INTO notes(day_id, content, created_at, updated_at, source_task_id, parent_id, position) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        cursor = db.execute("INSERT INTO notes(day_id, content, created_at, updated_at, source_task_id, parent_id, position) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
                            (day_id, completed_content(child["content"]), stamp(now), stamp(now), child["id"], None, position))
-        db.execute("UPDATE notes SET tags = ? WHERE id = ?", (json.dumps(child["tags"]), cursor.lastrowid))
+        item_id = cursor.fetchone()['id']
+        db.execute("UPDATE notes SET tags = %s WHERE id = %s", (Jsonb(child["tags"]), item_id))
         completed_ids.append(child['id'])
-        db.execute("UPDATE tasks SET completed_at = ? WHERE id = ?", (stamp(now), child["id"]))
+        db.execute("UPDATE tasks SET completed_at = %s WHERE id = %s", (stamp(now), child["id"]))
         parent = child['parent_id']
-        if parent is None or db.execute('SELECT 1 FROM tasks WHERE parent_id = ? AND completed_at IS NULL', (parent,)).fetchone():
+        if parent is None or db.execute('SELECT 1 FROM tasks WHERE parent_id = %s AND completed_at IS NULL', (parent,)).fetchone():
             break
         child = required(db, 'tasks', parent)
     return completed_ids
@@ -378,8 +376,8 @@ def finish_ready_parents(db, parents, zone, now):
     for parent in set(parents):
         if parent is None:
             continue
-        row = db.execute('SELECT * FROM tasks WHERE id = ?', (parent,)).fetchone()
-        children = db.execute('SELECT completed_at FROM tasks WHERE parent_id = ?', (parent,)).fetchall()
+        row = db.execute('SELECT * FROM tasks WHERE id = %s', (parent,)).fetchone()
+        children = db.execute('SELECT completed_at FROM tasks WHERE parent_id = %s', (parent,)).fetchall()
         if row and not row['completed_at'] and children and all(child['completed_at'] for child in children):
             day_id = ensure_day(db, now.astimezone(zone).date(), stamp(now))
             completed.extend(finish_task(db, bullet_dict(row), now, day_id))
@@ -390,12 +388,11 @@ def finish_ready_parents(db, parents, zone, now):
 def complete_task(task_id: int, timezone: str = "UTC"):
     zone = get_zone(timezone)
     now = utcnow()
-    with connection() as db:
-        db.execute("BEGIN IMMEDIATE")
+    with connection(write=True) as db:
         task = required(db, "tasks", task_id)
         if task["completed_at"]:
             return {"completed": True, "task_ids": [], "completed_at": task['completed_at']}
-        if db.execute('SELECT 1 FROM tasks WHERE parent_id = ? AND completed_at IS NULL', (task_id,)).fetchone():
+        if db.execute('SELECT 1 FROM tasks WHERE parent_id = %s AND completed_at IS NULL', (task_id,)).fetchone():
             raise HTTPException(409, 'Complete the children to finish this parent.')
         day_id = ensure_day(db, now.astimezone(zone).date(), stamp(now))
         completed_ids = finish_task(db, task, now, day_id)
@@ -409,8 +406,7 @@ class ReopenTask(BaseModel):
 
 @app.post('/api/tasks/{task_id}/reopen')
 def reopen_task(task_id: int, body: ReopenTask):
-    with connection() as db:
-        db.execute('BEGIN IMMEDIATE')
+    with connection(write=True) as db:
         before = snapshot(db) if body.record_history else None
         task = required(db, 'tasks', task_id)
         if not task['completed_at']:
@@ -427,22 +423,21 @@ def reopen_task(task_id: int, body: ReopenTask):
                 reopen.append(parent)
             parent = ancestor['parent_id']
         for item_id in reopen:
-            note = db.execute('SELECT * FROM notes WHERE source_task_id = ?', (item_id,)).fetchone()
+            note = db.execute('SELECT * FROM notes WHERE source_task_id = %s', (item_id,)).fetchone()
             if note:
                 # Preserve a journal entry the user has edited since completion.
                 source = required(db, 'tasks', item_id)
-                if note['updated_at'] != note['created_at'] or note['content'] != completed_content(source['content']) or json.loads(note['tags']) != source['tags']:
-                    db.execute('UPDATE notes SET source_task_id = NULL WHERE id = ?', (note['id'],))
+                if note['updated_at'] != note['created_at'] or note['content'] != completed_content(source['content']) or note['tags'] != source['tags']:
+                    db.execute('UPDATE notes SET source_task_id = NULL WHERE id = %s', (note['id'],))
                 else:
                     remove_preserving_children(db, 'notes', note['id'])
-            db.execute('UPDATE tasks SET completed_at = NULL WHERE id = ?', (item_id,))
+            db.execute('UPDATE tasks SET completed_at = NULL WHERE id = %s', (item_id,))
         return {'reopened': reopen, 'operation_id': record(db, before, stamp(utcnow())) if before is not None else None}
 
 
 @app.delete("/api/tasks/{task_id}", status_code=204)
 def delete_task(task_id: int, timezone: str = "UTC"):
-    with connection() as db:
-        db.execute("BEGIN IMMEDIATE")
+    with connection(write=True) as db:
         task = required(db, "tasks", task_id)
         if task["completed_at"]:
             raise HTTPException(409, "Edit the completed note in your journal instead.")
@@ -459,22 +454,21 @@ def timer():
 
 @app.post("/api/timer/start")
 def start_timer():
-    with connection() as db:
-        db.execute("BEGIN IMMEDIATE")
+    with connection(write=True) as db:
         row = db.execute("SELECT * FROM sessions WHERE ended_at IS NULL").fetchone()
         if row:
             return session_dict(row)
-        cursor = db.execute("INSERT INTO sessions(started_at) VALUES (?)", (stamp(utcnow()),))
-        return session_dict(required(db, "sessions", cursor.lastrowid))
+        cursor = db.execute("INSERT INTO sessions(started_at) VALUES (%s) RETURNING id", (stamp(utcnow()),))
+        item_id = cursor.fetchone()['id']
+        return session_dict(required(db, "sessions", item_id))
 
 
 @app.post("/api/timer/stop")
 def stop_timer(body: StopTimer):
-    with connection() as db:
-        db.execute("BEGIN IMMEDIATE")
+    with connection(write=True) as db:
         row = required(db, "sessions", body.session_id)
         if not row["ended_at"]:
-            db.execute("UPDATE sessions SET ended_at = ? WHERE id = ?", (stamp(utcnow()), body.session_id))
+            db.execute("UPDATE sessions SET ended_at = %s WHERE id = %s", (stamp(utcnow()), body.session_id))
         return session_dict(required(db, "sessions", body.session_id))
 
 
@@ -508,32 +502,31 @@ def validate_session(db, body, exclude_id=None):
 
 @app.post("/api/sessions", status_code=201)
 def create_session(body: SessionEdit):
-    with connection() as db:
-        db.execute("BEGIN IMMEDIATE")
+    with connection(write=True) as db:
         start, end = validate_session(db, body)
-        cursor = db.execute("INSERT INTO sessions(started_at, ended_at) VALUES (?, ?)", (start, end))
-        return session_dict(required(db, "sessions", cursor.lastrowid))
+        cursor = db.execute("INSERT INTO sessions(started_at, ended_at) VALUES (%s, %s) RETURNING id", (start, end))
+        item_id = cursor.fetchone()['id']
+        return session_dict(required(db, "sessions", item_id))
 
 
 @app.patch("/api/sessions/{session_id}")
 def edit_session(session_id: int, body: SessionEdit):
-    with connection() as db:
-        db.execute("BEGIN IMMEDIATE")
+    with connection(write=True) as db:
         row = required(db, "sessions", session_id)
         if row["ended_at"] is None:
             raise HTTPException(409, "Stop this session before editing it.")
         start, end = validate_session(db, body, session_id)
-        db.execute("UPDATE sessions SET started_at = ?, ended_at = ? WHERE id = ?", (start, end, session_id))
+        db.execute("UPDATE sessions SET started_at = %s, ended_at = %s WHERE id = %s", (start, end, session_id))
         return session_dict(required(db, "sessions", session_id))
 
 
 @app.delete("/api/sessions/{session_id}", status_code=204)
 def delete_session(session_id: int):
-    with connection() as db:
+    with connection(write=True) as db:
         row = required(db, "sessions", session_id)
         if row["ended_at"] is None:
             raise HTTPException(409, "Stop this session before deleting it.")
-        db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        db.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
 
 
 def stats_data(start, end, timezone):
@@ -584,7 +577,7 @@ def daily_stats(start: CalendarDate | None = None, end: CalendarDate | None = No
 @app.get("/api/export")
 def export():
     with connection() as db:
-        return {"schema_version": 6, "content_format": "markdown", "exported_at": stamp(utcnow()),
+        return {"schema_version": SCHEMA_VERSION, "storage": "postgresql", "content_format": "markdown", "exported_at": stamp(utcnow()),
                 **{table: [bullet_dict(r) for r in db.execute(f"SELECT * FROM {table} ORDER BY 1, 2")]
                    for table in ("days", "notes", "tasks", "sessions")}}
 
@@ -602,7 +595,6 @@ def agent_snapshot(query):
             'q': query.q.strip() if query.q else None,
         })
         with connection() as db:
-            db.execute('BEGIN')
             return read_journal(db, query, zone, now)
     except (ValueError, OverflowError) as error:
         raise HTTPException(422, str(error))

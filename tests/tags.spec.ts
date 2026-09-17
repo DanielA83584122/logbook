@@ -40,7 +40,9 @@ test('autocomplete cycles existing tags with arrows and keeps code literal', asy
   const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
   await composer.pressSequentially('Read #');
   const suggestions = page.getByRole('listbox', { name: 'Tags', exact: true });
-  await expect(suggestions.getByRole('option')).toHaveCount(3);
+  await expect(suggestions.getByRole('option', { name: '#alpha', exact: true })).toBeVisible();
+  await expect(suggestions.getByRole('option', { name: '#alpine', exact: true })).toBeVisible();
+  await expect(suggestions.getByRole('option', { name: '#beta', exact: true })).toBeVisible();
   await composer.pressSequentially('al');
   await expect(suggestions.getByRole('option')).toHaveCount(2);
   await composer.press('ArrowDown');

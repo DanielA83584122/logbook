@@ -1,108 +1,129 @@
-"""SQLite storage. All related writes use a single transaction."""
+"""PostgreSQL storage for Neon. Runtime access never falls back to SQLite."""
 import os
-import sqlite3
 from contextlib import contextmanager
+from datetime import date, datetime
 from pathlib import Path
+from threading import Lock
 
-from .tags import initialize_tags
-from .history import SCHEMA as HISTORY_SCHEMA
+import psycopg
+from dotenv import load_dotenv
+from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict
+from psycopg_pool import ConnectionPool
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS days (
-    id INTEGER PRIMARY KEY,
-    date TEXT NOT NULL UNIQUE,
-    created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS tasks (
-    id INTEGER PRIMARY KEY,
-    content TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    completed_at TEXT
-);
-CREATE TABLE IF NOT EXISTS notes (
-    id INTEGER PRIMARY KEY,
-    day_id INTEGER NOT NULL REFERENCES days(id),
-    content TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    source_task_id INTEGER UNIQUE REFERENCES tasks(id),
-    client_id TEXT
-);
-CREATE INDEX IF NOT EXISTS notes_day ON notes(day_id, id);
-CREATE TABLE IF NOT EXISTS sessions (
-    id INTEGER PRIMARY KEY,
-    started_at TEXT NOT NULL,
-    ended_at TEXT,
-    CHECK(ended_at IS NULL OR ended_at >= started_at)
-);
-CREATE UNIQUE INDEX IF NOT EXISTS one_running_session ON sessions((1)) WHERE ended_at IS NULL;
-CREATE INDEX IF NOT EXISTS sessions_start ON sessions(started_at);
-"""
+from .stats import stamp
+
+SCHEMA_VERSION = 7
+WRITE_LOCK = 731746552
+ROOT = Path(__file__).resolve().parents[1]
+_pool = None
+_pool_guard = Lock()
 
 
-def db_path():
-    return Path(os.environ.get("STILL_DB_PATH", Path(__file__).resolve().parents[1] / "data/still.sqlite3"))
+class Database:
+    """Small DB-API facade that keeps qmark calls in focused test assertions usable."""
+    def __init__(self, raw):
+        self.raw = raw
+
+    def execute(self, query, params=None):
+        # Application SQL uses psycopg's native %s placeholders. This is only
+        # compatibility for assertion-only test queries retained from SQLite.
+        if params is not None and '?' in query:
+            query = query.replace('?', '%s')
+        return self.raw.execute(query, params)
+
+    def __getattr__(self, name):
+        return getattr(self.raw, name)
+
+
+def database_url(*, direct=False):
+    load_dotenv(ROOT / '.env', override=False)
+    direct_value = os.environ.get('DATABASE_URL_DIRECT')
+    value = direct_value if direct else os.environ.get('DATABASE_URL')
+    if not value:
+        variable = 'DATABASE_URL_DIRECT' if direct else 'DATABASE_URL'
+        raise RuntimeError(f'Set {variable} in .env to your Neon PostgreSQL connection string.')
+    try:
+        info = conninfo_to_dict(value)
+    except psycopg.ProgrammingError:
+        raise RuntimeError('DATABASE_URL must be a valid PostgreSQL connection string.') from None
+    if not info.get('dbname'):
+        raise RuntimeError('DATABASE_URL must include a database name.')
+    hosts = info.get('host', '').split(',')
+    if any(host.endswith('.neon.tech') for host in hosts) and info.get('sslmode') not in ('require', 'verify-ca', 'verify-full'):
+        raise RuntimeError('Neon connections require sslmode=require or stronger.')
+    if direct and any('-pooler.' in host for host in hosts):
+        raise RuntimeError("DATABASE_URL_DIRECT must use Neon’s non-pooled endpoint for migrations.")
+    return value
+
+
+def wire_row(cursor):
+    """Keep the existing API's ISO date/time strings while storing native PG types."""
+    names = [column.name for column in cursor.description] if cursor.description else []
+    def row(values):
+        return {name: stamp(value) if isinstance(value, datetime) else value.isoformat() if isinstance(value, date) else value
+                for name, value in zip(names, values)}
+    return row
+
+
+def pool():
+    global _pool
+    with _pool_guard:
+        if _pool is None:
+            _pool = ConnectionPool(database_url(), min_size=0, max_size=5, timeout=30, max_idle=60,
+                                   kwargs={'row_factory': wire_row, 'prepare_threshold': None, 'connect_timeout': 15,
+                                           'application_name': 'still-logbook'}, open=False)
+            _pool.open()
+        return _pool
+
+
+def close_pool():
+    global _pool
+    with _pool_guard:
+        if _pool is not None:
+            _pool.close()
+            _pool = None
+
+
+def reset_database(url):
+    """Test helper: recreate only a deliberately named local PostgreSQL database."""
+    info = conninfo_to_dict(url)
+    if info.get('host', 'localhost') not in {'localhost', '127.0.0.1', '::1'} or not info.get('dbname', '').startswith('still_'):
+        raise RuntimeError('Test database reset only permits local databases named still_*.')
+    close_pool()
+    with psycopg.connect(url, autocommit=True, prepare_threshold=None) as db:
+        db.execute('DROP SCHEMA IF EXISTS public CASCADE')
+        db.execute('CREATE SCHEMA public')
 
 
 @contextmanager
-def connection():
-    path = db_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(path, timeout=10)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA foreign_keys = ON")
-    try:
-        with db:
-            yield db
-    finally:
-        db.close()
+def connection(*, write=False):
+    with pool().connection() as db:
+        with db.transaction():
+            if write:
+                # Serialize the personal journal's compound edits across workers.
+                # Transaction-scoped locks work with Neon's transaction pooler.
+                db.execute('SELECT pg_advisory_xact_lock(%s)', (WRITE_LOCK,))
+            else:
+                db.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+            yield Database(db)
 
 
-def initialize():
-    with connection() as db:
-        db.execute("PRAGMA journal_mode = WAL")
-        db.executescript(SCHEMA)
-        # Version 2 adds retry-safe note creation to existing logbooks.
-        columns = {r["name"] for r in db.execute("PRAGMA table_info(notes)")}
-        if "client_id" not in columns:
-            db.execute("ALTER TABLE notes ADD COLUMN client_id TEXT")
-        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS notes_client_id ON notes(client_id)")
-        # Version 3 stores each bullet's parent and order; existing rows stay at the root.
-        for table in ("tasks", "notes"):
-            columns = {r["name"] for r in db.execute(f"PRAGMA table_info({table})")}
-            if "parent_id" not in columns:
-                db.execute(f"ALTER TABLE {table} ADD COLUMN parent_id INTEGER REFERENCES {table}(id) ON DELETE SET NULL")
-            if "position" not in columns:
-                db.execute(f"ALTER TABLE {table} ADD COLUMN position INTEGER NOT NULL DEFAULT 0 CHECK(position >= 0)")
-                db.execute(f"UPDATE {table} SET position = id")
-            db.execute(f"CREATE INDEX IF NOT EXISTS {table}_parent_order ON {table}(parent_id, position, id)")
-            for event in ("INSERT", "UPDATE OF parent_id"):
-                name = "insert" if event == "INSERT" else "update"
-                db.execute(f"""CREATE TRIGGER IF NOT EXISTS {table}_no_cycle_{name}
-                    BEFORE {event} ON {table} WHEN NEW.parent_id IS NOT NULL BEGIN
-                    SELECT RAISE(ABORT, 'Bullet hierarchy cannot contain a cycle') WHERE NEW.id IN (
-                        WITH RECURSIVE ancestors(id, parent_id) AS (
-                            SELECT id, parent_id FROM {table} WHERE id = NEW.parent_id
-                            UNION ALL SELECT p.id, p.parent_id FROM {table} p JOIN ancestors a ON p.id = a.parent_id
-                        ) SELECT id FROM ancestors
-                    ) OR NEW.id = NEW.parent_id;
-                    END""")
-        task_columns = {r["name"] for r in db.execute("PRAGMA table_info(tasks)")}
-        if "client_id" not in task_columns:
-            db.execute("ALTER TABLE tasks ADD COLUMN client_id TEXT")
-        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS tasks_client_id ON tasks(client_id)")
-        for event in ("INSERT", "UPDATE OF parent_id, day_id"):
-            name = "insert" if event == "INSERT" else "update"
-            db.execute(f"""CREATE TRIGGER IF NOT EXISTS notes_same_day_{name} BEFORE {event} ON notes BEGIN
-                SELECT RAISE(ABORT, 'Nested notes must belong to the same day') WHERE
-                    EXISTS (SELECT 1 FROM notes WHERE id = NEW.parent_id AND day_id != NEW.day_id)
-                    OR EXISTS (SELECT 1 FROM notes WHERE parent_id = NEW.id AND day_id != NEW.day_id);
-                END""")
-        initialize_tags(db)
-        db.executescript(HISTORY_SCHEMA)
-        db.execute('PRAGMA user_version = 6')
+def initialize(url=None):
+    # No session state or session-scoped locks: every migration is one transaction.
+    with psycopg.connect(url or database_url(direct=True), row_factory=wire_row, prepare_threshold=None,
+                         connect_timeout=15, application_name='still-migrate') as db:
+        db.execute('SELECT pg_advisory_xact_lock(%s)', (WRITE_LOCK,))
+        db.execute('''CREATE TABLE IF NOT EXISTS schema_migrations (
+                      version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())''')
+        versions = {row['version'] for row in db.execute('SELECT version FROM schema_migrations')}
+        if versions - {SCHEMA_VERSION}:
+            raise RuntimeError('This database uses a schema version this application does not support.')
+        if SCHEMA_VERSION not in versions:
+            db.execute((Path(__file__).parent / 'migrations' / '007_postgres.sql').read_text())
+            db.execute('INSERT INTO schema_migrations(version) VALUES (%s)', (SCHEMA_VERSION,))
 
 
 def ensure_day(db, day, now):
-    db.execute("INSERT OR IGNORE INTO days(date, created_at) VALUES (?, ?)", (str(day), now))
-    return db.execute("SELECT id FROM days WHERE date = ?", (str(day),)).fetchone()["id"]
+    return db.execute('''INSERT INTO days(date, created_at) VALUES (%s, %s)
+                        ON CONFLICT(date) DO UPDATE SET date = EXCLUDED.date RETURNING id''', (str(day), now)).fetchone()['id']

@@ -30,7 +30,7 @@ Examples (URL-encode query values):
 
 ## Data contract
 
-- `schema_version: 1` identifies the agent response contract, separate from the SQLite schema version.
+- `schema_version: 1` identifies the agent response contract, separate from the PostgreSQL schema version.
 - `generated_at` is the UTC instant used for all running durations in this response. Each response reads a consistent database snapshot; edits between page requests can change subsequent pages.
 - `(kind, id)` is a stable unique bullet key. `parent_id` references the same kind; `children` is the ordered tree, with every collapsed descendant available. `position` orders siblings.
 - `content_markdown` is the original stored text, including formatting and Markdown links. `tags` is a separate array and is never inserted into this content.

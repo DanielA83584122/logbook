@@ -5,17 +5,17 @@ MAX_LEVELS = 8
 
 
 def get_row(db, table, item_id):
-    row = db.execute(f"SELECT * FROM {table} WHERE id = ?", (item_id,)).fetchone()
+    row = db.execute(f"SELECT * FROM {table} WHERE id = %s", (item_id,)).fetchone()
     if row is None:
         raise HTTPException(404, "Bullet not found.")
     return dict(row)
 
 
 def siblings(db, table, parent_id, day_id=None):
-    query = f"SELECT * FROM {table} WHERE parent_id IS ?"
+    query = f"SELECT * FROM {table} WHERE parent_id IS NOT DISTINCT FROM %s"
     params = [parent_id]
     if table == "notes":
-        query += " AND day_id = ?"
+        query += " AND day_id = %s"
         params.append(day_id)
     return [dict(r) for r in db.execute(query + " ORDER BY position, id", params)]
 
@@ -66,12 +66,12 @@ def place(db, table, item_id, parent_id, after_id=None):
         raise HTTPException(409, "The preceding bullet must be a sibling.")
     index = ids.index(after_id) + 1 if after_id is not None else len(ids)
     ids.insert(index, item_id)
-    db.execute(f"UPDATE {table} SET parent_id = ? WHERE id = ?", (parent_id, item_id))
+    db.execute(f"UPDATE {table} SET parent_id = %s WHERE id = %s", (parent_id, item_id))
     for position, sibling_id in enumerate(ids):
-        db.execute(f"UPDATE {table} SET position = ? WHERE id = ?", (position, sibling_id))
+        db.execute(f"UPDATE {table} SET position = %s WHERE id = %s", (position, sibling_id))
     if row["parent_id"] != parent_id:
         for position, sibling in enumerate(siblings(db, table, row["parent_id"], day_id)):
-            db.execute(f"UPDATE {table} SET position = ? WHERE id = ?", (position, sibling["id"]))
+            db.execute(f"UPDATE {table} SET position = %s WHERE id = %s", (position, sibling["id"]))
 
 
 def remove_preserving_children(db, table, item_id):
@@ -82,9 +82,9 @@ def remove_preserving_children(db, table, item_id):
     for sibling in group:
         ordered.extend(children if sibling["id"] == item_id else [sibling])
     for position, sibling in enumerate(ordered):
-        db.execute(f"UPDATE {table} SET parent_id = ?, position = ? WHERE id = ?",
+        db.execute(f"UPDATE {table} SET parent_id = %s, position = %s WHERE id = %s",
                    (row["parent_id"], position, sibling["id"]))
-    db.execute(f"DELETE FROM {table} WHERE id = ?", (item_id,))
+    db.execute(f"DELETE FROM {table} WHERE id = %s", (item_id,))
 
 
 def next_position(db, table, parent_id, day_id=None):

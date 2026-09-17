@@ -1,4 +1,4 @@
-import sqlite3
+import psycopg
 
 import pytest
 
@@ -128,33 +128,17 @@ def test_database_constraints_guard_cycles_and_cross_day_links(client):
     parent = create(client, "notes", "Parent")
     child = create(client, "notes", "Child", parent["id"])
     other = create(client, "notes", "Other day", day="2026-09-15")
-    with pytest.raises(sqlite3.IntegrityError), connection() as db:
+    with pytest.raises(psycopg.IntegrityError), connection(write=True) as db:
         db.execute("UPDATE notes SET parent_id = ? WHERE id = ?", (child["id"], parent["id"]))
-    with pytest.raises(sqlite3.IntegrityError), connection() as db:
+    with pytest.raises(psycopg.IntegrityError), connection(write=True) as db:
         db.execute("UPDATE notes SET parent_id = ? WHERE id = ?", (other["id"], child["id"]))
-    with pytest.raises(sqlite3.IntegrityError), connection() as db:
+    with pytest.raises(psycopg.IntegrityError), connection(write=True) as db:
         db.execute("UPDATE notes SET parent_id = 999999 WHERE id = ?", (child["id"],))
 
 
-def test_migration_preserves_existing_content_and_order(tmp_path, monkeypatch):
-    path = tmp_path / "legacy.sqlite3"
-    monkeypatch.setenv("STILL_DB_PATH", str(path))
-    with sqlite3.connect(path) as db:
-        db.executescript("""
-        CREATE TABLE days(id INTEGER PRIMARY KEY, date TEXT UNIQUE, created_at TEXT);
-        CREATE TABLE tasks(id INTEGER PRIMARY KEY, content TEXT, created_at TEXT, completed_at TEXT);
-        CREATE TABLE notes(id INTEGER PRIMARY KEY, day_id INTEGER REFERENCES days(id), content TEXT, created_at TEXT, updated_at TEXT, source_task_id INTEGER REFERENCES tasks(id), client_id TEXT);
-        INSERT INTO days VALUES(1, '2026-09-16', '2026-09-16T12:00:00Z');
-        INSERT INTO tasks VALUES(7, 'Existing to-do', '2026-09-16T12:00:00Z', NULL);
-        INSERT INTO notes VALUES(4, 1, 'First', '2026-09-16T12:00:00Z', '2026-09-16T12:00:00Z', NULL, 'old-retry-id');
-        INSERT INTO notes VALUES(9, 1, 'Second', '2026-09-16T12:00:00Z', '2026-09-16T12:00:00Z', NULL, NULL);
-        PRAGMA user_version = 2;
-        """)
-    initialize(); initialize()
+def test_postgres_schema_migration_is_idempotent(client):
+    from backend.db import SCHEMA_VERSION, initialize
+    initialize()
     with connection() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 6
-        notes = [dict(row) for row in db.execute("SELECT * FROM notes ORDER BY position")]
-        assert [row["content"] for row in notes] == ["First", "Second"]
-        assert all(row["parent_id"] is None for row in notes)
-        assert notes[0]["client_id"] == "old-retry-id"
-        assert db.execute("SELECT content FROM tasks WHERE id = 7").fetchone()[0] == "Existing to-do"
+        assert db.execute('SELECT version FROM schema_migrations').fetchone()['version'] == SCHEMA_VERSION
+        assert db.execute("SELECT to_regclass('public.notes') AS name").fetchone()['name'] == 'notes'

@@ -1,4 +1,5 @@
 import importlib
+import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
@@ -11,10 +12,18 @@ NOW = datetime(2026, 9, 16, 18, tzinfo=timezone.utc)
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("STILL_DB_PATH", str(tmp_path / "test.sqlite3"))
+    # Neon production credentials never enter tests. A local PostgreSQL 17
+    # database is reset per test to exercise the same PostgreSQL dialect.
+    url = os.environ.get('POSTGRES_TEST_URL', 'postgresql://127.0.0.1:55432/still_test')
+    monkeypatch.setenv('DATABASE_URL', url)
+    monkeypatch.setenv('DATABASE_URL_DIRECT', url)
+    from backend.db import close_pool, initialize, reset_database
+    reset_database(url)
+    initialize(url)
     monkeypatch.setattr(module, "utcnow", lambda: NOW)
     with TestClient(module.app) as client:
         yield client
+    close_pool()
 
 
 def add_session(client, start, seconds):
@@ -156,7 +165,8 @@ def test_export_contains_normalized_rows_and_schema_version(client):
     task = client.post("/api/tasks", json={"content": "Read"}).json()
     client.post(f"/api/tasks/{task['id']}/complete")
     data = client.get("/api/export").json()
-    assert data["schema_version"] == 6
+    assert data["schema_version"] == 7
+    assert data["storage"] == "postgresql"
     assert data["notes"][0]["source_task_id"] == data["tasks"][0]["id"]
     assert data["notes"][0]["day_id"] == data["days"][0]["id"]
 
@@ -179,7 +189,7 @@ def test_note_creation_retry_does_not_duplicate(client):
     "## Heading",
     "> Quote",
 ])
-def test_markdown_roundtrips_through_sqlite_and_task_completion(client, content):
+def test_markdown_roundtrips_through_postgres_and_task_completion(client, content):
     from backend.db import connection
     note = client.post("/api/notes", json={"date": "2026-09-16", "content": content}).json()
     task = client.post("/api/tasks", json={"content": content}).json()

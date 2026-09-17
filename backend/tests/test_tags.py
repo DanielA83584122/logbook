@@ -1,17 +1,5 @@
-import json
-
-import pytest
-from fastapi.testclient import TestClient
-
-from backend.app import app
 from backend.db import connection
-
-
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    monkeypatch.setenv('STILL_DB_PATH', str(tmp_path / 'tags.sqlite3'))
-    with TestClient(app) as client:
-        yield client
+from .test_app import client  # noqa: F401
 
 
 def note(client, content, tags=None, **extra):
@@ -26,8 +14,8 @@ def test_tag_arrays_are_separate_from_markdown_and_preserved_on_patch(client):
     with connection() as db:
         stored = db.execute('SELECT content, tags FROM notes WHERE id = ?', (created['id'],)).fetchone()
         assert stored['content'] == '**Ship the PR**'
-        assert json.loads(stored['tags']) == ['work', 'health']
-        assert not db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tags'").fetchone()
+        assert stored['tags'] == ['work', 'health']
+        assert not db.execute("SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'tags'").fetchone()
     edited = client.patch(f"/api/notes/{created['id']}", json={'content': '**Shipped the PR**'}).json()
     assert edited['tags'] == ['work', 'health']
     assert client.patch(f"/api/notes/{created['id']}", json={'content': 'Shipped', 'tags': []}).json()['tags'] == []
@@ -85,29 +73,5 @@ def test_tag_validation_and_failed_creates_do_not_leave_tags(client):
     assert client.get('/api/journal?tag=not%20valid').status_code == 422
 
 
-def test_migration_keeps_content_ids_and_hierarchy_while_allowing_tag_only_rows(tmp_path, monkeypatch):
-    import sqlite3
-    from backend.db import initialize
-    path = tmp_path / 'old.sqlite3'
-    monkeypatch.setenv('STILL_DB_PATH', str(path))
-    with sqlite3.connect(path) as db:
-        db.executescript('''
-        CREATE TABLE days(id INTEGER PRIMARY KEY, date TEXT UNIQUE, created_at TEXT);
-        CREATE TABLE tasks(id INTEGER PRIMARY KEY, content TEXT NOT NULL CHECK(length(trim(content)) > 0), created_at TEXT, completed_at TEXT, parent_id INTEGER REFERENCES tasks(id), position INTEGER DEFAULT 0, client_id TEXT);
-        CREATE TABLE notes(id INTEGER PRIMARY KEY, day_id INTEGER REFERENCES days(id), content TEXT NOT NULL CHECK(length(trim(content)) > 0), created_at TEXT, updated_at TEXT, source_task_id INTEGER UNIQUE REFERENCES tasks(id), client_id TEXT, parent_id INTEGER REFERENCES notes(id), position INTEGER DEFAULT 0);
-        INSERT INTO days VALUES(1, '2026-09-16', '2026-09-16T12:00:00Z');
-        INSERT INTO tasks VALUES(1, 'Parent', 'created', 'completed', NULL, 0, 'task1');
-        INSERT INTO tasks VALUES(2, 'Child', 'created', 'completed', 1, 0, 'task2');
-        INSERT INTO notes VALUES(1, 1, 'Parent note', 'created', 'updated', 1, 'note1', NULL, 0);
-        INSERT INTO notes VALUES(2, 1, 'Child note with literal #text', 'created', 'updated', 2, 'note2', 1, 0);
-        PRAGMA user_version = 3;
-        ''')
-        old_notes = db.execute('SELECT * FROM notes ORDER BY id').fetchall()
-        old_tasks = db.execute('SELECT * FROM tasks ORDER BY id').fetchall()
-    initialize(); initialize()
-    with connection() as db:
-        assert [tuple(row)[:-1] for row in db.execute('SELECT * FROM notes ORDER BY id')] == old_notes
-        assert [tuple(row)[:-1] for row in db.execute('SELECT * FROM tasks ORDER BY id')] == old_tasks
-        assert db.execute('PRAGMA foreign_key_check').fetchall() == []
-        db.execute("INSERT INTO notes(day_id, content, tags) VALUES (1, '', '[\"tag-only\"]')")
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 6
+def test_postgres_allows_tag_only_rows(client):
+    assert note(client, '', tags=['tag-only'])['tags'] == ['tag-only']

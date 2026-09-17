@@ -1,6 +1,6 @@
 # [still](https://github.com/divyavenn/still)
 
-A document-style local logbook. React + TypeScript, Vite, styled-components, FastAPI, and SQLite.
+A document-style logbook. React + TypeScript, Vite, styled-components, FastAPI, and Neon PostgreSQL.
 
 ## Run it
 
@@ -29,7 +29,7 @@ Vite uses the official `esbuild-wasm` package through an npm override. This avoi
 ## The daily practice
 
 - Open the page and type. The cursor starts on a new bullet under today. Notes save after 700 ms of inactivity; Enter commits the bullet and opens the next one. Shift+Enter adds a line break.
-- Drafts are saved to localStorage immediately, including edits and new to-dos. Failed note saves can be retried, and a stable client ID prevents duplicate notes if a response is lost. A refreshed page restores an unsaved draft or starts a new bullet if the previous one reached SQLite.
+- Drafts are saved to localStorage immediately, including edits and new to-dos. Failed note saves can be retried, and a stable client ID prevents duplicate notes if a response is lost. A refreshed page restores an unsaved draft or starts a new bullet if the previous one reached the server.
 - Click existing notes or to-dos to edit. Enter saves and opens a new sibling with the cursor ready to type; blur saves, and Escape cancels an edit. Clearing the text and leaving the entry deletes it.
 - Journal bullets and to-dos share 15 px text, 18 px line height, and compact paragraph and row spacing. The light-mode timer uses a soft cool gray, shifting to muted teal while running.
 - Both lists support eight levels of nesting. Tab nests under the preceding sibling; Shift+Tab outdents. Enter inserts the next bullet at the same level. Backspace at the start merges into the preceding bullet in the same list, with the cursor at the join. On an empty new bullet it removes the draft and moves to the preceding bullet’s end, or dismisses it if there is no preceding bullet; Shift+Tab outdents an existing nested item. A new bullet after reopening the page starts at the root. Note parents have a small disclosure arrow in place of the bullet; to-do parents have a round progress marker. Both start collapsed. Hovering the marker previews the children until the pointer leaves the branch; click to keep it expanded, and click again to collapse. Logbook bullets indent by 32 px per level on desktop (24 px on medium windows and 16 px on narrow windows), and branches reveal or collapse with a gentle progressive transition. Each level opens independently; nesting while typing opens its ancestors, and collapsing a branch saves an active edit before hiding it.
@@ -70,7 +70,7 @@ Typing directly against either end of a link extends that linked word. A separat
 
 Inline code uses a monospace font with a subtle color and background; code blocks have no syntax highlighting. Enter within a code block adds a line; Command/Ctrl+Enter saves the bullet. Standard selection, cut, copy, paste, and Shift+Enter line breaks work inside the editor. Tab and Shift+Tab continue to change the bullet's nesting level. Undo/redo first uses the active bullet’s typing history, then the shared document history across entries. Arrow Up/Down crosses bullet boundaries; Backspace/Delete at a boundary merges adjacent bullets in the same list. Command/Ctrl+A selects the current bullet; press it again consecutively to select the day or to-do list, including collapsed descendants. That selection supports copy, cut, paste, replacement, and bold/italic/underline/strike/code formatting. Multi-entry edits are atomic and undoable. History survives reload and refuses to overwrite conflicting changes from another window.
 
-Each bullet's `content` remains a SQLite **TEXT** column containing Markdown, for example `**bold**`, `*italic*`, `[link](https://example.com)`, `` `code` ``, `~~strikethrough~~`, and `++underline++`. Underline uses the `++` extension because CommonMark has no underline syntax. The backend preserves the submitted Markdown, including significant whitespace. JSON is used for API transport; editor document objects and HTML are not stored in SQLite. Journal and export responses identify `content_format: "markdown"` for agent consumers.
+Each bullet's `content` remains a PostgreSQL **TEXT** column containing Markdown, for example `**bold**`, `*italic*`, `[link](https://example.com)`, `` `code` ``, `~~strikethrough~~`, and `++underline++`. Underline uses the `++` extension because CommonMark has no underline syntax. The backend preserves the submitted Markdown, including significant whitespace. JSON is used for API transport; editor document objects and HTML are not stored in PostgreSQL. Journal and export responses identify `content_format: "markdown"` for agent consumers.
 
 Literal Markdown punctuation is escaped when typed as plain text. Pasted rich text keeps supported formatting; arbitrary styles and unsafe links are discarded. Completing a task preserves its Markdown, including nested descendants. Block content receives the `finished` prefix in a separate paragraph so headings, quotes, and fenced code retain their meaning.
 
@@ -94,9 +94,9 @@ Command/Ctrl+F opens search across all stored notes and visible to-dos, includin
 
 ## Data and time
 
-The default database is **`data/still.sqlite3`**. Override it with `STILL_DB_PATH` when starting FastAPI. There is no seeded or fabricated journal data.
+The application uses Neon PostgreSQL. Put the pooled connection string in `DATABASE_URL` and its direct counterpart in `DATABASE_URL_DIRECT`; see [`.env.example`](.env.example). `DATABASE_URL` serves normal traffic. The direct URL is only for schema migrations and the one-time legacy-database import. There is no seeded or fabricated journal data.
 
-SQLite fits a personal logbook: no cloud account, no secrets to configure, and a portable database. Foreign keys, WAL mode, transactional writes, and a unique index allowing only one running session protect consistency. Schema upgrades run at startup; the current schema is version 6. The hierarchy migration preserves existing bullet IDs, content, and ordering at the root level.
+Neon gives the online logbook durable PostgreSQL storage, encrypted connections, managed backups, and concurrent access from multiple devices. The app uses a small transaction pool for ordinary traffic, transaction-scoped advisory locks for compound edits, and a direct connection for migrations. Foreign keys, transaction isolation, and a unique index allowing only one running session protect consistency. Schema migrations run at startup; the current schema is version 7.
 
 The normalized tables are:
 
@@ -113,15 +113,16 @@ Totals and statistics are derived; no aggregate counters can become stale. Times
 
 Bullet hierarchy uses an **ordered adjacency list**, not a JSON document. Each bullet is a row with `parent_id` (a self-referencing foreign key, null for roots) and integer `position` among its siblings. Depth is derived from the parent chain. This allows individual edits, transactional branch moves, recursive SQL queries, and per-bullet analytics without replacing a whole document. The API returns flat records with parent IDs; the UI reconstructs nested HTML lists.
 
-The API rejects cycles, missing parents, nesting notes under a different date, and moves that would push any descendant beyond eight levels. SQLite foreign keys and triggers also enforce valid parent references, acyclic trees, and same-day note ancestry. Deleting a parent promotes its children one level in the same order. Indenting or outdenting carries the whole branch. Parents complete automatically when all direct children are complete. `completed_at` remains the single persisted completion state; visibility and progress are derived from the task hierarchy. A completed child is retained while its immediate parent is open. Parents cannot be manually completed while they have unfinished children. Reopening a child reopens completed ancestors and keeps earlier completed siblings intact. Automatic completion also runs after moving or deleting the last unfinished child.
+The API rejects cycles, missing parents, nesting notes under a different date, and moves that would push any descendant beyond eight levels. PostgreSQL foreign keys and deferred constraint triggers also enforce valid parent references, acyclic trees, and same-day note ancestry. Deleting a parent promotes its children one level in the same order. Indenting or outdenting carries the whole branch. Parents complete automatically when all direct children are complete. `completed_at` remains the single persisted completion state; visibility and progress are derived from the task hierarchy. A completed child is retained while its immediate parent is open. Parents cannot be manually completed while they have unfinished children. Reopening a child reopens completed ancestors and keeps earlier completed siblings intact. Automatic completion also runs after moving or deleting the last unfinished child.
 
-Export a normalized snapshot with `GET /api/export`. For a complete SQLite backup while the app is running, use SQLite’s online backup command rather than copying a database with an active WAL:
+Export a normalized snapshot with `GET /api/export`. Use Neon’s point-in-time restore and branch features for backups. To transfer a previous local logbook into a new, empty Neon database, first validate without writing, then explicitly import:
 
 ```sh
-sqlite3 data/still.sqlite3 ".backup 'still-backup.sqlite3'"
+.venv/bin/python -m backend.import_sqlite --sqlite data/still.sqlite3
+.venv/bin/python -m backend.import_sqlite --sqlite data/still.sqlite3 --apply
 ```
 
-This is a single-user application bound to `127.0.0.1`, without authentication. An internet deployment would need authentication and HTTPS.
+The importer preserves IDs, Markdown, tags, hierarchy, sessions, and undo history; it opens the legacy file read-only and refuses to write into a nonempty Neon target. Keep the SQLite file as a local backup until the imported site has been checked. This API has no user authentication yet; deploy it behind an authentication layer before exposing it on the public internet.
 
 ## Agent API
 
@@ -134,7 +135,7 @@ curl 'http://127.0.0.1:8000/journal.md?tag=work&q=design&timezone=America%2FLos_
 
 The versioned JSON includes ISO dates, original `content_markdown`, separate tags, explicit `{text, url}` links, stable `(kind, id)` keys, ordered `children`, task completion relationships, and numeric focus durations in seconds. Completed and running durations are separate. Sessions crossing midnight expose both their whole duration and `seconds_on_day`, so daily sums do not double-count time.
 
-Date ranges are inclusive and default to the last 30 calendar days, including zero days. `limit` paginates 1–100 dates; follow `next_url` until null. `tag` and `q` filter bullets while retaining matching descendants and ancestor context (`matched: false`); focus totals remain unfiltered because sessions are not assigned to tags. `tasks=visible|all|none` selects the current task snapshot independently of the note date range. The next-page URL omits tasks to prevent repetition. Each response uses a read-only SQLite snapshot and includes only saved data. `/llms.txt` documents the full contract and query semantics; OpenAPI defines the recursive response schema.
+Date ranges are inclusive and default to the last 30 calendar days, including zero days. `limit` paginates 1–100 dates; follow `next_url` until null. `tag` and `q` filter bullets while retaining matching descendants and ancestor context (`matched: false`); focus totals remain unfiltered because sessions are not assigned to tags. `tasks=visible|all|none` selects the current task snapshot independently of the note date range. The next-page URL omits tasks to prevent repetition. Each response uses a read-only PostgreSQL snapshot and includes only saved data. `/llms.txt` documents the full contract and query semantics; OpenAPI defines the recursive response schema.
 
 The production homepage supports the same queries with `Accept: application/json` or `Accept: text/markdown`. On Vite, use the explicit representation URLs. Agents need network access to the running site, just like a browser; no data is sent to an external LLM service.
 
@@ -181,11 +182,11 @@ The summary provides averages over all calendar days and separate `average_activ
 ## Checks
 
 ```sh
-npm test                 # isolated SQLite tests: transactions, retries, stats, midnight, DST
+npm test                 # isolated local PostgreSQL tests: transactions, retries, stats, midnight, DST
 npm run build            # strict TypeScript check and Vite production bundle
-npm run test:e2e          # Chrome browser tests against an isolated /tmp SQLite database
+npm run test:e2e          # Chrome browser tests against an isolated local PostgreSQL database
 ```
 
-Browser tests use the installed Google Chrome via Playwright. Run `npx playwright install chrome` on machines without it. Build before the browser suite; it tests the production app. Test databases and screenshots never touch the personal database.
+Browser tests use the installed Google Chrome via Playwright. They create and reset a local `still_e2e` PostgreSQL database, never the configured Neon database. Run `npx playwright install chrome` on machines without it. Build before the browser suite; it tests the production app. Test databases and screenshots never touch the personal database.
 
 The interface follows [make-interfaces-feel-better](https://github.com/jakubkrehel/make-interfaces-feel-better), with the user's document reference taking precedence: styled-components throughout, the reference’s Söhne font, tabular timer numbers, native modal focus management, compact document rows (44 px on touch devices), explicit transitions, and reduced-motion support. No style sheets or inline `style` attributes are used. There are no decorative images, taglines, or formatting toolbars; the page shows document content, the timer, and quiet theme and statistics icons.

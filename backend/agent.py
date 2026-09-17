@@ -153,7 +153,7 @@ def bullet_tree(rows, kind, tag, query):
 
 
 def read_journal(db, query, zone, now):
-    """Query one calendar page within a single SQLite read snapshot; never mutate it."""
+    """Query one calendar page within a single PostgreSQL read snapshot; never mutate it."""
     start, end = query.start, query.end
     upper = min(end, query.before - timedelta(days=1)) if query.before else end
     count = max(0, min(query.limit, (upper - start).days + 1))
@@ -161,12 +161,12 @@ def read_journal(db, query, zone, now):
     by_day, by_session_day = defaultdict(list), defaultdict(list)
     if selected:
         for row in db.execute('''SELECT notes.*, days.date FROM notes JOIN days ON notes.day_id = days.id
-                                WHERE days.date BETWEEN ? AND ? ORDER BY notes.position, notes.id''', (selected[-1], selected[0])):
+                                WHERE days.date BETWEEN %s AND %s ORDER BY notes.position, notes.id''', (selected[-1], selected[0])):
             by_day[row['date']].append(bullet_dict(row))
         lower_utc = stamp(datetime.combine(date.fromisoformat(selected[-1]), time.min, zone))
         upper_utc = stamp(datetime.combine(upper + timedelta(days=1), time.min, zone))
-        sessions = db.execute('''SELECT * FROM sessions WHERE started_at < ?
-                                 AND COALESCE(ended_at, ?) >= ? ORDER BY started_at, id''', (upper_utc, stamp(now), lower_utc))
+        sessions = db.execute('''SELECT * FROM sessions WHERE started_at < %s
+                                 AND COALESCE(ended_at, %s) >= %s ORDER BY started_at, id''', (upper_utc, stamp(now), lower_utc))
         for session in sessions:
             begin = parse(session['started_at'])
             finish = parse(session['ended_at']) if session['ended_at'] else now
