@@ -15,7 +15,7 @@ import { SearchModal, type SearchHit } from './components/SearchModal';
 import { documentUndo, recordCompletion } from './documentHistory';
 
 const JOURNAL_PAGE_SIZE = 14;
-const REPOSITORY_URL = import.meta.env.VITE_REPOSITORY_URL as string | undefined;
+const REPOSITORY_URL = import.meta.env.VITE_REPOSITORY_URL || 'https://github.com/divyavenn/still';
 
 const Page = styled.div`
   --document-width: min(680px, calc(100vw - 64px));

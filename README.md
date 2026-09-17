@@ -1,4 +1,4 @@
-# still
+# [still](https://github.com/divyavenn/still)
 
 A document-style local logbook. React + TypeScript, Vite, styled-components, FastAPI, and SQLite.
 
@@ -80,7 +80,7 @@ Hover in the outer half of the left margin (or keyboard-focus the Tags navigatio
 
 Inline tags use fully rounded pills with balanced vertical padding, more horizontal padding, and space around the pill so it cannot overlap neighboring text. Their muted color differs from the date background. Saved bullets and active editors share the same pill styling.
 
-The top-right controls form a compact group. Hover changes their color and gently animates the glyph without adding a background highlight. Set `VITE_REPOSITORY_URL` in `.env.local` to the published GitHub URL to include the repository icon in this group; restart Vite after changing it. `.env.example` documents the setting.
+The top-right controls form a compact group. Hover changes their color and gently animates the glyph without adding a background highlight. The GitHub icon opens [this repository](https://github.com/divyavenn/still). To point a fork at a different repository, set `VITE_REPOSITORY_URL` in `.env.local` and restart Vite. `.env.example` documents the setting.
 
 `GET /api/tags` returns tag names and note/task counts. `GET /api/journal?tag=work` returns matching branches, retaining original parent IDs; filtered roots may have parents omitted from the response. The current date remains available for new entries. There is no separate tag registry or stale tag counter.
 
