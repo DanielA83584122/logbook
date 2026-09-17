@@ -150,7 +150,7 @@ export const richTextStyles = css`
   strong { font-weight: 700; }
   em { font-style: italic; }
   u { text-underline-offset: 2px; }
-  a { color: var(--link); font-weight: 500; text-decoration: none; cursor: pointer; }
+  a { color: var(--link); font-weight: inherit; text-decoration: none; cursor: pointer; }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em;
     color: var(--code-ink); background: var(--code-bg); border-radius: 3px; padding: 1px 3px; box-decoration-break: clone; }
   pre { margin: 4px 0; padding: 8px 10px; background: var(--code-bg); border-radius: 4px; overflow-x: auto; }
