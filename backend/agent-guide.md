@@ -26,7 +26,7 @@ Examples (URL-encode query values):
 
 `q` is a case-insensitive literal substring of Markdown, rendered text, or extracted link URLs. `tag` matches a normalized tag name. Together they use AND. Matches include all descendants and enough ancestor context to preserve the tree; `matched` distinguishes direct matches from context. An unrelated sibling is not included. Filters apply only to bullets and tasks: focus time is not attributed to tags or text, so focus totals remain unfiltered.
 
-`tasks=visible` (default) returns the current to-do tree, including completed children still retained under an open parent. `tasks=all` also includes archived completed tasks and their descendants. `tasks=none` omits tasks. Tasks are a current snapshot independent of the note date range. `next_url` sets `tasks=none` so a traversal does not repeat this snapshot.
+`tasks=visible` (default) returns the current to-do tree, including completed children still retained under an open parent. `tasks=all` also includes completed task trees. `tasks=none` omits the current to-do snapshot. Fully completed root task trees appear in their completion day’s logbook bullets, retaining their task kind and checked state. `next_url` sets `tasks=none` so a traversal does not repeat the current to-do snapshot.
 
 ## Data contract
 
@@ -36,7 +36,7 @@ Examples (URL-encode query values):
 - `content_markdown` is the original stored text, including formatting and Markdown links. `tags` is a separate array and is never inserted into this content.
 - `links` contains `{text, url}` pairs parsed from Markdown, including reference links, escaped URLs, and bare URLs. Text inside inline code and fenced code is not treated as a link.
 - `created_at`, `updated_at`, `completed_at`, `started_at`, and `ended_at` use UTC ISO 8601 timestamps (nullable where absent). `local_started_at` includes the requested timezone's offset. A note's recorded calendar date never changes with timezone.
-- `source_task_id` connects a completion note to its task. Avoid counting the same accomplishment once as a task and again as a note.
+- `source_task_id` is retained only for legacy notes created by earlier versions. Completed tasks now remain task records in the logbook.
 - Daily `focus.completed_seconds` excludes the active timer; `running_seconds` contains only its portion on that day; `total_seconds` is their sum. Zero is explicit.
 - `longest_completed_session_seconds` is the longest uninterrupted completed-session portion within that date. `completed_session_count` counts completed sessions intersecting the day.
 - Each session's `duration_seconds` describes the whole session; `seconds_on_day` describes only this date. Use `seconds_on_day` for sums, and deduplicate session IDs when counting unique sessions across dates. Cross-midnight and daylight-saving allocations use actual elapsed seconds.

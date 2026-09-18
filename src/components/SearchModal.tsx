@@ -38,7 +38,7 @@ export function SearchModal({ open, onClose, onSelect }: { open: boolean; onClos
         if (['ArrowDown', 'ArrowUp'].includes(e.key) && result.results.length) { e.preventDefault(); setSelected(value => (value + (e.key === 'ArrowDown' ? 1 : -1) + result.results.length) % result.results.length); }
         if (e.key === 'Enter' && result.results[selected]) { e.preventDefault(); void onSelect(result.results[selected]); }
       }} />
-    <ResultsList>{result.results.map((hit, index) => <Result key={`${hit.kind}-${hit.id}`} id={`search-result-${index}`} $selected={selected === index} onClick={() => void onSelect(hit)}>{markdownText(hit.content).slice(0, 220) || hit.tags?.map(tag => '#' + tag).join(' ')}<span>{hit.kind === 'tasks' ? 'to do' : hit.date}</span></Result>)}</ResultsList>
+    <ResultsList>{result.results.map((hit, index) => <Result key={`${hit.kind}-${hit.id}`} id={`search-result-${index}`} $selected={selected === index} onClick={() => void onSelect(hit)}>{markdownText(hit.content).slice(0, 220) || hit.tags?.map(tag => '#' + tag).join(' ')}<span>{hit.date ?? 'to do'}</span></Result>)}</ResultsList>
     {!loading && query.trim() && !result.results.length && !error && <Empty>No matches</Empty>}
     {error && <InlineError role="alert">{error}</InlineError>}
     {result.next_offset !== null && <TextButton onClick={async () => {

@@ -172,8 +172,8 @@ for (const kind of ['notes', 'tasks'] as const) {
     if (kind === 'tasks') {
       await page.getByRole('button', { name: 'Complete Nested tasks level 3', exact: true }).click();
       await page.getByRole('button', { name: 'Complete Nested tasks level 4', exact: true }).click();
-      await expect(page.getByRole('group', { name: 'finished Nested tasks level 0', exact: true })).toBeVisible();
-      await expect(page.getByRole('group', { name: 'finished Nested tasks level 4', exact: true }).locator('xpath=ancestor::li[1]')).toHaveAttribute('data-depth', '0');
+      await expect(page.getByRole('group', { name: 'Nested tasks level 0', exact: true })).toBeVisible();
+      await expect(page.getByRole('group', { name: 'Nested tasks level 4', exact: true }).locator('xpath=ancestor::li[1]')).toHaveAttribute('data-depth', '3');
     }
   });
 }
@@ -206,7 +206,7 @@ test('write, autosave, complete a to-do, use the timer, and edit sessions', asyn
   await page.getByRole('textbox', { name: 'New to-do' }).press('Enter');
   await page.getByRole('button', { name: 'Complete overdue trainings', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Complete overdue trainings', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('group', { name: 'finished overdue trainings', exact: true })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'overdue trainings', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Start focus timer' }).click();
   await expect(page.getByRole('button', { name: 'Stop focus timer' })).toContainText('00:00');

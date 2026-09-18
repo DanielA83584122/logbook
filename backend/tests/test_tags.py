@@ -39,13 +39,21 @@ def test_tag_only_bullets_and_task_completion(client):
     assert task['content'] == ''
     assert client.get('/api/tags').json() == [{'name': 'focus', 'note_count': 0, 'task_count': 1}]
     assert client.post(f"/api/tasks/{task['id']}/complete").status_code == 200
-    completed = client.get('/api/export').json()['notes'][0]
+    completed = client.get('/api/export').json()['tasks'][0]
     assert completed['tags'] == ['focus']
     assert '#' not in completed['content']
-    assert client.get('/api/tags').json() == [{'name': 'focus', 'note_count': 1, 'task_count': 0}]
-    client.delete(f"/api/notes/{completed['id']}")
+    assert client.get('/api/tags').json() == [{'name': 'focus', 'note_count': 0, 'task_count': 1}]
+    client.post(f"/api/tasks/{task['id']}/reopen", json={})
+    client.delete(f"/api/tasks/{task['id']}")
     assert client.get('/api/tags').json() == []
     assert client.post('/api/tasks', json={'content': '', 'tags': []}).status_code == 422
+
+
+def test_completed_tagged_task_stays_filterable_in_its_logbook_day(client):
+    task = client.post('/api/tasks', json={'content': 'Ship it', 'tags': ['work']}).json()
+    client.post(f"/api/tasks/{task['id']}/complete")
+    day = client.get('/api/journal?tag=work').json()['days'][0]
+    assert day['tasks'][0]['id'] == task['id']
 
 
 def test_filter_includes_descendants_but_excludes_unmatched_ancestors_and_siblings(client):

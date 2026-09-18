@@ -237,7 +237,7 @@ export default function App() {
       await flushDrafts();
       tagRef.current = null; loadedThrough.current = null; setActiveTag(null); setTarget(null);
       await refresh();
-      if (hit.kind === 'notes' && hit.date) {
+      if (hit.date) {
         const result = await api<JournalData>(`/journal?on=${hit.date}`);
         setData(current => current ? { ...current, days: [...current.days.filter(day => day.date !== hit.date), ...result.days].sort((a, b) => b.date.localeCompare(a.date)) } : current);
       }

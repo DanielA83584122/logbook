@@ -72,12 +72,12 @@ def test_completing_leaf_finishes_ready_ancestors_once(client):
         assert client.post(f"/api/tasks/{leaf['id']}/complete").status_code == 200
     data = client.get("/api/journal").json()
     assert [row["id"] for row in data["tasks"]] == [untouched["id"]]
-    notes = {row["source_task_id"]: row for row in data["days"][0]["notes"]}
-    assert len(notes) == 4
-    assert notes[parent["id"]]["parent_id"] is None
+    tasks = {row["id"]: row for row in data["days"][0]["tasks"]}
+    assert len(tasks) == 4
+    assert tasks[parent["id"]]["parent_id"] is None
     for current, previous in [(child, parent), (grandchild, child), (leaf, grandchild)]:
-        assert notes[current["id"]]["parent_id"] is None
-        assert notes[current["id"]]["content"] == f"finished {current['content']}"
+        assert tasks[current["id"]]["parent_id"] == previous["id"]
+        assert tasks[current["id"]]["content"] == current['content']
     assert client.get("/api/stats").json()["daily"][-1]["completed_task_count"] == 4
 
 
@@ -89,19 +89,20 @@ def test_completing_child_keeps_parent_open_and_retries_do_not_duplicate(client)
     assert client.get("/api/journal").json()["tasks"][0]["id"] == parent["id"]
     client.post(f"/api/tasks/{sibling['id']}/complete")
     client.post(f"/api/tasks/{sibling['id']}/complete")
-    notes = client.get("/api/journal").json()["days"][0]["notes"]
-    assert len(notes) == 3
-    assert len({note["source_task_id"] for note in notes}) == 3
+    tasks = client.get("/api/journal").json()["days"][0]["tasks"]
+    assert len(tasks) == 3
+    assert {task["id"] for task in tasks} == {parent["id"], child["id"], sibling["id"]}
 
 
-def test_cross_date_and_completed_parent_rejected(client):
+def test_cross_date_links_rejected_and_completed_parent_accepts_checked_child(client):
     parent = create(client, "notes", "Yesterday", day="2026-09-15")
     today = create(client, "notes", "Today")
     assert client.patch(f"/api/notes/{today['id']}/location", json={"parent_id": parent["id"]}).status_code == 409
     assert client.post("/api/notes", json={"date": "2026-09-16", "content": "Bad", "parent_id": parent["id"]}).status_code == 409
     task = create(client, "tasks", "Done")
     client.post(f"/api/tasks/{task['id']}/complete")
-    assert client.post("/api/tasks", json={"content": "Bad", "parent_id": task["id"]}).status_code == 409
+    added = client.post("/api/tasks", json={"content": "Added later", "parent_id": task["id"]})
+    assert added.status_code == 201 and added.json()["completed_at"]
 
 
 def test_subtree_depth_checked_before_move(client):

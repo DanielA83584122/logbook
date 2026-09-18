@@ -134,7 +134,7 @@ def test_agent_allocation_respects_dst(client, start, seconds, day):
     assert data['focus']['sessions'][0]['seconds_on_day'] == seconds
 
 
-def test_visible_and_archived_tasks_and_completion_note_relationship(client):
+def test_visible_and_archived_tasks_are_grouped_in_the_logbook_when_finished(client):
     parent = client.post('/api/tasks', json={'content': 'Parent'}).json()
     first = client.post('/api/tasks', json={'content': 'First', 'parent_id': parent['id']}).json()
     second = client.post('/api/tasks', json={'content': 'Second', 'parent_id': parent['id']}).json()
@@ -147,7 +147,9 @@ def test_visible_and_archived_tasks_and_completion_note_relationship(client):
     archived = read(client, tasks='all')
     assert archived['tasks'][0]['completed_at'] is not None
     assert len(archived['tasks'][0]['children']) == 2
-    assert {row['source_task_id'] for row in archived['days'][0]['bullets']} == {parent['id'], first['id'], second['id']}
+    logbook_task = archived['days'][0]['bullets'][0]
+    assert logbook_task['kind'] == 'task' and logbook_task['id'] == parent['id']
+    assert {row['id'] for row in logbook_task['children']} == {first['id'], second['id']}
 
 
 @pytest.mark.parametrize('query', [

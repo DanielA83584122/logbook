@@ -15,16 +15,46 @@ test('parent progress retains completed children, finishes automatically, and ca
   const progress = page.getByRole('button', { name: 'Collapse Progress project', exact: true });
   await expect(progress).toHaveAttribute('aria-description', '1 of 2 children completed');
   expect(await progress.evaluate(el => getComputedStyle(el, '::before').backgroundImage)).toContain('180deg');
-  await expect(page.getByRole('group', { name: 'finished Progress first', exact: true })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Progress first', exact: true })).toHaveCount(1);
   await page.getByRole('button', { name: 'Complete Progress last', exact: true }).click();
-  await expect(page.getByRole('group', { name: 'Progress project', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('group', { name: 'finished Progress project', exact: true })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Progress project', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reopen Progress project', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Undo task completion', exact: true }).click();
   await expect(page.getByRole('group', { name: 'Progress project', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Reopen Progress first', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Complete Progress last', exact: true })).toBeVisible();
   const data = await (await request.get('/api/export')).json();
-  expect(data.notes.filter((note: { source_task_id: number }) => note.source_task_id === first.id)).toHaveLength(1);
+  expect(data.notes.filter((note: { source_task_id: number | null }) => note.source_task_id === first.id)).toHaveLength(0);
+});
+
+test('reopening a completed nested task returns its whole tree to to-dos', async ({ page, request }) => {
+  const parent = await (await request.post('/api/tasks', { data: { content: 'Return project' } })).json();
+  const first = await (await request.post('/api/tasks', { data: { content: 'Return first', parent_id: parent.id } })).json();
+  const second = await (await request.post('/api/tasks', { data: { content: 'Return second', parent_id: parent.id } })).json();
+  await request.post(`/api/tasks/${first.id}/complete`);
+  await request.post(`/api/tasks/${second.id}/complete`);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Reopen Return first', exact: true }).click();
+  const todos = page.getByRole('region', { name: 'to do', exact: true });
+  await expect(todos.getByRole('group', { name: 'Return project', exact: true })).toBeVisible();
+  await todos.getByRole('button', { name: 'Expand Return project', exact: true }).click();
+  await expect(todos.getByRole('button', { name: 'Complete Return first', exact: true })).toBeVisible();
+  await expect(todos.getByRole('button', { name: 'Reopen Return second', exact: true })).toBeVisible();
+});
+
+test('a new subtask added in the logbook starts checked and can reopen its tree', async ({ page, request }) => {
+  const parent = await (await request.post('/api/tasks', { data: { content: 'Extended project' } })).json();
+  await request.post(`/api/tasks/${parent.id}/complete`);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Add subtask to Extended project', exact: true }).click();
+  const composer = page.getByRole('textbox', { name: 'New completed subtask', exact: true });
+  await expect(composer).toBeFocused();
+  await composer.fill('Finished follow-up');
+  await composer.press('Enter');
+  await expect(page.getByRole('button', { name: 'Reopen Finished follow-up', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Reopen Finished follow-up', exact: true }).click();
+  const todos = page.getByRole('region', { name: 'to do', exact: true });
+  await expect(todos.getByRole('group', { name: 'Extended project', exact: true })).toBeVisible();
 });
 
 test('arrow navigation, merging, grouped selection, and document undo cross bullet boundaries', async ({ page, request }) => {

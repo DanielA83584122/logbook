@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from .stats import parse, slices, stamp
 from .tags import bullet_dict
-from .tasks import visible_tasks
+from .tasks import completed_tasks_by_day, visible_tasks
 
 
 DISCOVERY_LINKS = ', '.join([
@@ -159,6 +159,7 @@ def read_journal(db, query, zone, now):
     count = max(0, min(query.limit, (upper - start).days + 1))
     selected = [(upper - timedelta(days=i)).isoformat() for i in range(count)]
     by_day, by_session_day = defaultdict(list), defaultdict(list)
+    completed_by_day = completed_tasks_by_day(db, zone, query.tag)
     if selected:
         for row in db.execute('''SELECT notes.*, days.date FROM notes JOIN days ON notes.day_id = days.id
                                 WHERE days.date BETWEEN ? AND ? ORDER BY notes.position, notes.id''', (selected[-1], selected[0])):
@@ -184,7 +185,10 @@ def read_journal(db, query, zone, now):
         sessions = by_session_day[day]
         completed = [row['seconds_on_day'] for row in sessions if row['status'] == 'completed']
         running = sum(row['seconds_on_day'] for row in sessions if row['status'] == 'running')
-        days.append({'date': day, 'bullets': bullet_tree(by_day[day], 'note', query.tag, query.q), 'focus': {
+        days.append({'date': day, 'bullets': [
+            *bullet_tree(by_day[day], 'note', query.tag, query.q),
+            *bullet_tree(completed_by_day[day], 'task', query.tag, query.q),
+        ], 'focus': {
             'completed_seconds': sum(completed), 'running_seconds': running, 'total_seconds': sum(completed) + running,
             'longest_completed_session_seconds': max(completed, default=0), 'completed_session_count': len(completed), 'sessions': sessions,
         }})

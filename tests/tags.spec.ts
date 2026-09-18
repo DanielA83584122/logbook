@@ -119,11 +119,11 @@ test('completion animates out and in while preserving tag metadata', async ({ pa
   });
   await page.getByRole('button', { name: 'Complete Animated task', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Complete Animated task', exact: true })).toHaveCount(0);
-  const completed = page.getByRole('group', { name: 'finished Animated task', exact: true });
+  const completed = page.getByRole('group', { name: 'Animated task', exact: true });
   await expect(completed.locator('[data-tag="animation"]')).toBeVisible();
-  await expect.poll(() => page.evaluate(() => (window as unknown as { bulletAnimations: string[] }).bulletAnimations.length)).toBeGreaterThanOrEqual(2);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { bulletAnimations: string[] }).bulletAnimations.length)).toBeGreaterThanOrEqual(1);
   const data = await (await request.get('/api/export')).json();
-  expect(data.notes.find((item: { source_task_id: number }) => item.source_task_id === task.id).tags).toEqual(['animation']);
+  expect(data.tasks.find((item: { id: number }) => item.id === task.id).tags).toEqual(['animation']);
 });
 
 test('to-do region expands for all rows and leaves a usable journal below', async ({ page, request }) => {

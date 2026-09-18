@@ -78,7 +78,10 @@ export function Journal({ days, today, refresh, notify, openSessions, secondsFor
           <DateLabel dateTime={day.date}>{date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</DateLabel>
           {seconds >= 1 && <FocusTotal>{duration(seconds, true)}</FocusTotal>}
         </DateHead>
-        <Body><Outline kind="notes" items={day.notes} day={day.date} composer={isToday} refresh={refresh} notify={notify} /></Body>
+        <Body>
+          <Outline kind="notes" items={day.notes} day={day.date} composer={isToday} refresh={refresh} notify={notify} />
+          {!!day.tasks?.length && <Outline kind="tasks" items={day.tasks} archived scope={`completed-${day.date}`} refresh={refresh} notify={notify} />}
+        </Body>
       </DayBlock>;
     })}
     <HistoryEnd ref={historyEnd}>{hasMore && <TextButton disabled={loadingMore} onClick={() => void loadEarlier()}>{historyError ? 'Retry' : 'Earlier days'}</TextButton>}</HistoryEnd>

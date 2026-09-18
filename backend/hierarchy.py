@@ -36,7 +36,7 @@ def descendants(db, table, item_id):
     return result
 
 
-def validate_parent(db, table, parent_id, day_id=None, item_id=None):
+def validate_parent(db, table, parent_id, day_id=None, item_id=None, allow_completed=False):
     level = 1
     seen = {item_id} if item_id is not None else set()
     cursor = parent_id
@@ -47,7 +47,7 @@ def validate_parent(db, table, parent_id, day_id=None, item_id=None):
         parent = get_row(db, table, cursor)
         if table == "notes" and parent["day_id"] != day_id:
             raise HTTPException(409, "Nested notes must belong to the same date.")
-        if table == "tasks" and parent["completed_at"]:
+        if table == "tasks" and parent["completed_at"] and not allow_completed:
             raise HTTPException(409, "Cannot nest under a completed to-do.")
         level += 1
         cursor = parent["parent_id"]
@@ -56,10 +56,10 @@ def validate_parent(db, table, parent_id, day_id=None, item_id=None):
         raise HTTPException(422, f"Bullets support up to {MAX_LEVELS} levels.")
 
 
-def place(db, table, item_id, parent_id, after_id=None):
+def place(db, table, item_id, parent_id, after_id=None, allow_completed_parent=False):
     row = get_row(db, table, item_id)
     day_id = row.get("day_id")
-    validate_parent(db, table, parent_id, day_id, item_id)
+    validate_parent(db, table, parent_id, day_id, item_id, allow_completed_parent)
     group = [r for r in siblings(db, table, parent_id, day_id) if r["id"] != item_id]
     ids = [r["id"] for r in group]
     if after_id is not None and after_id not in ids:

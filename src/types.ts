@@ -5,6 +5,7 @@ export type Session = { id: number; started_at: string; ended_at: string | null;
 export type Day = {
   date: string; notes: Note[]; focused_seconds: number;
   longest_session_seconds: number; session_count: number;
+  tasks?: Task[];
 };
 export type JournalData = {
   tag?: string | null; tags?: import('./JournalContext').Tag[];

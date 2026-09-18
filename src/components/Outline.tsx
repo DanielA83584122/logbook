@@ -97,12 +97,20 @@ const Disclosure = styled.button<{ $open: boolean; $task: boolean; $progress: nu
   @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px;
   }
 `;
-const Text = styled.div<{ $done?: boolean }>`
+const Text = styled.div<{ $done?: boolean; $action?: boolean }>`
   ${richTextStyles}; cursor: text;
-  flex: 1; min-width: 0; min-height: var(--bullet-row-height); padding: var(--bullet-padding); border: 0; background: transparent;
+  flex: ${({ $action }) => $action ? '0 1 auto' : '1'}; min-width: 0; min-height: var(--bullet-row-height); padding: var(--bullet-padding); border: 0; background: transparent;
   ${({ $done }) => $done && css`color: var(--muted); text-decoration: line-through; a { color: var(--muted); }`}
   text-align: left; line-height: var(--bullet-line-height); font-size: var(--bullet-size); white-space: pre-wrap; overflow-wrap: anywhere;
   @media(pointer: coarse) { min-height: 44px; padding: 10px 0; }
+`;
+const AddSubtask = styled.button`
+  width: 40px; min-width: 40px; height: var(--bullet-row-height); padding: 0; border: 0; background: transparent;
+  color: var(--muted); opacity: 0; font: inherit; font-size: 18px; line-height: 1;
+  transition: opacity 120ms ease-out, color 120ms ease-out;
+  ${Row}:hover & { opacity: .7; }
+  &:hover, &:focus-visible { opacity: 1; color: var(--ink); }
+  @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px; opacity: .7; }
 `;
 
 
@@ -112,6 +120,7 @@ type Draft = {
 };
 type Props = {
   kind: 'notes' | 'tasks'; items: OutlineItem[]; day?: string; composer?: boolean;
+  archived?: boolean; scope?: string;
   refresh: () => Promise<void>; notify: (message: string) => void;
 };
 function selectedTextOffsets(element?: HTMLElement, link?: HTMLElement): TextOffsets | undefined {
@@ -139,7 +148,7 @@ const fresh = (items: OutlineItem[], active: boolean, parentId: number | null = 
   afterId: afterId === undefined ? siblings(items, parentId).at(-1)?.id ?? null : afterId,
 });
 
-export function Outline({ kind, items, day, composer = false, refresh, notify }: Props) {
+export function Outline({ kind, items, day, composer = false, archived = false, scope, refresh, notify }: Props) {
   const { activeTag, completed, onComplete, target } = useJournalContext();
   const blank = (...args: Parameters<typeof fresh>): Draft => ({ ...fresh(...args), hiddenTag: activeTag });
   const [expanded, setExpanded] = useState(new Set<number>());
@@ -148,7 +157,7 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
   const [, setSelectedAll] = useState(false);
   const selectionActive = useRef(false);
   const surface = useRef<HTMLDivElement>(null);
-  const key = kind === 'notes' ? `still-draft-${day}` : 'still-outline-tasks';
+  const key = kind === 'notes' ? `still-draft-${day}` : scope ? `still-outline-tasks-${scope}` : 'still-outline-tasks';
   const [draft, setDraft] = useState<Draft>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(key) ?? 'null') as Partial<Draft> | null;
@@ -344,6 +353,11 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
     } finally { setCompleting(null); }
   }, false);
 
+  const beginSubtask = (parentId: number) => void run(async () => {
+    await save();
+    persist(blank(records.current, true, parentId));
+  });
+
   const beginBullet = () => void run(async () => {
     await save();
     persist(blank(records.current, true));
@@ -469,7 +483,7 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
       return next.size === previous.size ? previous : next;
     });
   };
-  const isExpanded = (id: number) => expanded.has(id) || previewed.has(id) || draftInside(id);
+  const isExpanded = (id: number) => (kind === 'tasks' && !!items.find(row => row.id === id)?.completed_at) || expanded.has(id) || previewed.has(id) || draftInside(id);
   const renderToggle = (id: number | null, content: string) => {
     const row = items.find(item => item.id === id);
     const childCount = row?.child_count ?? items.filter(item => item.parent_id === id).length;
@@ -477,8 +491,7 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
     if (id === null || !childCount && !(draft.active && draft.parentId === id && (draft.content.trim() || draft.tags.length))) return null;
     const open = isExpanded(id);
     const pinned = expanded.has(id) || draftInside(id);
-    if (kind === 'tasks' && row?.completed_at) return <Disclosure as="span" $open={false} $task $progress={1} role="progressbar"
-      aria-label={`${markdownText(content)} completion`} aria-valuemin={0} aria-valuemax={childCount} aria-valuenow={doneCount} />;
+    if (kind === 'tasks' && row?.completed_at) return null;
     return <Disclosure type="button" $open={open} $task={kind === 'tasks'} $progress={childCount ? doneCount / childCount : 0} disabled={busy} aria-expanded={open}
       aria-description={kind === 'tasks' ? `${doneCount} of ${childCount} children completed` : undefined}
       aria-label={`${pinned ? 'Collapse' : 'Expand'} ${markdownText(content) || 'bullet'}`}
@@ -501,6 +514,7 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
       const done = !!items.find(item => item.id === id)?.completed_at;
       return toggle ?? <Checkbox type="button" $checked={done} aria-pressed={done} disabled={busy} aria-label={`${done ? 'Reopen' : 'Complete'} ${markdownText(content)}`} onClick={() => complete(id)} />;
     }
+    if (archived && kind === 'tasks') return <Checkbox as="span" $checked aria-hidden="true" />;
     return toggle ?? <Marker $task={kind === 'tasks'} aria-hidden="true" />;
   };
   const renderDraft = (depth: number): ReactNode => <DraftItem key="draft" data-depth={depth}
@@ -508,7 +522,7 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
     onPointerLeave={() => clearPreview(draft.id)}
     $emptyTask={kind === 'tasks' && draft.id === null && !draft.content.trim() && !draft.tags.length}
     $leaving={completing === draft.id && completing !== null}>
-    <Row aria-busy={saving}>{renderMarker(draft.id, draft.content)}<RichTextEditor key={draft.clientId} ref={input} label={inputLabel} value={draft.content} tags={draft.tags.filter(tag => tag !== activeTag)} readOnly={busy}
+    <Row aria-busy={saving}>{renderMarker(draft.id, draft.content)}<RichTextEditor key={draft.clientId} ref={input} label={archived && draft.mode === 'new' ? 'New completed subtask' : inputLabel} value={draft.content} tags={draft.tags.filter(tag => tag !== activeTag)} readOnly={busy}
       onBoundary={boundary} onSelectDocument={selectDocument}
       onChange={(content, tags) => persist({ ...current.current, content, tags: [...new Set([...tags, ...(current.current.hiddenTag && (content.trim() || tags.length) ? [current.current.hiddenTag] : [])])] })}
       onBlur={event => {
@@ -565,14 +579,16 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
     const content = group.map(item => item === null ? renderDraft(depth) : <Item key={item.id} data-outline-key={key} data-done={!!item.completed_at} data-kind={kind} data-item-id={item.id} data-depth={depth} $leaving={completing === item.id}
       onPointerLeave={() => clearPreview(item.id)}
       $arriving={kind === 'notes' && !!item.source_task_id && completed.has(item.source_task_id)}>
-      <Row>{renderMarker(item.id, item.content)}<Text $done={!!item.completed_at} role="group" tabIndex={0} aria-label={markdownText(item.content) || (item.tags ?? []).filter(tag => tag !== activeTag).map(tag => '#' + tag).join(' ')}
+      <Row>{renderMarker(item.id, item.content)}<Text $done={!!item.completed_at} $action={archived} role="group" tabIndex={0} aria-label={markdownText(item.content) || (item.tags ?? []).filter(tag => tag !== activeTag).map(tag => '#' + tag).join(' ')}
         onClick={event => { if (!item.completed_at && !(event.target as HTMLElement).closest('a')) select(item, event.currentTarget); }}
         onContextMenu={event => {
           const link = (event.target as HTMLElement).closest('a');
           if (link && !item.completed_at) { event.preventDefault(); select(item, event.currentTarget, link); }
         }}
         onKeyDown={event => { if (!item.completed_at && event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); select(item); } }}
-      ><MarkdownContent content={item.content} tags={activeTag ? item.tags?.filter(tag => tag !== activeTag) : item.tags} /></Text></Row>
+      ><MarkdownContent content={item.content} tags={activeTag ? item.tags?.filter(tag => tag !== activeTag) : item.tags} /></Text>
+      {archived && <AddSubtask type="button" disabled={busy} aria-label={`Add subtask to ${markdownText(item.content) || 'task'}`} title="Add subtask" onClick={() => beginSubtask(item.id)}>+</AddSubtask>}
+      </Row>
       <Branch data-branch-for={item.id} $open={isExpanded(item.id)} aria-hidden={!isExpanded(item.id)}>{renderChildren(item.id, depth + 1)}</Branch>
     </Item>);
     return parentId === null ? <List>{content}</List> : <Children $task={kind === 'tasks'}>{content}</Children>;
@@ -597,7 +613,7 @@ export function Outline({ kind, items, day, composer = false, refresh, notify }:
     if (event.key === 'Backspace' || event.key === 'Delete') { event.preventDefault(); replaceDocument(); }
     else if (!mod && event.key.length === 1) { event.preventDefault(); replaceDocument(event.key); }
     else if (event.key === 'Escape') { event.preventDefault(); selectionActive.current = false; setSelectedAll(false); window.getSelection()?.removeAllRanges(); focus(); }
-  }}>{renderChildren(null, 0)}{(!draft.active || draft.mode === 'edit') && <ComposerTarget type="button" $floating={kind === 'notes' && !composer}
+  }}>{renderChildren(null, 0)}{!archived && (!draft.active || draft.mode === 'edit') && <ComposerTarget type="button" $floating={kind === 'notes' && !composer}
     aria-label={kind === 'tasks' ? 'Add to-do' : 'Add journal bullet'}
     onClick={beginBullet} />}
     <VisuallyHidden>Tab indents. Shift Tab outdents. Enter adds a sibling. Shift Enter adds a line break. Select all twice selects this list.</VisuallyHidden></OutlineSurface>;

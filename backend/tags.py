@@ -66,7 +66,7 @@ def list_tags(db):
     return [dict(row) for row in db.execute('''SELECT name, SUM(note_count) AS note_count, SUM(task_count) AS task_count FROM (
         SELECT value AS name, COUNT(*) AS note_count, 0 AS task_count FROM notes, json_each(notes.tags) GROUP BY value
         UNION ALL
-        SELECT value AS name, 0 AS note_count, COUNT(*) AS task_count FROM tasks, json_each(tasks.tags) WHERE completed_at IS NULL GROUP BY value
+        SELECT value AS name, 0 AS note_count, COUNT(*) AS task_count FROM tasks, json_each(tasks.tags) GROUP BY value
         ) GROUP BY name ORDER BY name''')]
 
 

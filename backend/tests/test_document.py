@@ -31,10 +31,11 @@ def test_completed_children_stay_until_immediate_parent_finishes(client):
     assert set(rows) == {root['id'], parent['id'], later['id']}
     assert rows[parent['id']]['completed_at']
     assert rows[root['id']]['completed_child_count'] == 1
-    assert len(client.get('/api/export').json()['notes']) == 3
+    assert client.get('/api/export').json()['notes'] == []
     client.post(f"/api/tasks/{later['id']}/complete")
     assert client.get('/api/journal').json()['tasks'] == []
-    assert len(client.get('/api/export').json()['notes']) == 5
+    day = client.get('/api/journal').json()['days'][0]
+    assert {row['id'] for row in day['tasks']} == {root['id'], parent['id'], later['id'], first['id'], second['id']}
 
 
 def test_undo_final_child_reopens_ancestors_and_retains_earlier_children(client):
@@ -47,20 +48,17 @@ def test_undo_final_child_reopens_ancestors_and_retains_earlier_children(client)
     rows = {row['id']: row for row in client.get('/api/journal').json()['tasks']}
     assert len(rows) == 3 and rows[first['id']]['completed_at']
     assert rows[last['id']]['completed_at'] is None and rows[parent['id']]['completed_at'] is None
-    assert len(client.get('/api/export').json()['notes']) == 1
+    assert client.get('/api/export').json()['notes'] == []
     client.post(f"/api/tasks/{last['id']}/complete")
-    assert len(client.get('/api/export').json()['notes']) == 3
+    assert client.get('/api/export').json()['notes'] == []
 
 
-def test_reopen_preserves_a_modified_completion_note(client):
+def test_reopen_keeps_the_task_as_the_same_logbook_entry(client):
     task = create(client, 'tasks', 'Read')
     client.post(f"/api/tasks/{task['id']}/complete")
-    note = client.get('/api/export').json()['notes'][0]
-    client.patch(f"/api/notes/{note['id']}", json={'content': 'Read, with additional thoughts'})
     client.post(f"/api/tasks/{task['id']}/reopen", json={})
-    notes = client.get('/api/export').json()['notes']
-    assert notes[0]['content'] == 'Read, with additional thoughts'
-    assert notes[0]['source_task_id'] is None
+    row = client.get('/api/export').json()['tasks'][0]
+    assert row['id'] == task['id'] and row['content'] == 'Read' and row['completed_at'] is None
 
 
 def test_document_create_edit_undo_redo_keeps_ids_and_markdown(client):
@@ -115,6 +113,27 @@ def test_archive_search_includes_unloaded_nested_notes_and_paginates(client):
     assert len(day) == 1 and len(day[0]['notes']) == 6
 
 
+def test_archive_search_finds_completed_tasks_in_their_logbook_day(client):
+    task = create(client, 'tasks', 'A finished searchable task')
+    client.post(f"/api/tasks/{task['id']}/complete")
+    result = client.get('/api/search?q=searchable').json()['results']
+    assert len(result) == 1
+    assert (result[0]['id'], result[0]['kind'], result[0]['date']) == (task['id'], 'tasks', '2026-09-16')
+
+
+def test_new_subtask_under_completed_task_starts_completed_and_reopens_tree(client):
+    parent = create(client, 'tasks', 'Already done')
+    client.post(f"/api/tasks/{parent['id']}/complete")
+    child = create(client, 'tasks', 'Added afterward', parent['id'])
+    assert child['completed_at'] and child['parent_id'] == parent['id']
+    logbook = client.get('/api/journal').json()['days'][0]['tasks']
+    assert {row['id'] for row in logbook} == {parent['id'], child['id']}
+    client.post(f"/api/tasks/{child['id']}/reopen", json={})
+    todos = {row['id']: row for row in client.get('/api/journal').json()['tasks']}
+    assert todos[parent['id']]['completed_at'] is None
+    assert todos[child['id']]['completed_at'] is None
+
+
 def test_removing_last_open_child_finishes_parent_and_undo_restores_it(client):
     parent = create(client, 'tasks', 'Group')
     done = create(client, 'tasks', 'Done', parent['id'])
@@ -122,9 +141,9 @@ def test_removing_last_open_child_finishes_parent_and_undo_restores_it(client):
     client.post(f"/api/tasks/{done['id']}/complete")
     result = batch(client, [{'kind': 'tasks', 'id': remaining['id'], 'delete': True}])
     assert client.get('/api/journal').json()['tasks'] == []
-    assert len(client.get('/api/export').json()['notes']) == 2
+    assert client.get('/api/export').json()['notes'] == []
     history(client, result['operation_id'])
     tasks = {row['id']: row for row in client.get('/api/journal').json()['tasks']}
     assert len(tasks) == 3 and tasks[parent['id']]['completed_at'] is None
     assert tasks[done['id']]['completed_at']
-    assert len(client.get('/api/export').json()['notes']) == 1
+    assert client.get('/api/export').json()['notes'] == []

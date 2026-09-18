@@ -89,9 +89,9 @@ for (const kind of ['notes', 'tasks'] as const) {
     await expect(child.locator('xpath=ancestor::li[1]')).toHaveAttribute('data-depth', '1');
     if (kind === 'tasks') {
       await page.getByRole('button', { name: 'Complete tasks nested bold', exact: true }).click();
-      await expect(page.getByRole('group', { name: 'finished tasks code', exact: true }).locator('code')).toHaveText('tasks code');
-      await expect(page.getByRole('group', { name: 'finished tasks nested bold', exact: true }).locator('strong')).toHaveText('tasks nested bold');
-      expect((await rows(page, 'notes')).some(row => row.content === 'finished **tasks nested bold**')).toBe(true);
+      await expect(page.getByRole('group', { name: 'tasks code', exact: true }).locator('code')).toHaveText('tasks code');
+      await expect(page.getByRole('group', { name: 'tasks nested bold', exact: true }).locator('strong')).toHaveText('tasks nested bold');
+      expect((await rows(page, 'notes')).some(row => row.content.includes('tasks nested bold'))).toBe(false);
     }
     await expect(page.locator('[style]')).toHaveCount(0);
   });

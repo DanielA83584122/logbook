@@ -41,17 +41,19 @@ def test_task_completion_is_atomic_and_idempotent(client):
         assert client.post(f"/api/tasks/{task['id']}/complete?timezone=Asia/Tokyo").status_code == 200
     data = client.get("/api/journal?timezone=Asia/Tokyo").json()
     assert data["tasks"] == []
-    assert [n["content"] for n in data["days"][0]["notes"]] == ["finished overdue trainings"]
+    assert [task["content"] for task in data["days"][0]["tasks"]] == ["overdue trainings"]
+    assert data["days"][0]["tasks"][0]["completed_at"]
     assert data["days"][0]["date"] == "2026-09-17"
     assert client.patch(f"/api/tasks/{task['id']}", json={"content": "changed"}).status_code == 409
 
 
-def test_concurrent_task_completion_writes_one_note(client):
+def test_concurrent_task_completion_places_one_task_in_the_logbook(client):
     task = client.post("/api/tasks", json={"content": "One thing"}).json()
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(lambda _: client.post(f"/api/tasks/{task['id']}/complete"), range(4)))
     assert all(r.status_code == 200 for r in results)
-    assert len(client.get("/api/journal").json()["days"][0]["notes"]) == 1
+    day = client.get("/api/journal").json()["days"][0]
+    assert len(day["tasks"]) == 1 and day["tasks"][0]["completed_at"]
 
 
 def test_timer_start_stop_reset_and_stale_retry(client, monkeypatch):
@@ -157,8 +159,8 @@ def test_export_contains_normalized_rows_and_schema_version(client):
     client.post(f"/api/tasks/{task['id']}/complete")
     data = client.get("/api/export").json()
     assert data["schema_version"] == 6
-    assert data["notes"][0]["source_task_id"] == data["tasks"][0]["id"]
-    assert data["notes"][0]["day_id"] == data["days"][0]["id"]
+    assert data["notes"] == []
+    assert data["tasks"][0]["completed_at"]
 
 
 def test_note_creation_retry_does_not_duplicate(client):
@@ -191,6 +193,6 @@ def test_markdown_roundtrips_through_sqlite_and_task_completion(client, content)
     assert client.post(f"/api/tasks/{task['id']}/complete").status_code == 200
     exported = client.get("/api/export").json()
     assert exported["content_format"] == "markdown"
-    completed = next(n for n in exported["notes"] if n["source_task_id"] == task["id"])
-    block = content.startswith(("```", "    ", "##", ">"))
-    assert completed["content"] == ("finished\n\n" if block else "finished ") + content
+    completed = next(row for row in exported["tasks"] if row["id"] == task["id"])
+    assert completed["content"] == content
+    assert completed["completed_at"]
