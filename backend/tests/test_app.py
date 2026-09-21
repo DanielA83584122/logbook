@@ -35,6 +35,16 @@ def test_journal_starts_on_local_day_and_persists_notes(client):
     assert client.get("/api/journal?timezone=Asia/Tokyo").json()["days"][0]["notes"] == []
 
 
+def test_authentication_flag_defaults_off_and_can_protect_the_api(client, monkeypatch):
+    assert client.get('/api/export').status_code == 200
+    monkeypatch.setenv('STILL_AUTH_ENABLED', 'true')
+    monkeypatch.setenv('STILL_AUTH_PASSWORD', 'private-test-password')
+    assert client.get('/api/health').status_code == 200
+    assert client.get('/api/export').status_code == 401
+    assert client.get('/api/export', auth=('still', 'wrong')).status_code == 401
+    assert client.get('/api/export', auth=('still', 'private-test-password')).status_code == 200
+
+
 def test_task_completion_is_atomic_and_idempotent(client):
     task = client.post("/api/tasks", json={"content": "overdue trainings"}).json()
     for _ in range(2):
@@ -44,7 +54,8 @@ def test_task_completion_is_atomic_and_idempotent(client):
     assert [task["content"] for task in data["days"][0]["tasks"]] == ["overdue trainings"]
     assert data["days"][0]["tasks"][0]["completed_at"]
     assert data["days"][0]["date"] == "2026-09-17"
-    assert client.patch(f"/api/tasks/{task['id']}", json={"content": "changed"}).status_code == 409
+    edited = client.patch(f"/api/tasks/{task['id']}", json={"content": "changed"})
+    assert edited.status_code == 200 and edited.json()["content"] == "changed"
 
 
 def test_concurrent_task_completion_places_one_task_in_the_logbook(client):
@@ -158,7 +169,8 @@ def test_export_contains_normalized_rows_and_schema_version(client):
     task = client.post("/api/tasks", json={"content": "Read"}).json()
     client.post(f"/api/tasks/{task['id']}/complete")
     data = client.get("/api/export").json()
-    assert data["schema_version"] == 6
+    assert data["schema_version"] == 8
+    assert data["entries"] == data["tasks"]
     assert data["notes"] == []
     assert data["tasks"][0]["completed_at"]
 
@@ -189,7 +201,8 @@ def test_markdown_roundtrips_through_sqlite_and_task_completion(client, content)
     for kind, row in [("notes", note), ("tasks", task)]:
         assert client.patch(f"/api/{kind}/{row['id']}", json={"content": content}).json()["content"] == content
         with connection() as db:
-            assert db.execute(f"SELECT content FROM {kind} WHERE id = ?", (row["id"],)).fetchone()["content"] == content
+            entry_kind = 'note' if kind == 'notes' else 'task'
+            assert db.execute("SELECT content FROM entries WHERE kind = ? AND id = ?", (entry_kind, row["id"])).fetchone()["content"] == content
     assert client.post(f"/api/tasks/{task['id']}/complete").status_code == 200
     exported = client.get("/api/export").json()
     assert exported["content_format"] == "markdown"

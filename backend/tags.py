@@ -40,9 +40,6 @@ def initialize_tags(db):
     # A bullet can consist only of tag chips. The API validates content OR tags.
     old_sql = {table: db.execute('SELECT sql FROM sqlite_master WHERE name = ?', (table,)).fetchone()[0] for table in ('tasks', 'notes')}
     if any('CHECK(length(trim(content)) > 0)' in sql for sql in old_sql.values()):
-        db.commit()
-        db.execute('PRAGMA foreign_keys = OFF')
-        db.execute('BEGIN IMMEDIATE')
         definitions = [row[0] for row in db.execute("SELECT sql FROM sqlite_master WHERE tbl_name IN ('notes','tasks') AND type IN ('index','trigger') AND sql IS NOT NULL")]
         for table, sql in old_sql.items():
             temporary = f'{table}_with_tags'
@@ -55,24 +52,21 @@ def initialize_tags(db):
         for sql in definitions:
             db.execute(sql)
         if db.execute('PRAGMA foreign_key_check').fetchall():
-            db.rollback()
             raise RuntimeError('Tag migration would break a bullet reference')
-        db.commit()
-        db.execute('PRAGMA foreign_keys = ON')
     db.execute('PRAGMA user_version = 5')
 
 
 def list_tags(db):
     return [dict(row) for row in db.execute('''SELECT name, SUM(note_count) AS note_count, SUM(task_count) AS task_count FROM (
-        SELECT value AS name, COUNT(*) AS note_count, 0 AS task_count FROM notes, json_each(notes.tags) GROUP BY value
+        SELECT value AS name, COUNT(*) AS note_count, 0 AS task_count FROM entries, json_each(entries.tags) WHERE kind = 'note' GROUP BY value
         UNION ALL
-        SELECT value AS name, 0 AS note_count, COUNT(*) AS task_count FROM tasks, json_each(tasks.tags) GROUP BY value
+        SELECT value AS name, 0 AS note_count, COUNT(*) AS task_count FROM entries, json_each(entries.tags) WHERE kind = 'task' GROUP BY value
         ) GROUP BY name ORDER BY name''')]
 
 
 def matching_ids(db, table, name):
-    active = ''
-    return [r[0] for r in db.execute(f'''WITH RECURSIVE matching(id) AS (
-        SELECT item.id FROM {table} item WHERE EXISTS(SELECT 1 FROM json_each(item.tags) WHERE value = ?)
-        UNION SELECT child.id FROM {table} child JOIN matching ON child.parent_id = matching.id WHERE 1 {active}
-        ) SELECT id FROM matching''', (normalize_tag(name),))]
+    kind = 'note' if table == 'notes' else 'task'
+    return [r[0] for r in db.execute('''WITH RECURSIVE matching(id) AS (
+        SELECT item.id FROM entries item WHERE item.kind = ? AND EXISTS(SELECT 1 FROM json_each(item.tags) WHERE value = ?)
+        UNION SELECT child.id FROM entries child JOIN matching ON child.parent_id = matching.id WHERE child.kind = ?
+        ) SELECT id FROM matching''', (kind, normalize_tag(name), kind))]

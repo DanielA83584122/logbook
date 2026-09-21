@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import styled, { keyframes, css } from 'styled-components';
 import { useJournalContext, registerDraftFlush } from '../JournalContext';
 import { api, errorMessage } from '../api';
-import type { OutlineItem } from '../types';
+import type { EntryKind, OutlineItem } from '../types';
 import { TextButton, VisuallyHidden } from '../styles';
 import { MarkdownContent, markdownText, richTextStyles, mergeMarkdown, formatMarkdown, pastedBullet } from '../markdown';
 import { RichTextEditor, type RichTextHandle, type TextOffsets } from './RichTextEditor';
@@ -25,10 +26,15 @@ const Children = styled(List)<{ $task: boolean }>`
 `;
 const popOut = keyframes`0% { opacity: 1; transform: scale(1); } 40% { opacity: .8; transform: scale(1.012); } 100% { opacity: 0; transform: translateY(-3px) scale(.985); }`;
 const slideIn = keyframes`from { opacity: 0; transform: translateY(-7px); } to { opacity: 1; transform: translateY(0); }`;
-const Item = styled.li<{ $leaving?: boolean; $arriving?: boolean }>`
+const settleIn = keyframes`from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); }`;
+const shiftIn = keyframes`from { opacity: .72; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); }`;
+const shiftOut = keyframes`from { opacity: .72; transform: translateX(10px); } to { opacity: 1; transform: translateX(0); }`;
+const Item = styled.li<{ $leaving?: boolean; $arriving?: boolean; $created?: boolean; $shifting?: 'in' | 'out' | null }>`
   min-width: 0; transform-origin: left center;
   ${({ $leaving }) => $leaving && css`animation: ${popOut} 180ms ease-out both; pointer-events: none;`}
   ${({ $arriving }) => $arriving && css`animation: ${slideIn} 280ms cubic-bezier(.2,.7,.3,1) both;`}
+  ${({ $created }) => $created && css`animation: ${settleIn} 220ms ease-out both;`}
+  ${({ $shifting }) => $shifting && css`animation: ${$shifting === 'in' ? shiftIn : shiftOut} 220ms cubic-bezier(.2, 0, 0, 1) both;`}
 `;
 const Row = styled.div`position: relative; display: flex; align-items: flex-start; min-height: var(--bullet-row-height); @media(pointer: coarse) { min-height: 44px; }`;
 const Branch = styled.div<{ $open: boolean }>`
@@ -71,7 +77,7 @@ const ComposerTarget = styled.button<{ $floating: boolean }>`
 const Marker = styled.span<{ $task: boolean }>`
   display: flex; width: 40px; min-width: 40px; height: var(--bullet-row-height); align-items: center; justify-content: center;
   &::before { content: ${({ $task }) => $task ? "''" : "'–'"}; font-size: 14px;
-    ${({ $task }) => $task ? 'width: 14px; height: 14px; border: 1.5px solid var(--checkbox); border-radius: 2px;' : ''} }
+    ${({ $task }) => $task ? 'width: 12px; height: 12px; border: 1.25px solid var(--checkbox); border-radius: 50%;' : ''} }
   @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px; }
 `;
 const DraftItem = styled(Item)<{ $emptyTask: boolean }>`
@@ -80,12 +86,24 @@ const DraftItem = styled(Item)<{ $emptyTask: boolean }>`
     &:focus-within > ${Row} > ${Marker} { visibility: visible; }
   `}
 `;
-const Checkbox = styled.button<{ $checked?: boolean }>`
+const Checkbox = styled.button<{ $checked?: boolean; $suppressPreview?: boolean }>`
   position: relative; display: flex; align-items: center; justify-content: center; width: 40px; min-width: 40px; height: var(--bullet-row-height);
-  border: 0; padding: 0; background: transparent; border-radius: 3px;
-  &::before { content: ''; width: 14px; height: 14px; border: 1.5px solid var(--checkbox); border-radius: 2px; }
-  &:hover::before { background: var(--soft); }
-  ${({ $checked }) => $checked && css`&::after { content: ''; position: absolute; width: 7px; height: 4px; border-left: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); }`}
+  border: 0; padding: 0; background: transparent; border-radius: 50%; color: var(--checkbox);
+  transition: transform 120ms ease-out; &:active { transform: scale(0.96); }
+  &::before { content: ''; width: 12px; height: 12px; border: 1.25px solid currentColor; border-radius: 50%; transition-property: background-color, border-color; transition-duration: 120ms; transition-timing-function: ease-out; }
+  &::after { content: ''; position: absolute; width: 7px; height: 7px; background: currentColor;
+    mask: url('/icons/check-flaticon.svg') center / contain no-repeat;
+    -webkit-mask: url('/icons/check-flaticon.svg') center / contain no-repeat;
+    opacity: ${({ $checked }) => $checked ? 1 : 0}; scale: ${({ $checked }) => $checked ? 1 : .25};
+    filter: blur(${({ $checked }) => $checked ? 0 : 4}px);
+    transition-property: opacity, scale, filter; transition-duration: 150ms; transition-timing-function: cubic-bezier(.2, 0, 0, 1); }
+  @media (hover: hover) {
+    ${({ $checked, $suppressPreview }) => !$suppressPreview && css`
+      &:hover::before { background: transparent; border-color: var(--link); }
+      &:hover::after { opacity: ${$checked ? 0 : 1}; scale: ${$checked ? .25 : 1};
+        filter: blur(${$checked ? 4 : 0}px); background: var(--link); }
+    `}
+  }
   @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px; }
 `;
 const Disclosure = styled.button<{ $open: boolean; $task: boolean; $progress: number }>`
@@ -93,33 +111,25 @@ const Disclosure = styled.button<{ $open: boolean; $task: boolean; $progress: nu
   display: grid; place-items: center; background: transparent; border-radius: 4px; color: var(--muted);
   &::before { content: ''; width: 5px; height: 5px; border-right: 1.25px solid currentColor; border-bottom: 1.25px solid currentColor;
     transform: rotate(${({ $open }) => $open ? '45deg' : '-45deg'}); transition: transform 140ms ease-out; }
-  ${({ $task, $progress }) => $task && css`&::before { width: 14px; height: 14px; border: 1px solid currentColor; border-radius: 50%; transform: none; background: conic-gradient(currentColor ${$progress * 360}deg, transparent 0); }`}
+  ${({ $task, $progress }) => $task && css`&::before { --task-progress: ${$progress * 360}deg; width: 12px; height: 12px; border: 1px solid currentColor; border-radius: 50%; transform: none; background: conic-gradient(currentColor var(--task-progress), transparent 0); transition: --task-progress 240ms ease-out; }`}
   @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px;
   }
 `;
 const Text = styled.div<{ $done?: boolean; $action?: boolean }>`
   ${richTextStyles}; cursor: text;
-  flex: ${({ $action }) => $action ? '0 1 auto' : '1'}; min-width: 0; min-height: var(--bullet-row-height); padding: var(--bullet-padding); border: 0; background: transparent;
+  flex: ${({ $action }) => $action ? '0 1 auto' : '1'}; min-width: 0; min-height: var(--bullet-row-height); padding: var(--bullet-padding); border: 0; background: transparent; color: var(--ink);
   ${({ $done }) => $done && css`color: var(--muted); text-decoration: line-through; a { color: var(--muted); }`}
   text-align: left; line-height: var(--bullet-line-height); font-size: var(--bullet-size); white-space: pre-wrap; overflow-wrap: anywhere;
   @media(pointer: coarse) { min-height: 44px; padding: 10px 0; }
 `;
-const AddSubtask = styled.button`
-  width: 40px; min-width: 40px; height: var(--bullet-row-height); padding: 0; border: 0; background: transparent;
-  color: var(--muted); opacity: 0; font: inherit; font-size: 18px; line-height: 1;
-  transition: opacity 120ms ease-out, color 120ms ease-out;
-  ${Row}:hover & { opacity: .7; }
-  &:hover, &:focus-visible { opacity: 1; color: var(--ink); }
-  @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px; opacity: .7; }
-`;
-
-
 type Draft = {
   active: boolean; mode: 'new' | 'edit'; id: number | null; content: string; saved: string;
-  clientId: ReturnType<typeof crypto.randomUUID>; parentId: number | null; afterId: number | null; hiddenTag: string | null; tags: string[]; savedTags: string[];
+  kind: EntryKind;
+  clientId: ReturnType<typeof crypto.randomUUID>; requestId: ReturnType<typeof crypto.randomUUID>; revision: number | null;
+  parentId: number | null; afterId: number | null; hiddenTag: string | null; tags: string[]; savedTags: string[];
 };
 type Props = {
-  kind: 'notes' | 'tasks'; items: OutlineItem[]; day?: string; composer?: boolean;
+  kind: EntryKind | 'mixed'; items: OutlineItem[]; day?: string; composer?: boolean;
   archived?: boolean; scope?: string;
   refresh: () => Promise<void>; notify: (message: string) => void;
 };
@@ -143,31 +153,46 @@ function selectedTextOffsets(element?: HTMLElement, link?: HTMLElement): TextOff
 
 const sorted = (items: OutlineItem[]) => [...items].sort((a, b) => a.position - b.position || a.id - b.id);
 const siblings = (items: OutlineItem[], parentId: number | null) => sorted(items.filter(item => item.parent_id === parentId));
-const fresh = (items: OutlineItem[], active: boolean, parentId: number | null = null, afterId?: number | null): Draft => ({
-  tags: [], savedTags: [], hiddenTag: null, active, mode: 'new', id: null, content: '', saved: '', clientId: crypto.randomUUID(), parentId,
+const fresh = (items: OutlineItem[], active: boolean, kind: EntryKind, parentId: number | null = null, afterId?: number | null): Draft => ({
+  tags: [], savedTags: [], hiddenTag: null, active, mode: 'new', id: null, content: '', saved: '',
+  clientId: crypto.randomUUID(), requestId: crypto.randomUUID(), revision: null, parentId,
+  kind,
   afterId: afterId === undefined ? siblings(items, parentId).at(-1)?.id ?? null : afterId,
 });
 
 export function Outline({ kind, items, day, composer = false, archived = false, scope, refresh, notify }: Props) {
-  const { activeTag, completed, onComplete, target } = useJournalContext();
-  const blank = (...args: Parameters<typeof fresh>): Draft => ({ ...fresh(...args), hiddenTag: activeTag });
+  const defaultKind: EntryKind = kind === 'mixed' ? 'notes' : kind;
+  const entryKind = (row: OutlineItem): EntryKind => {
+    const value = row.kind as string | undefined;
+    return value === 'task' || value === 'tasks' ? 'tasks' : value === 'note' || value === 'notes' ? 'notes' : defaultKind;
+  };
+  const { activeTag, completed, onComplete, reopened, onReopen, target } = useJournalContext();
+  const blank = (rows: OutlineItem[], active: boolean, parentId: number | null = null, afterId?: number | null, draftKind: EntryKind = defaultKind): Draft =>
+    ({ ...fresh(rows, active, draftKind, parentId, afterId), hiddenTag: activeTag });
   const [expanded, setExpanded] = useState(new Set<number>());
   const [previewed, setPreviewed] = useState(new Set<number>());
   const [completing, setCompleting] = useState<number | null>(null);
+  const [removed, setRemoved] = useState(new Set<number>());
+  const [created, setCreated] = useState(new Set<number>());
+  const [suppressedPreviews, setSuppressedPreviews] = useState(new Set<number>());
+  const previewSuppressedAt = useRef(new Map<number, number>());
+  const [shifting, setShifting] = useState<'in' | 'out' | null>(null);
   const [, setSelectedAll] = useState(false);
   const selectionActive = useRef(false);
   const surface = useRef<HTMLDivElement>(null);
-  const key = kind === 'notes' ? `still-draft-${day}` : scope ? `still-outline-tasks-${scope}` : 'still-outline-tasks';
+  const key = scope ? `still-outline-${kind}-${scope}` : kind === 'tasks' ? 'still-outline-tasks' : `still-draft-${day}`;
   const [draft, setDraft] = useState<Draft>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(key) ?? 'null') as Partial<Draft> | null;
       if (stored && (stored.content !== stored.saved || JSON.stringify(stored.tags ?? []) !== JSON.stringify(stored.savedTags ?? [])) && typeof stored.content === 'string') {
         const row = items.find(item => item.id === stored.id);
-        return { ...blank(items, true), ...stored, active: true, parentId: stored.parentId ?? row?.parent_id ?? null };
+        return { ...blank(items, true), ...stored, requestId: stored.requestId ?? crypto.randomUUID(), revision: stored.revision ?? row?.revision ?? null,
+          kind: stored.kind ?? (row ? entryKind(row) : defaultKind), active: true, parentId: stored.parentId ?? row?.parent_id ?? null };
       }
       for (const row of items) {
-        const edit = localStorage.getItem(`still-edit-${kind}-${row.id}`);
-        if (edit !== null) return { ...blank(items, true), mode: 'edit', id: row.id, content: edit, saved: row.content, parentId: row.parent_id };
+        const rowKind = entryKind(row);
+        const edit = localStorage.getItem(`still-edit-${rowKind}-${row.id}`);
+        if (edit !== null) return { ...blank(items, true), kind: rowKind, mode: 'edit', id: row.id, revision: row.revision, content: edit, saved: row.content, parentId: row.parent_id };
       }
       const oldTask = kind === 'tasks' ? localStorage.getItem('still-task-draft') : null;
       if (oldTask) return { ...blank(items, true), content: oldTask };
@@ -177,8 +202,8 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   const current = useRef(draft);
   const records = useRef(items);
   records.current = items;
-  useEffect(() => {
-    if (target?.kind !== kind) return;
+  useLayoutEffect(() => {
+    if (!target || kind !== 'mixed' && target.kind !== kind) return;
     const item = records.current.find(row => row.id === target.id);
     if (!item) return;
     const parents: number[] = [];
@@ -186,7 +211,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     while (parent !== null) { parents.push(parent); parent = records.current.find(row => row.id === parent)?.parent_id ?? null; }
     setExpanded(previous => new Set([...previous, ...parents]));
     const frame = requestAnimationFrame(() => requestAnimationFrame(() => {
-      const row = document.querySelector<HTMLElement>(`[data-kind="${kind}"][data-item-id="${target.id}"] [role="group"]`);
+      const row = document.querySelector<HTMLElement>(`[data-kind="${target.kind}"][data-item-id="${target.id}"] [role="group"]`);
       row?.scrollIntoView({ block: 'center' }); row?.focus({ preventScroll: true });
     }));
     return () => cancelAnimationFrame(frame);
@@ -197,6 +222,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   const pendingLinkEdit = useRef(false);
   const queue = useRef<Promise<number | null>>(Promise.resolve(null));
   const lock = useRef(false);
+  const actionToken = useRef(0);
   const restoringFocus = useRef(false);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -208,6 +234,13 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     else localStorage.removeItem(key);
     if (mounted.current) setDraft(next);
   }, [key]);
+  useEffect(() => {
+    const value = current.current;
+    if (kind !== 'tasks' || !composer || !value.active || value.mode !== 'new' ||
+        value.id !== null || value.parentId !== null || value.content.trim() || value.tags.length) return;
+    const afterId = siblings(items, null).at(-1)?.id ?? null;
+    if (value.afterId !== afterId) persist({ ...value, afterId });
+  }, [items, kind, composer, persist]);
   const focus = () => requestAnimationFrame(() => {
     if (selectionActive.current) { restoringFocus.current = false; return; }
     input.current?.focus({ preventScroll: false }, pendingSelection.current);
@@ -228,26 +261,47 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     const operation = queue.current.catch(() => null).then(async () => {
       const snapshot = current.current;
       if (!snapshot.active || snapshot.content === snapshot.saved && JSON.stringify(snapshot.tags) === JSON.stringify(snapshot.savedTags)) return snapshot.id;
+      let announced = false;
+      const feedback = setTimeout(() => {
+        announced = true;
+        window.dispatchEvent(new CustomEvent('still-save-state', { detail: 'saving' }));
+      }, 450);
       setSaving(true);
       try {
         if (!snapshot.content.trim() && !snapshot.tags.length) {
           if (snapshot.id) {
-            await editDocument([{ kind, id: snapshot.id, delete: true }], snapshot.clientId);
-            persist({ ...current.current, id: null, saved: '', savedTags: [] });
+            await editDocument([{ kind: snapshot.kind, id: snapshot.id, delete: true, expected_revision: snapshot.revision }], snapshot.clientId, snapshot.requestId);
+            setRemoved(previous => new Set([...previous, snapshot.id!]));
+            if (current.current.clientId === snapshot.clientId) persist({ ...current.current, id: null, revision: null, requestId: crypto.randomUUID(), saved: '', savedTags: [] });
             await refresh();
           }
-          setFailed(false); return null;
+          setFailed(false);
+          if (announced) window.dispatchEvent(new CustomEvent('still-save-state', { detail: 'saved' }));
+          return null;
         }
         const [result] = await editDocument([{
-          kind, id: snapshot.id, content: snapshot.content, tags: snapshot.tags, date: day, client_id: snapshot.clientId, parent_id: snapshot.parentId, after_id: snapshot.afterId,
-        }], snapshot.clientId);
+          kind: snapshot.kind, id: snapshot.id, content: snapshot.content, tags: snapshot.tags, date: day, client_id: snapshot.clientId, parent_id: snapshot.parentId, after_id: snapshot.afterId,
+          expected_revision: snapshot.revision,
+        }], snapshot.clientId, snapshot.requestId);
         if (!result) throw new Error('The entry could not be saved.');
-        persist({ ...current.current, id: result.id, saved: snapshot.content, savedTags: snapshot.tags });
-        if (kind === 'tasks') localStorage.removeItem('still-task-draft');
-        if (snapshot.id) localStorage.removeItem(`still-edit-${kind}-${snapshot.id}`);
-        setFailed(false); await refresh(); return result.id;
-      } catch (error) { setFailed(true); notify(errorMessage(error)); throw error; }
-      finally { if (mounted.current) setSaving(false); }
+        if (snapshot.id === null) {
+          setCreated(previous => new Set([...previous, result.id]));
+          setRemoved(previous => {
+            if (!previous.has(result.id)) return previous;
+            const next = new Set(previous); next.delete(result.id); return next;
+          });
+        }
+        if (current.current.clientId === snapshot.clientId) persist({ ...current.current, id: result.id, revision: result.revision, requestId: crypto.randomUUID(), saved: snapshot.content, savedTags: snapshot.tags });
+        if (snapshot.kind === 'tasks') localStorage.removeItem('still-task-draft');
+        if (snapshot.id) localStorage.removeItem(`still-edit-${snapshot.kind}-${snapshot.id}`);
+        setFailed(false);
+        if (announced) window.dispatchEvent(new CustomEvent('still-save-state', { detail: 'saved' }));
+        await refresh(); return result.id;
+      } catch (error) {
+        if (announced) window.dispatchEvent(new CustomEvent('still-save-state', { detail: 'clear' }));
+        setFailed(true); notify(errorMessage(error)); throw error;
+      }
+      finally { clearTimeout(feedback); if (mounted.current) setSaving(false); }
     });
     queue.current = operation;
     return operation;
@@ -255,33 +309,39 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
 
   useEffect(() => registerDraftFlush(save), [save]);
   useEffect(() => {
-    const applied = () => { selectionActive.current = false; setSelectedAll(false); persist(blank([], composer)); };
+    const applied = () => { selectionActive.current = false; setSelectedAll(false); setRemoved(new Set()); persist(blank([], composer)); };
     window.addEventListener('still-history-applied', applied);
     return () => window.removeEventListener('still-history-applied', applied);
   }, [composer, persist]);
   useEffect(() => {
-    if (kind !== 'notes' || !draft.active || draft.mode === 'edit') return;
+    if (draft.kind !== 'notes' || !draft.active || draft.mode === 'edit') return;
     const timeout = setTimeout(() => { void save().catch(() => {}); }, 700);
     return () => clearTimeout(timeout);
-  }, [draft.content, draft.tags, draft.active, draft.mode, kind, save]);
+  }, [draft.content, draft.tags, draft.active, draft.mode, draft.kind, save]);
   useEffect(() => {
-    if (previouslyComposer.current && !composer && kind === 'notes') {
-      setDraft(value => ({ ...value, active: false }));
-      void save().then(() => persist(blank(records.current, false))).catch(() => {
-        current.current = { ...current.current, active: false };
-        setDraft(current.current);
-        // Keep the unsaved local copy for the earlier-day recovery worker.
-      });
+    if (!composer) {
+      const value = current.current;
+      const emptyNewDraft = value.active && value.mode === 'new' && value.id === null && !value.content.trim() && !value.tags.length;
+      if (emptyNewDraft) {
+        persist({ ...value, active: false });
+      } else if (previouslyComposer.current && defaultKind === 'notes') {
+        setDraft(previous => ({ ...previous, active: false }));
+        void save().then(() => persist(blank(records.current, false))).catch(() => {
+          current.current = { ...current.current, active: false };
+          setDraft(current.current);
+          // Keep the unsaved local copy for the earlier-day recovery worker.
+        });
+      }
     }
     previouslyComposer.current = composer;
-  }, [composer, kind, persist, save]);
+  }, [composer, defaultKind, persist, save]);
   useEffect(() => {
     mounted.current = true;
     const onFocus = () => {
-      if (kind === 'notes' && composer && !document.querySelector('dialog[open]') && document.activeElement === document.body) input.current?.focus({ preventScroll: true });
+      if (defaultKind === 'notes' && composer && !document.querySelector('dialog[open]') && document.activeElement === document.body) input.current?.focus({ preventScroll: true });
     };
     const frame = requestAnimationFrame(() => {
-      if (kind === 'notes' && composer) input.current?.focus({ preventScroll: true });
+      if (defaultKind === 'notes' && composer) input.current?.focus({ preventScroll: true });
     });
     const flush = () => { void save().catch(() => {}); };
     window.addEventListener('focus', onFocus); window.addEventListener('pagehide', flush);
@@ -294,10 +354,17 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
 
   const run = async (action: () => Promise<void>, restoreFocus = true) => {
     if (lock.current) return;
+    const token = ++actionToken.current;
     lock.current = true; restoringFocus.current = restoreFocus; setBusy(true);
     try { await action(); }
     catch (error) { notify(errorMessage(error)); }
-    finally { lock.current = false; if (mounted.current) { setBusy(false); if (restoreFocus) focus(); } }
+    finally {
+      if (actionToken.current === token && mounted.current) {
+        lock.current = false;
+        flushSync(() => setBusy(false));
+        if (restoreFocus) focus();
+      }
+    }
   };
   const select = (row: OutlineItem, element?: HTMLElement, contextLink?: HTMLElement, offsets?: TextOffsets) => {
     const selection = offsets ?? selectedTextOffsets(element, contextLink);
@@ -306,12 +373,15 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       const group = siblings(records.current, row.parent_id);
       const index = group.findIndex(item => item.id === row.id);
       const content = row.content;
-      persist({ ...blank(records.current, true), mode: 'edit', id: row.id, content, saved: content,
+      flushSync(() => persist({ ...blank(records.current, true), mode: 'edit', id: row.id, content, saved: content,
+        kind: entryKind(row),
+        revision: row.revision,
         tags: row.tags ?? [], savedTags: row.tags ?? [], hiddenTag: activeTag && row.tags?.includes(activeTag) ? activeTag : null,
-        parentId: row.parent_id, afterId: group[index - 1]?.id ?? null });
-      pendingSelection.current = selection;
-      pendingLinkEdit.current = Boolean(contextLink);
-    });
+        parentId: row.parent_id, afterId: group[index - 1]?.id ?? null }));
+      input.current?.focus({ preventScroll: false }, selection);
+      if (contextLink) input.current?.editLink();
+      if (!surface.current?.contains(document.activeElement)) setTimeout(focus, 0);
+    }, false);
   };
   const move = async (outdent: boolean) => {
     const snapshot = current.current;
@@ -321,20 +391,50 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     if (outdent ? !parent : !previous) return;
     const parentId = outdent ? parent!.parent_id : previous!.id;
     const afterId = outdent ? parent!.id : siblings(records.current, previous!.id).at(-1)?.id ?? null;
+    const targetParent = parentId === null ? null : records.current.find(item => item.id === parentId);
+    const targetKind: EntryKind = targetParent ? entryKind(targetParent) : defaultKind;
     let level = 1, ancestor = parentId;
     while (ancestor !== null) { level++; ancestor = records.current.find(item => item.id === ancestor)?.parent_id ?? null; }
     if (level > MAX_LEVELS) throw new Error(`Bullets support up to ${MAX_LEVELS} levels.`);
-    const id = await save();
-    if (id) await editDocument([{ kind, id, move: true, parent_id: parentId, after_id: afterId }]);
-    persist({ ...current.current, parentId, afterId });
-    if (id) await refresh();
+    if (snapshot.id === null) {
+      setShifting(outdent ? 'out' : 'in');
+      setTimeout(() => { if (mounted.current) setShifting(null); }, 240);
+      flushSync(() => persist({ ...snapshot, kind: targetKind, parentId, afterId }));
+      // A new draft has no server-side position to move yet. Keep indentation
+      // immediate and persist the final parent when Enter or blur saves it.
+      // Waiting on a create request here makes a quick Tab, Enter sequence lose
+      // the Enter while the structural action still owns the mutation lock.
+      // If the note autosave had already started, reconcile the just-created
+      // row through the same save queue before a following Enter advances.
+      const reconcile = queue.current.catch(() => null).then(async id => {
+        const value = current.current;
+        if (!id || value.clientId !== snapshot.clientId || value.parentId !== parentId || value.kind !== targetKind) return id;
+        const [moved] = await editDocument([{ kind: snapshot.kind, id, move: true, parent_id: parentId, after_id: afterId, expected_revision: value.revision }]);
+        if (moved && current.current.clientId === snapshot.clientId) {
+          persist({ ...current.current, kind: targetKind, parentId, afterId, revision: moved.revision });
+          await refresh();
+        }
+        return id;
+      });
+      queue.current = reconcile;
+      return;
+    } else {
+      const id = await save();
+      const [moved] = id ? await editDocument([{ kind: snapshot.kind, id, move: true, parent_id: parentId, after_id: afterId, expected_revision: current.current.revision }]) : [];
+      setShifting(outdent ? 'out' : 'in');
+      setTimeout(() => { if (mounted.current) setShifting(null); }, 240);
+      lock.current = false;
+      flushSync(() => { setBusy(false); persist({ ...current.current, kind: targetKind, parentId, afterId, revision: moved?.revision ?? current.current.revision }); });
+    }
+    await refresh();
   };
   const complete = (id: number) => void run(async () => {
     await save();
     const task = records.current.find(row => row.id === id)!;
     if (task.completed_at) {
-      const result = await api<{ operation_id: string | null }>(`/tasks/${id}/reopen`, 'POST', { completed_at: task.completed_at, record_history: true });
+      const result = await api<{ reopened: number[]; operation_id: string | null }>(`/tasks/${id}/reopen`, 'POST', { completed_at: task.completed_at, expected_revision: task.revision, record_history: true });
       recordEdit(result.operation_id, crypto.randomUUID());
+      onReopen(result.reopened);
       await refresh(); return;
     }
     let finishing = task;
@@ -346,21 +446,17 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     if (finishing.parent_id === null) setCompleting(finishing.id);
     try {
       const delay = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180;
-      const [result] = await Promise.all([api<{ task_ids: number[]; completed_at: string }>(`/tasks/${id}/complete`, 'POST'), new Promise(resolve => setTimeout(resolve, delay))]);
+      const [result] = await Promise.all([api<{ task_ids: number[]; completed_at: string }>(`/tasks/${id}/complete?expected_revision=${task.revision}`, 'POST'), new Promise(resolve => setTimeout(resolve, delay))]);
       onComplete(result.task_ids, id, result.completed_at);
       persist(blank(records.current, composer));
       await refresh();
     } finally { setCompleting(null); }
   }, false);
 
-  const beginSubtask = (parentId: number) => void run(async () => {
-    await save();
-    persist(blank(records.current, true, parentId));
-  });
-
   const beginBullet = () => void run(async () => {
     await save();
-    persist(blank(records.current, true));
+    lock.current = false;
+    flushSync(() => { setBusy(false); persist(blank(records.current, true)); });
   });
 
   useEffect(() => {
@@ -368,7 +464,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       const detail = (event as CustomEvent<{ key: string; id: number | null; end: boolean }>).detail;
       if (detail.key !== key) return;
       const row = records.current.find(item => item.id === detail.id);
-      if (row && !row.completed_at) {
+      if (row && (archived || !row.completed_at)) {
         const offset = detail.end ? markdownText(row.content).length : 0;
         select(row, undefined, undefined, { anchor: offset, head: offset });
       } else if (detail.id === null) { persist(blank(records.current, true)); focus(); }
@@ -403,17 +499,21 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     const snapshot = current.current;
     const ownId = await save();
     if (!ownId) {
-      persist({ ...blank([], true), mode: 'edit', id: other.id, content: other.content, saved: other.content,
+      persist({ ...blank([], true), kind: entryKind(other), mode: 'edit', id: other.id, content: other.content, saved: other.content,
         tags: other.tags ?? [], savedTags: other.tags ?? [], parentId: other.parent_id });
       pendingSelection.current = { anchor: markdownText(other.content).length, head: markdownText(other.content).length };
       return;
     }
-    const first = backwards ? other : { ...other, id: ownId, content: snapshot.content, tags: snapshot.tags };
-    const second = backwards ? { ...other, id: ownId, content: snapshot.content, tags: snapshot.tags } : other;
+    const own = { ...other, id: ownId, kind: snapshot.kind, content: snapshot.content, tags: snapshot.tags, revision: current.current.revision ?? other.revision };
+    const first = backwards ? other : own;
+    const second = backwards ? own : other;
     const content = mergeMarkdown(first.content, second.content), tags = [...new Set([...first.tags ?? [], ...second.tags ?? []])];
-    const [result] = await editDocument([{ kind, id: first.id, content, tags }, { kind, id: second.id, delete: true }]);
+    const [result] = await editDocument([
+      { kind: entryKind(first), id: first.id, content, tags, expected_revision: first.revision },
+      { kind: entryKind(second), id: second.id, delete: true, expected_revision: second.revision },
+    ]);
     if (!result) return;
-    persist({ ...blank([], true), mode: 'edit', id: result.id, content, saved: content, tags, savedTags: tags, parentId: result.parent_id });
+    persist({ ...blank([], true), kind: entryKind(first), mode: 'edit', id: result.id, content, saved: content, tags, savedTags: tags, parentId: result.parent_id });
     pendingSelection.current = { anchor: markdownText(first.content).length, head: markdownText(first.content).length };
     await refresh();
   }, direction === 'backspace' || direction === 'delete');
@@ -429,13 +529,13 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     await save();
     const bullet = pastedBullet(text, html);
     const tags = [...new Set([...bullet.tags, ...(activeTag ? [activeTag] : [])])];
-    const changes: Record<string, unknown>[] = records.current.filter(item => !item.completed_at).map(item => ({ kind, id: item.id, delete: true }));
+    const changes: Record<string, unknown>[] = records.current.map(item => ({ kind: entryKind(item), id: item.id, delete: true }));
     const hasContent = !!(bullet.content.trim() || bullet.tags.length);
-    if (hasContent) changes.push({ kind, content: bullet.content, tags, date: day, client_id: crypto.randomUUID() });
+    if (hasContent) changes.push({ kind: defaultKind, content: bullet.content, tags, date: day, client_id: crypto.randomUUID() });
     const results = changes.length ? await editDocument(changes) : [];
     const created = hasContent ? results.at(-1) : null;
     selectionActive.current = false; setSelectedAll(false); window.getSelection()?.removeAllRanges();
-    persist(created ? { ...blank([], true), mode: 'edit', id: created.id, content: created.content, saved: created.content, tags: created.tags ?? [], savedTags: created.tags ?? [] } : blank([], composer));
+    persist(created ? { ...blank([], true), kind: defaultKind, mode: 'edit', id: created.id, content: created.content, saved: created.content, tags: created.tags ?? [], savedTags: created.tags ?? [] } : blank([], composer));
     if (created) pendingSelection.current = { anchor: markdownText(created.content).length, head: markdownText(created.content).length };
     await refresh();
   });
@@ -483,17 +583,21 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       return next.size === previous.size ? previous : next;
     });
   };
-  const isExpanded = (id: number) => (kind === 'tasks' && !!items.find(row => row.id === id)?.completed_at) || expanded.has(id) || previewed.has(id) || draftInside(id);
+  const isExpanded = (id: number) => {
+    const row = items.find(item => item.id === id);
+    return (!!row && entryKind(row) === 'tasks' && !!row.completed_at) || expanded.has(id) || previewed.has(id) || draftInside(id);
+  };
   const renderToggle = (id: number | null, content: string) => {
     const row = items.find(item => item.id === id);
     const childCount = row?.child_count ?? items.filter(item => item.parent_id === id).length;
     const doneCount = row?.completed_child_count ?? items.filter(item => item.parent_id === id && item.completed_at).length;
+    const rowKind = row ? entryKind(row) : draft.kind;
     if (id === null || !childCount && !(draft.active && draft.parentId === id && (draft.content.trim() || draft.tags.length))) return null;
     const open = isExpanded(id);
     const pinned = expanded.has(id) || draftInside(id);
-    if (kind === 'tasks' && row?.completed_at) return null;
-    return <Disclosure type="button" $open={open} $task={kind === 'tasks'} $progress={childCount ? doneCount / childCount : 0} disabled={busy} aria-expanded={open}
-      aria-description={kind === 'tasks' ? `${doneCount} of ${childCount} children completed` : undefined}
+    if (rowKind === 'tasks' && row?.completed_at) return null;
+    return <Disclosure type="button" data-focus-chrome $open={open} $task={rowKind === 'tasks'} $progress={childCount ? doneCount / childCount : 0} disabled={busy} aria-expanded={open}
+      aria-description={rowKind === 'tasks' ? `${doneCount} of ${childCount} children completed` : undefined}
       aria-label={`${pinned ? 'Collapse' : 'Expand'} ${markdownText(content) || 'bullet'}`}
       onPointerEnter={event => {
         if (!pinned && event.pointerType !== 'touch') setPreviewed(previous => previous.has(id) ? previous : new Set([...previous, id]));
@@ -507,22 +611,35 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       }, false)} />;
   };
 
-  const inputLabel = draft.mode === 'edit' ? kind === 'notes' ? 'Edit note' : 'Edit to-do' : kind === 'notes' ? 'New journal bullet' : 'New to-do';
+  const inputLabel = draft.mode === 'edit' ? draft.kind === 'notes' ? 'Edit note' : 'Edit to-do' : draft.kind === 'notes' ? 'New journal bullet' : 'New to-do';
   const renderMarker = (id: number | null, content: string) => {
     const toggle = renderToggle(id, content);
-    if (kind === 'tasks' && id !== null) {
-      const done = !!items.find(item => item.id === id)?.completed_at;
-      return toggle ?? <Checkbox type="button" $checked={done} aria-pressed={done} disabled={busy} aria-label={`${done ? 'Reopen' : 'Complete'} ${markdownText(content)}`} onClick={() => complete(id)} />;
+    const row = items.find(item => item.id === id);
+    const rowKind = row ? entryKind(row) : draft.kind;
+    if (rowKind === 'tasks' && id !== null) {
+      const done = !!row?.completed_at;
+      return toggle ?? <Checkbox type="button" data-focus-chrome data-preview-suppressed={suppressedPreviews.has(id) || undefined} $checked={done} $suppressPreview={suppressedPreviews.has(id)} aria-pressed={done} disabled={busy} aria-label={`${done ? 'Reopen' : 'Complete'} ${markdownText(content)}`}
+        onPointerLeave={event => {
+          const button = event.currentTarget;
+          const release = () => {
+            if (button.matches(':hover')) return;
+            previewSuppressedAt.current.delete(id);
+            setSuppressedPreviews(previous => { const next = new Set(previous); next.delete(id); return next; });
+          };
+          const remaining = 250 - (performance.now() - (previewSuppressedAt.current.get(id) ?? 0));
+          if (remaining > 0) setTimeout(release, remaining); else release();
+        }}
+        onClick={() => { previewSuppressedAt.current.set(id, performance.now()); setSuppressedPreviews(previous => new Set([...previous, id])); complete(id); }} />;
     }
-    if (archived && kind === 'tasks') return <Checkbox as="span" $checked aria-hidden="true" />;
-    return toggle ?? <Marker $task={kind === 'tasks'} aria-hidden="true" />;
+    return toggle ?? <Marker data-focus-chrome $task={rowKind === 'tasks'} aria-hidden="true" />;
   };
   const renderDraft = (depth: number): ReactNode => <DraftItem key="draft" data-depth={depth}
-    data-outline-key={key} data-kind={kind} data-item-id={draft.id ?? 'draft'}
+    data-outline-key={key} data-kind={draft.kind} data-item-id={draft.id ?? 'draft'}
     onPointerLeave={() => clearPreview(draft.id)}
-    $emptyTask={kind === 'tasks' && draft.id === null && !draft.content.trim() && !draft.tags.length}
+    $emptyTask={draft.kind === 'tasks' && draft.id === null && !draft.content.trim() && !draft.tags.length}
+    $shifting={shifting}
     $leaving={completing === draft.id && completing !== null}>
-    <Row aria-busy={saving}>{renderMarker(draft.id, draft.content)}<RichTextEditor key={draft.clientId} ref={input} label={archived && draft.mode === 'new' ? 'New completed subtask' : inputLabel} value={draft.content} tags={draft.tags.filter(tag => tag !== activeTag)} readOnly={busy}
+    <Row aria-busy={saving}>{renderMarker(draft.id, draft.content)}<RichTextEditor key={draft.clientId} ref={input} label={archived && draft.kind === 'tasks' && draft.parentId !== null && draft.mode === 'new' ? 'New completed subtask' : inputLabel} value={draft.content} tags={draft.tags.filter(tag => tag !== activeTag)} readOnly={false}
       onBoundary={boundary} onSelectDocument={selectDocument}
       onChange={(content, tags) => persist({ ...current.current, content, tags: [...new Set([...tags, ...(current.current.hiddenTag && (content.trim() || tags.length) ? [current.current.hiddenTag] : [])])] })}
       onBlur={event => {
@@ -537,10 +654,36 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
         }).catch(() => {});
       }}
       onKeyDown={event => {
-        if (event.isComposing || busy) return;
+        // `busy` is presentation state and can remain true in this callback for
+        // one render after an async structural edit has released its lock.
+        // `run()` owns the actual mutation lock, so letting the key reach the
+        // handlers prevents a restored editor from swallowing the first key.
+        if (event.isComposing) return;
+        if (event.key === 'Enter' && !(event.currentTarget as HTMLElement).textContent?.trim() && current.current.id !== null) {
+          persist({ ...current.current, content: '', tags: [] });
+        }
         if (event.key === 'Tab') {
           if (event.shiftKey && current.current.parentId === null) return;
-          event.preventDefault(); void run(() => move(event.shiftKey));
+          event.preventDefault();
+          // Read ProseMirror's selection before moving the row. The browser's
+          // DOM selection can briefly point at the remounted editor instead.
+          const indentSelection = input.current?.selection() ?? selectedTextOffsets(event.currentTarget as HTMLElement);
+          // Draft indentation is entirely local and synchronous; it must not
+          // take the async mutation lock because Enter commonly follows Tab in
+          // the same typing cadence.
+          if (current.current.id === null) {
+            void move(event.shiftKey);
+            // A note autosave may already be in flight and reconcile this row
+            // after the immediate local move. Restore once more after that
+            // refresh so it cannot reset the caret to the start.
+            (document.activeElement as HTMLElement | null)?.blur();
+            void queue.current.finally(() => { pendingSelection.current = indentSelection; focus(); });
+          } else {
+            void run(async () => { await move(event.shiftKey); pendingSelection.current = indentSelection; });
+            // Do not expose the remounted editor as focused until run() can
+            // restore both focus and the saved caret after the server move.
+            (document.activeElement as HTMLElement | null)?.blur();
+          }
         } else if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault();
           if (!current.current.content.trim() && !current.current.tags.length && !current.current.id) {
@@ -548,9 +691,28 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
             return;
           }
           void run(async () => {
+            const split = input.current?.splitAtSelection();
+            if (split) persist({ ...current.current, content: split.before.content, tags: split.before.tags });
             const snapshot = current.current;
-            const id = await save();
-            persist(id ? blank(records.current, true, snapshot.parentId, id) : blank(records.current, composer));
+            let id = await save();
+            // The editor stays responsive while a request is in flight. If the
+            // user typed more, acknowledge that newer revision before Enter
+            // advances to the next row; never clear unacknowledged text.
+            if (current.current.clientId === snapshot.clientId &&
+                (current.current.content !== current.current.saved || JSON.stringify(current.current.tags) !== JSON.stringify(current.current.savedTags))) {
+              id = await save();
+            }
+            const parent = snapshot.parentId === null ? null : records.current.find(item => item.id === snapshot.parentId);
+            const nextKind = parent ? entryKind(parent) : defaultKind;
+            const next = id ? blank(records.current, true, snapshot.parentId, id, nextKind) : blank(records.current, composer);
+            const splitDraft = split?.after.content || split?.after.tags.length
+              ? { ...next, content: split.after.content, tags: split.after.tags }
+              : next;
+            if (split?.after.content || split?.after.tags.length) pendingSelection.current = { anchor: 0, head: 0 };
+            // Make the next rendered row interactive immediately. Otherwise a
+            // very fast click can land between this render and run()'s finally.
+            lock.current = false;
+            flushSync(() => persist(splitDraft));
           });
         } else if (event.key === 'Backspace' && current.current.mode === 'new' && !current.current.content && !current.current.tags.length && !current.current.id) {
           event.preventDefault(); dismissEmptyDraft();
@@ -563,7 +725,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   </DraftItem>;
 
   const renderChildren = (parentId: number | null, depth: number): ReactNode => {
-    const group: (OutlineItem | null)[] = sorted(items.filter(item =>
+    const group: (OutlineItem | null)[] = sorted(items.filter(item => !removed.has(item.id) &&
       (item.parent_id !== null && !items.some(parent => parent.id === item.parent_id) ? null : item.parent_id) === parentId
     )).filter(item => !draft.active || item.id !== draft.id);
     const draftParent = draft.parentId !== null && !items.some(row => row.id === draft.parentId) ? null : draft.parentId;
@@ -576,24 +738,26 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       group.splice(index, 0, null);
     }
     if (!group.length) return null;
-    const content = group.map(item => item === null ? renderDraft(depth) : <Item key={item.id} data-outline-key={key} data-done={!!item.completed_at} data-kind={kind} data-item-id={item.id} data-depth={depth} $leaving={completing === item.id}
+    const content = group.map(item => item === null ? renderDraft(depth) : <Item key={item.id} data-outline-key={key} data-done={!!item.completed_at && !archived} data-kind={entryKind(item)} data-item-id={item.id} data-depth={depth} $leaving={completing === item.id}
       onPointerLeave={() => clearPreview(item.id)}
-      $arriving={kind === 'notes' && !!item.source_task_id && completed.has(item.source_task_id)}>
-      <Row>{renderMarker(item.id, item.content)}<Text $done={!!item.completed_at} $action={archived} role="group" tabIndex={0} aria-label={markdownText(item.content) || (item.tags ?? []).filter(tag => tag !== activeTag).map(tag => '#' + tag).join(' ')}
-        onClick={event => { if (!item.completed_at && !(event.target as HTMLElement).closest('a')) select(item, event.currentTarget); }}
+      onAnimationEnd={() => { if (created.has(item.id)) setCreated(previous => { const next = new Set(previous); next.delete(item.id); return next; }); }}
+      $created={created.has(item.id)}
+      $arriving={entryKind(item) === 'tasks' && (completed.has(item.id) || reopened.has(item.id))}>
+      <Row>{renderMarker(item.id, item.content)}<Text $done={!!item.completed_at && !archived} $action={archived && entryKind(item) === 'tasks'} role="group" tabIndex={0} aria-label={markdownText(item.content) || (item.tags ?? []).filter(tag => tag !== activeTag).map(tag => '#' + tag).join(' ')}
+        onClick={event => { if ((archived || !item.completed_at) && !(event.target as HTMLElement).closest('a')) select(item, event.currentTarget); }}
         onContextMenu={event => {
           const link = (event.target as HTMLElement).closest('a');
-          if (link && !item.completed_at) { event.preventDefault(); select(item, event.currentTarget, link); }
+          if (link && (archived || !item.completed_at)) { event.preventDefault(); select(item, event.currentTarget, link); }
         }}
-        onKeyDown={event => { if (!item.completed_at && event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); select(item); } }}
+        onKeyDown={event => { if ((archived || !item.completed_at) && event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); select(item); } }}
       ><MarkdownContent content={item.content} tags={activeTag ? item.tags?.filter(tag => tag !== activeTag) : item.tags} /></Text>
-      {archived && <AddSubtask type="button" disabled={busy} aria-label={`Add subtask to ${markdownText(item.content) || 'task'}`} title="Add subtask" onClick={() => beginSubtask(item.id)}>+</AddSubtask>}
       </Row>
       <Branch data-branch-for={item.id} $open={isExpanded(item.id)} aria-hidden={!isExpanded(item.id)}>{renderChildren(item.id, depth + 1)}</Branch>
     </Item>);
-    return parentId === null ? <List>{content}</List> : <Children $task={kind === 'tasks'}>{content}</Children>;
+    const parent = parentId === null ? null : items.find(item => item.id === parentId);
+    return parentId === null ? <List>{content}</List> : <Children $task={parent ? entryKind(parent) === 'tasks' : draft.kind === 'tasks'}>{content}</Children>;
   };
-  return <OutlineSurface ref={surface} tabIndex={-1} onPointerDown={() => { selectionActive.current = false; setSelectedAll(false); }} onCopyCapture={event => {
+  return <OutlineSurface ref={surface} data-outline-kind={defaultKind} tabIndex={-1} onPointerDown={() => { selectionActive.current = false; setSelectedAll(false); }} onCopyCapture={event => {
     if (!selectionActive.current) return;
     event.preventDefault(); event.stopPropagation(); copyDocument(event.clipboardData);
   }} onCutCapture={event => { if (selectionActive.current) { event.preventDefault(); event.stopPropagation(); copyDocument(event.clipboardData); replaceDocument(); } }}
@@ -606,15 +770,17 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     const format = mod ? ({ b: 'bold', i: 'italic', u: 'underline', c: event.shiftKey ? 'code' : '', x: event.shiftKey ? 'strike' : '' } as Record<string, string>)[event.key.toLowerCase()] : '';
     if (format) { event.preventDefault(); void run(async () => {
       await save();
-      const changes = records.current.filter(item => !item.completed_at).map(item => ({ kind, id: item.id, content: formatMarkdown(item.content, format), tags: item.tags }));
+      const changes = records.current.filter(item => archived || !item.completed_at).map(item => ({ kind: entryKind(item), id: item.id, content: formatMarkdown(item.content, format), tags: item.tags }));
       if (changes.length) await editDocument(changes);
       persist(blank([], composer)); selectionActive.current = false; setSelectedAll(false); window.getSelection()?.removeAllRanges(); await refresh();
     }); return; }
     if (event.key === 'Backspace' || event.key === 'Delete') { event.preventDefault(); replaceDocument(); }
     else if (!mod && event.key.length === 1) { event.preventDefault(); replaceDocument(event.key); }
     else if (event.key === 'Escape') { event.preventDefault(); selectionActive.current = false; setSelectedAll(false); window.getSelection()?.removeAllRanges(); focus(); }
-  }}>{renderChildren(null, 0)}{!archived && (!draft.active || draft.mode === 'edit') && <ComposerTarget type="button" $floating={kind === 'notes' && !composer}
-    aria-label={kind === 'tasks' ? 'Add to-do' : 'Add journal bullet'}
+  }}>{renderChildren(null, 0)}{(!archived || defaultKind === 'notes') && (!draft.active || draft.mode === 'edit') && <ComposerTarget type="button" $floating={defaultKind === 'notes' && !composer}
+    data-task-creation-area={defaultKind === 'tasks' || undefined} aria-label={defaultKind === 'tasks' ? 'Add to-do' : 'Add journal bullet'}
     onClick={beginBullet} />}
+    {defaultKind === 'tasks' && draft.active && draft.mode === 'new' && <ComposerTarget type="button" $floating={false} data-task-creation-area
+      aria-label="Continue new to-do" onClick={focus} />}
     <VisuallyHidden>Tab indents. Shift Tab outdents. Enter adds a sibling. Shift Enter adds a line break. Select all twice selects this list.</VisuallyHidden></OutlineSurface>;
 }

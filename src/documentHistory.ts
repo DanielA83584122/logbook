@@ -18,8 +18,8 @@ export function recordEdit(operation: string | null, key: string) {
 export function recordCompletion(id: number, at: string) {
   undo.push({ key: crypto.randomUUID(), operations: [], completion: { id, at } }); redo = []; changed();
 }
-export async function editDocument(changes: Record<string, unknown>[], key = crypto.randomUUID()) {
-  const result = await api<{ items: (OutlineItem | null)[]; operation_id: string | null }>('/document/edit', 'POST', { changes });
+export async function editDocument(changes: Record<string, unknown>[], key = crypto.randomUUID(), requestId = crypto.randomUUID()) {
+  const result = await api<{ items: (OutlineItem | null)[]; operation_id: string | null }>('/document/edit', 'POST', { changes, request_id: requestId });
   recordEdit(result.operation_id, key); return result.items;
 }
 export async function documentUndo(forward = false) {

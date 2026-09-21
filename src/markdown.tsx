@@ -92,11 +92,39 @@ export function markdownText(source: string): string {
 export function documentWithTags(content: string, tags: string[]): JSONContent {
   const document = parseMarkdown(content);
   document.content ??= [];
-  if (tags.length) {
+  const expected = new Set(tags);
+  const found = new Set<string>();
+  const placeTags = (node: JSONContent): JSONContent => {
+    if (node.type === 'codeBlock' || node.marks?.some(mark => mark.type === 'code' || mark.type === 'link')) return node;
+    if (node.text) {
+      const matches = tagMatches(node.text).filter(match => expected.has(match.name));
+      if (!matches.length) return node;
+      const content: JSONContent[] = [];
+      let offset = 0;
+      for (const match of matches) {
+        if (match.from > offset) content.push({ ...node, text: node.text.slice(offset, match.from) });
+        found.add(match.name);
+        content.push({ type: 'journalTag', attrs: { name: match.name } });
+        offset = match.to;
+      }
+      if (offset < node.text.length) content.push({ ...node, text: node.text.slice(offset) });
+      return { type: 'tagFragment', content };
+    }
+    if (node.content) {
+      node.content = node.content.flatMap(child => {
+        const placed = placeTags(child);
+        return placed.type === 'tagFragment' ? placed.content ?? [] : [placed];
+      });
+    }
+    return node;
+  };
+  placeTags(document);
+  const missing = [...expected].filter(name => !found.has(name));
+  if (missing.length) {
     let last = document.content.at(-1);
     if (!last || last.type !== 'paragraph') { last = { type: 'paragraph', content: [] }; document.content.push(last); }
     last.content ??= [];
-    for (const name of [...new Set(tags)]) {
+    for (const name of missing) {
       if (last.content.length) last.content.push({ type: 'text', text: ' ' });
       last.content.push({ type: 'journalTag', attrs: { name } });
     }
@@ -108,15 +136,15 @@ export function documentWithTags(content: string, tags: string[]): JSONContent {
 export function serializeBullet(document: JSONContent): { content: string; tags: string[] } {
   const tags = new Set<string>();
   const visit = (node: JSONContent): JSONContent | null => {
-    if (node.type === 'journalTag') { tags.add(String(node.attrs?.name)); return null; }
+    if (node.type === 'journalTag') {
+      const name = String(node.attrs?.name);
+      tags.add(name);
+      return { type: 'text', text: '#' + name };
+    }
     if (node.type === 'codeBlock' || node.marks?.some(mark => mark.type === 'code' || mark.type === 'link')) return node;
     if (node.text) {
       let text = node.text;
-      for (const match of tagMatches(text).reverse()) {
-        tags.add(match.name);
-        const before = text.slice(0, match.from), after = text.slice(match.to);
-        text = before + (/\s$/.test(before) && /^\s/.test(after) ? after.replace(/^[ \t]+/, '') : after);
-      }
+      for (const match of tagMatches(text)) tags.add(match.name);
       return text ? { ...node, text } : null;
     }
     const content = node.content?.map(visit).filter((child): child is JSONContent => child !== null);
@@ -135,8 +163,8 @@ export function serializeBullet(document: JSONContent): { content: string; tags:
 }
 
 const inlineTagStyles = css`
-  display: inline-block; max-width: 100%; vertical-align: baseline;
-  padding: 3px 10px; margin: 3px 4px; border-radius: 999px;
+  display: inline-block; max-width: 100%; vertical-align: baseline; transform: translateY(1px);
+  padding: 3px 10px 3px 9px; margin: 3px 4px; border-radius: 999px;
   background: var(--tag-bg); color: var(--tag-ink);
   font-size: .86em; line-height: 1.3; white-space: normal; overflow-wrap: anywhere;
 `;
@@ -145,6 +173,8 @@ const TagBubble = styled.span`${inlineTagStyles}`;
 export const richTextStyles = css`
   font-size: var(--bullet-size, 18px); line-height: var(--bullet-line-height, 1.4); overflow-wrap: anywhere; white-space: pre-wrap;
   .journal-tag { ${inlineTagStyles} }
+  .journal-tag-query::after { content: var(--tag-completion, ''); color: var(--link); }
+  .journal-tag.ProseMirror-selectednode { outline: none; background: var(--tag-ink); color: var(--paper); }
   p { margin: 0; }
   p + p { margin-top: var(--bullet-paragraph-gap, .4em); }
   strong { font-weight: 700; }

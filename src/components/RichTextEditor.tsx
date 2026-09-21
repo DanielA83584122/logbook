@@ -1,13 +1,12 @@
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import { Markdown } from '@tiptap/markdown';
 import type { Mark, Node as DocumentNode } from '@tiptap/pm/model';
-import { TextSelection } from '@tiptap/pm/state';
+import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 import styled from 'styled-components';
 import { formattingExtensions, documentWithTags, serializeBullet, richTextStyles, safeHref } from '../markdown';
 import { Field } from '../styles';
 import { Modal } from './Modal';
-import { createPortal } from 'react-dom';
 import { useJournalContext } from '../JournalContext';
 import { normalizeTag } from '../tagSyntax';
 import { TagDecorations, commitTypedTags } from '../tagEditor';
@@ -28,15 +27,22 @@ const LinkField = styled(Field)<{ $url?: boolean }>`
   &:focus-visible { outline: none; background: var(--field); }
 `;
 
-const TagMenu = styled.div<{ $left: number; $top: number }>`
-  position: fixed; left: ${({ $left }) => $left}px; top: ${({ $top }) => $top}px; z-index: 40;
-  width: min(230px, calc(100vw - 24px)); max-height: 200px; overflow-y: auto;
-  padding: 5px; border-radius: 8px; background: var(--surface); box-shadow: 0 6px 24px #25282a18;
+const TagCompletion = styled.div<{ $left: number; $top: number }>`
+  position: fixed; left: ${({ $left }) => $left}px; top: ${({ $top }) => $top}px; z-index: 20;
+  width: min(230px, calc(100vw - 24px)); pointer-events: none;
+`;
+const TagAlternatives = styled.div`
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding-top: 31px;
+  max-height: 154px; overflow-y: auto; pointer-events: auto;
 `;
 const TagOption = styled.button<{ $selected: boolean }>`
-  display: block; width: 100%; border: 0; border-radius: 5px; text-align: left; padding: 7px 10px;
-  background: ${({ $selected }) => $selected ? 'var(--tag-bg)' : 'transparent'}; color: var(--ink); font-size: 14px;
-  &:hover { background: var(--tag-bg); }
+  max-width: 100%; min-height: 28px; border: 0; border-radius: 999px; padding: 4px 9px;
+  background: var(--tag-bg); color: ${({ $selected }) => $selected ? 'var(--link)' : 'var(--tag-ink)'}; font-size: 13px; line-height: 20px;
+  text-align: left; overflow-wrap: anywhere;
+  &:hover { color: var(--ink); }
+`;
+const HiddenTagOption = styled.span`
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
 `;
 type TagSuggestion = { from: number; to: number; query: string; names: string[]; index: number; left: number; top: number };
 
@@ -73,7 +79,12 @@ function sharedMarks(doc: DocumentNode, from: number, to: number): Mark[] {
 
 type LinkMode = 'shortcut' | 'context';
 export type TextOffsets = { anchor: number; head: number };
-export type RichTextHandle = { focus: (options?: FocusOptions, selection?: TextOffsets) => void; editLink: () => void };
+export type RichTextHandle = {
+  focus: (options?: FocusOptions, selection?: TextOffsets) => void;
+  selection: () => TextOffsets | undefined;
+  editLink: () => void;
+  splitAtSelection: () => { before: { content: string; tags: string[] }; after: { content: string; tags: string[] } } | null;
+};
 type Props = {
   ref?: Ref<RichTextHandle>; value: string; tags: string[]; label: string; readOnly: boolean;
   onChange: (markdown: string, tags: string[]) => void; onBlur: (event?: FocusEvent) => void; onKeyDown: (event: KeyboardEvent) => void;
@@ -109,6 +120,13 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
     editorProps: {
       attributes: { role: 'textbox', 'aria-label': label, 'aria-multiline': 'true', spellcheck: 'true' },
       handleDOMEvents: {
+        input(view) {
+          // ProseMirror normally reports this through onUpdate. Browser fake
+          // clocks can defer its DOM observer, so propagate an explicit clear
+          // immediately from the native input event.
+          if (!view.dom.textContent?.trim() && !view.dom.querySelector('[data-tag]')) callbacks.current.onChange('', []);
+          return false;
+        },
         contextmenu(view, event) {
           const anchor = (event.target as HTMLElement).closest('a');
           if (!anchor || !view.dom.contains(anchor) || !view.editable) return false;
@@ -208,6 +226,17 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
           if (previousSelectAll.current) { previousSelectAll.current = false; event.preventDefault(); callbacks.current.onSelectDocument?.(); return true; }
           previousSelectAll.current = true;
         } else if (!['Meta', 'Control', 'Shift', 'Alt'].includes(event.key)) previousSelectAll.current = false;
+        if (view.state.selection.empty) {
+          const { $from, from } = view.state.selection;
+          const beforeTag = $from.nodeBefore?.type.name === 'journalTag';
+          const afterTag = $from.nodeAfter?.type.name === 'journalTag';
+          if ((event.key === 'ArrowLeft' || event.key === 'Backspace') && beforeTag) {
+            event.preventDefault(); view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, from - $from.nodeBefore!.nodeSize))); return true;
+          }
+          if ((event.key === 'ArrowRight' || event.key === 'Delete') && afterTag) {
+            event.preventDefault(); view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, from))); return true;
+          }
+        }
         if (!mod && !event.shiftKey && view.state.selection.empty) {
           const { from, $from } = view.state.selection;
           const first = $from.depth > 0 && $from.before(1) === 0;
@@ -233,7 +262,15 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
           event.preventDefault(); editor?.chain().unsetAllMarks().clearNodes().run(); return true;
         }
         if (event.key === 'Enter' && !mod && editor?.isActive('codeBlock')) return false;
-        if (event.key === 'Enter' && editor) commitTypedTags(editor, true);
+        if (event.key === 'Enter' && editor) {
+          commitTypedTags(editor, true);
+          // The parent may save immediately in this same key event. Read the
+          // editor document synchronously so a just-cleared entry is deleted
+          // even if React has not delivered the last onUpdate render yet.
+          const visiblyEmpty = !editor.view.dom.textContent?.trim() && !editor.view.dom.querySelector('[data-tag]');
+          const bullet = visiblyEmpty ? { content: '', tags: [] as string[] } : serializeBullet(editor.getJSON());
+          callbacks.current.onChange(bullet.content, bullet.tags);
+        }
         callbacks.current.onKeyDown(event);
         return event.defaultPrevented;
       },
@@ -260,12 +297,14 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
     const match = /(?:^|[^\p{L}\p{N}_/#&])#([\p{L}\p{N}_-]{0,64})$/u.exec(before);
     if (!match) { suggest(null); return; }
     const query = normalizeTag(match[1]);
-    const names = tags.map(tag => tag.name).filter(name => name.startsWith(query));
+    if (query.length < 2) { suggest(null); return; }
+    const names = tags.map(tag => tag.name).filter(name => name.startsWith(query)).slice(0, 3);
     if (!names.length) { suggest(null); return; }
     const rect = current.view.coordsAtPos(from);
+    const start = current.view.coordsAtPos(from - match[1].length - 1);
+    const left = Math.max(12, Math.min(start.left - 9, window.innerWidth - 242));
     suggest({ from: from - match[1].length - 1, to: from, query, names, index: 0,
-      left: Math.max(12, Math.min(rect.left, window.innerWidth - 242)),
-      top: rect.bottom + 206 < window.innerHeight ? rect.bottom + 6 : Math.max(12, rect.top - 206) });
+      left, top: rect.top });
   };
   const chooseTag = (name: string) => {
     const pending = suggestionRef.current;
@@ -305,6 +344,12 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
   useEffect(() => {
     if (suggestion) document.getElementById(`tag-option-${suggestion.index}`)?.scrollIntoView({ block: 'nearest' });
   }, [suggestion?.index, suggestion?.query]);
+  useLayoutEffect(() => {
+    const completion = suggestion?.names[0]?.slice(suggestion.query.length) ?? '';
+    if (!editor) return;
+    if (completion) editor.view.dom.style.setProperty('--tag-completion', JSON.stringify(completion));
+    else editor.view.dom.style.removeProperty('--tag-completion');
+  }, [editor, suggestion]);
 
   const openLink = (mode: LinkMode) => {
     if (!editor || editor.isDestroyed || editor.state.selection.empty) return;
@@ -329,6 +374,19 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
   };
 
   useImperativeHandle(ref, () => ({
+    selection() {
+      if (!editor || editor.isDestroyed) return;
+      const domSelection = window.getSelection();
+      if (domSelection?.anchorNode && domSelection.focusNode && editor.view.dom.contains(domSelection.anchorNode) && editor.view.dom.contains(domSelection.focusNode)) {
+        const offsetAt = (node: Node, offset: number) => {
+          const range = document.createRange(); range.selectNodeContents(editor.view.dom); range.setEnd(node, offset); return range.toString().length;
+        };
+        return { anchor: offsetAt(domSelection.anchorNode, domSelection.anchorOffset), head: offsetAt(domSelection.focusNode, domSelection.focusOffset) };
+      }
+      const { anchor, head } = editor.state.selection;
+      const offsetAt = (position: number) => editor.state.doc.textBetween(0, position, '\n', '\ufffc').length;
+      return { anchor: offsetAt(anchor), head: offsetAt(head) };
+    },
     focus(options, selection) {
       if (!editor || editor.isDestroyed) return;
       if (selection) {
@@ -354,6 +412,48 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
       editor.view.dom.focus(options);
     },
     editLink() { openLink('context'); },
+    splitAtSelection() {
+      if (!editor || editor.isDestroyed) return null;
+      commitTypedTags(editor, true);
+      const doc = editor.state.doc;
+      const whole = serializeBullet(doc.toJSON());
+      const domSelection = window.getSelection();
+      if (domSelection?.isCollapsed && domSelection.focusNode && editor.view.dom.contains(domSelection.focusNode)) {
+        const tail = document.createRange();
+        tail.setStart(domSelection.focusNode, domSelection.focusOffset);
+        tail.setEnd(editor.view.dom, editor.view.dom.childNodes.length);
+        if (!tail.toString().trim()) return { before: whole, after: { content: '', tags: [] } };
+      }
+      const visibleOffset = (node: Node, offset: number) => {
+        const range = document.createRange(); range.selectNodeContents(editor.view.dom); range.setEnd(node, offset); return range.toString().length;
+      };
+      const fullRange = document.createRange(); fullRange.selectNodeContents(editor.view.dom);
+      const visibleLength = fullRange.toString().length;
+      const anchor = domSelection?.anchorNode && editor.view.dom.contains(domSelection.anchorNode) ? visibleOffset(domSelection.anchorNode, domSelection.anchorOffset) : null;
+      const head = domSelection?.focusNode && editor.view.dom.contains(domSelection.focusNode) ? visibleOffset(domSelection.focusNode, domSelection.focusOffset) : null;
+      if (anchor !== null && head !== null && anchor >= visibleLength && head >= visibleLength) return { before: whole, after: { content: '', tags: [] } };
+      const positionAt = (offset: number) => {
+        let remaining = offset, position = 1, found = false;
+        doc.descendants((node, pos) => {
+          if (found) return false;
+          if (node.isText) {
+            position = pos + Math.min(remaining, node.nodeSize);
+            if (remaining <= node.nodeSize) found = true; else remaining -= node.nodeSize;
+          } else if (node.type.name === 'hardBreak') {
+            if (!remaining) { position = pos; found = true; } else remaining--;
+          }
+          return !found;
+        });
+        return position;
+      };
+      const fallback = editor.state.selection;
+      const from = anchor === null || head === null ? fallback.from : positionAt(Math.min(anchor, head));
+      const to = anchor === null || head === null ? fallback.to : positionAt(Math.max(anchor, head));
+      return {
+        before: serializeBullet(doc.cut(0, from).toJSON()),
+        after: serializeBullet(doc.cut(to, doc.content.size).toJSON()),
+      };
+    },
   }), [editor]);
   useEffect(() => {
     const snapshot = JSON.stringify([value, bulletTags]);
@@ -377,10 +477,11 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
   };
 
   return <Surface><EditorContent editor={editor} />
-    {suggestion && createPortal(<TagMenu id="tag-suggestions" role="listbox" aria-label="Tags" $left={suggestion.left} $top={suggestion.top}>
-      {suggestion.names.map((name, index) => <TagOption key={name} id={`tag-option-${index}`} role="option" aria-selected={index === suggestion.index}
-        $selected={index === suggestion.index} onMouseDown={event => event.preventDefault()} onClick={() => chooseTag(name)}>#{name}</TagOption>)}
-    </TagMenu>, document.body)}
+    {suggestion && <TagCompletion id="tag-suggestions" role="listbox" aria-label="Tags" $left={suggestion.left} $top={suggestion.top}>
+      <HiddenTagOption id="tag-option-0" role="option" aria-selected={suggestion.index === 0} aria-label={`#${suggestion.names[0]}`}>#{suggestion.names[0]}</HiddenTagOption>
+      <TagAlternatives>{suggestion.names.slice(1, 3).map((name, offset) => { const index = offset + 1; return <TagOption $selected={suggestion.index === index} key={name} id={`tag-option-${index}`} role="option" aria-selected={suggestion.index === index}
+        onMouseDown={event => event.preventDefault()} onClick={() => chooseTag(name)}>#{name}</TagOption>; })}</TagAlternatives>
+    </TagCompletion>}
     <Modal open={link !== null} onClose={() => close()} title="Link" compact>
       <LinkForm onKeyDown={event => {
         if (event.key === 'Enter' && !event.nativeEvent.isComposing) {

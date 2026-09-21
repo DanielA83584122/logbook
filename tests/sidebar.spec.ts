@@ -20,11 +20,13 @@ test('tag collection opens only in the outer half-margin, dims the page, and ret
   const rail = page.getByRole('navigation', { name: 'Tags', exact: true });
   const home = rail.getByRole('button', { name: 'logbook', exact: true });
   const backdrop = page.getByTestId('tag-backdrop');
+  const panel = page.getByTestId('tag-panel');
   await page.mouse.move(main.x * .75, 300);
   await expect(home).toBeHidden();
   await expect(backdrop).toHaveCSS('opacity', '0');
   await page.mouse.move(main.x * .25, 300);
   await expect(home).toBeVisible();
+  await expect(panel).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)');
   await expect(backdrop).toHaveCSS('opacity', '1');
   await expect(backdrop).toHaveCSS('backdrop-filter', 'blur(4px)');
   const work = rail.getByRole('button', { name: '#work', exact: true });
@@ -49,5 +51,6 @@ test('tag collection opens only in the outer half-margin, dims the page, and ret
   await page.keyboard.press('Escape'); await expect(home).toBeHidden();
   await rail.hover(); await expect(home).toBeVisible();
   await page.mouse.move(1000, 500); await expect(home).toBeHidden();
+  await expect(panel).toHaveCSS('transform', 'matrix(1, 0, 0, 1, -18, 0)');
   await expect(backdrop).toHaveCSS('opacity', '0');
 });

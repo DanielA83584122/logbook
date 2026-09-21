@@ -46,7 +46,7 @@ export class FocusSound {
     filter.type = 'lowpass'; filter.frequency.value = 5500;
     const gain = context.createGain();
     gain.gain.setValueAtTime(0, context.currentTime);
-    gain.gain.linearRampToValueAtTime(volume, context.currentTime + 0.6);
+    gain.gain.linearRampToValueAtTime(volume, context.currentTime + 0.35);
     source.connect(filter).connect(gain).connect(context.destination);
     source.start();
     this.source = source;
@@ -60,8 +60,8 @@ export class FocusSound {
   stop() {
     ++this.generation;
     if (this.source && this.context && this.gain) {
-      this.gain.gain.setTargetAtTime(0, this.context.currentTime, 0.08);
-      this.source.stop(this.context.currentTime + 0.4);
+      this.gain.gain.setTargetAtTime(0, this.context.currentTime, 0.06);
+      this.source.stop(this.context.currentTime + 0.3);
       this.source = null;
       this.gain = null;
     }

@@ -2,6 +2,8 @@
 
 A document-style local logbook. React + TypeScript, Vite, styled-components, FastAPI, and SQLite.
 
+The completed-task checkmark is adapted from [“Check” by Maxim Basinski on Flaticon](https://www.flaticon.com/free-icon/check_1055183), used with attribution.
+
 ## Run it
 
 Requires Node 22.12+ and Python 3.12+. On this Mac, Homebrew Python is `/opt/homebrew/bin/python3` (the system Python is too old).
@@ -24,6 +26,8 @@ npm start
 
 Then open **http://127.0.0.1:8000**. Start or restart FastAPI after building so it registers the static assets.
 
+For Render, `render.yaml` defines one Python web service, a persistent disk mounted at `/var/data`, and `STILL_DB_PATH=/var/data/still.sqlite3`. Keep the service at one instance: SQLite lives on that service's persistent disk. Authentication is currently disabled with `STILL_AUTH_ENABLED=false`. To enable it later, set that variable to `true` and add a secret `STILL_AUTH_PASSWORD`; the username defaults to `still` and can be changed with `STILL_AUTH_USER`.
+
 Vite uses the official `esbuild-wasm` package through an npm override. This avoids a native esbuild executable that is killed on this Mac. Application code still runs normally in the browser.
 
 ## The daily practice
@@ -33,7 +37,7 @@ Vite uses the official `esbuild-wasm` package through an npm override. This avoi
 - Click existing notes or to-dos to edit. Enter saves and opens a new sibling with the cursor ready to type; blur saves, and Escape cancels an edit. Clearing the text and leaving the entry deletes it.
 - Journal bullets and to-dos share 15 px text, 18 px line height, and compact paragraph and row spacing. The light-mode timer uses a soft cool gray, shifting to muted teal while running.
 - Both lists support eight levels of nesting. Tab nests under the preceding sibling; Shift+Tab outdents. Enter inserts the next bullet at the same level. Backspace at the start merges into the preceding bullet in the same list, with the cursor at the join. On an empty new bullet it removes the draft and moves to the preceding bullet’s end, or dismisses it if there is no preceding bullet; Shift+Tab outdents an existing nested item. A new bullet after reopening the page starts at the root. Note parents have a small disclosure arrow in place of the bullet; to-do parents have a round progress marker. Both start collapsed. Hovering the marker previews the children until the pointer leaves the branch; click to keep it expanded, and click again to collapse. Logbook bullets indent by 32 px per level on desktop (24 px on medium windows and 16 px on narrow windows), and branches reveal or collapse with a gentle progressive transition. Each level opens independently; nesting while typing opens its ancestors, and collapsing a branch saves an active edit before hiding it.
-- The blank to-do checkbox appears while its new entry has focus. An untouched new journal bullet or to-do disappears completely on blur or Backspace. A draft typed into and then erased also disappears on blur, even if it had autosaved. Click the blank space beneath any date, including historical dates, or below the to-do list to begin a tentative bullet at the end. Leaf to-dos have checkboxes. Parent to-dos have round progress markers showing completed direct children. A checked child stays in its open task tree until the root task is fully complete. Then the whole task tree moves to that day in the logbook, where every task keeps its checked checkbox and nesting. Reopening any completed subtask returns the whole task tree to the to-do section while retaining checked siblings. Each task tree is logged on the date its root finishes. Undo restores the task state, including any automatically completed ancestors.
+- The blank to-do checkbox appears while its new entry has focus. An untouched new journal bullet or to-do disappears completely on blur or Backspace. A draft typed into and then erased also disappears on blur, even if it had autosaved. Click the blank space beneath any date, including historical dates, or below the to-do list to begin a tentative bullet at the end. Leaf to-dos have checkboxes. Parent to-dos have round progress markers showing completed direct children. A checked child stays in its open task tree until the root task is fully complete. Then the whole task tree moves to that day in the logbook, interleaved chronologically with notes. Completed tasks use the same text styling and inline edit/delete behavior as notes; the checked box is their only visual distinction. Reopening any completed subtask returns the whole task tree to the to-do section while retaining checked siblings. Each task tree is logged on the date its root finishes. Undo restores the task state, including any automatically completed ancestors.
 - The timer shows hours, minutes, and seconds. Click it to start a mix of white, pink, and brown noise; its fill and concentric ring shift to a muted teal while running. Click again to finish, save the session, and reset the timer. Right-click the timer (or use Shift+F10) for mute/play and volume, including in timer-only mode. Command/Ctrl+Shift+M also opens the sound menu. The volume and mute preference are remembered.
 - Refreshing or closing the page does not stop a running timer. Reopening it restores elapsed time from the server. Browsers require a gesture to resume audio after a reload: open the timer’s sound menu and choose Play sound.
 - Total focused time appears beside each date, including seconds and the running session (for example, `30s`, `2m 05s`, or `1h 02m 05s`). Zero-second totals are hidden. Click the date or total to open sessions: the date and total form the heading, followed by borderless start-time and duration rows. Click a time to edit; Enter saves. Editing preserves the original start date, and changing only the duration preserves the original start seconds. The small animated × deletes a session and updates the total; + at the bottom adds one. Click outside or press Escape to close. Statistics open separately from the icon beside the theme toggle.
@@ -72,7 +76,7 @@ Inline code uses a monospace font with a subtle color and background; code block
 
 Each bullet's `content` remains a SQLite **TEXT** column containing Markdown, for example `**bold**`, `*italic*`, `[link](https://example.com)`, `` `code` ``, `~~strikethrough~~`, and `++underline++`. Underline uses the `++` extension because CommonMark has no underline syntax. The backend preserves the submitted Markdown, including significant whitespace. JSON is used for API transport; editor document objects and HTML are not stored in SQLite. Journal and export responses identify `content_format: "markdown"` for agent consumers.
 
-Literal Markdown punctuation is escaped when typed as plain text. Pasted rich text keeps supported formatting; arbitrary styles and unsafe links are discarded. Completing a task preserves its Markdown, task identity, checkbox state, and nested descendants; no completion prefix is added. A new subtask added beneath a completed task starts checked in the same logbook tree. Unchecking it reopens the tree and returns it to the to-do section.
+Literal Markdown punctuation is escaped when typed as plain text. Pasted rich text keeps supported formatting; arbitrary styles and unsafe links are discarded. Completing a task preserves its Markdown, task identity, checkbox state, and nested descendants; no completion prefix is added. In the logbook, Enter creates a root note and Tab nests it under the preceding entry. Nesting beneath a completed task converts it to a checked task; nesting beneath a note keeps it a note. Unchecking a completed subtask reopens the tree and returns it to the to-do section.
 
 ## Tags
 
@@ -96,24 +100,25 @@ Command/Ctrl+F opens search across all stored notes and tasks, including complet
 
 The default database is **`data/still.sqlite3`**. Override it with `STILL_DB_PATH` when starting FastAPI. There is no seeded or fabricated journal data.
 
-SQLite fits a personal logbook: no cloud account, no secrets to configure, and a portable database. Foreign keys, WAL mode, transactional writes, and a unique index allowing only one running session protect consistency. Schema upgrades run at startup; the current schema is version 6. The hierarchy migration preserves existing bullet IDs, content, and ordering at the root level.
+SQLite fits a personal logbook: no cloud account, no secrets to configure, and a portable database. Foreign keys, WAL mode, transactional writes, and a unique index allowing only one running session protect consistency. Numbered, transactional schema upgrades run at startup; the current schema is version 8. Entry IDs use SQLite AUTOINCREMENT so a deleted ID is never assigned to a different entry. The legacy migration preserves note IDs, remaps the former task ID space, and retains each list's saved order.
 
 The normalized tables are:
 
 | Table | Stored facts |
 | --- | --- |
 | `days` | Unique journal date and creation timestamp |
-| `notes` | Day reference, Markdown content, JSON tag list, parent note, sibling position, timestamps, optional source task, retry ID |
-| `tasks` | Markdown content, JSON tag list, parent task, sibling position, creation and completion timestamps, retry ID |
+| `entries` | Note/task kind, optional day, Markdown content, JSON tags, parent entry, shared sibling position, timestamps, retry ID |
 | `sessions` | UTC start and end timestamps; a null end means running |
 | `document_operations` | IDs, timestamps, and undo/redo state for document transactions |
 | `document_changes` | Relational before/after row images for each changed bullet; Markdown and tag arrays retain their normal representation |
+
+Notes and tasks are the same entity. `entries.kind` is `note` or `task`. Notes always have a `day_id`; active task trees have a null `day_id`; a finished task tree shares the logbook day's `day_id`. `completed_at` stores each task checkbox state separately because a checked subtask can still belong to an active tree whose `day_id` is null. Root positions are shared across both kinds, so logbook entries stay interleaved without copying task content into note rows. The older `/api/notes` and `/api/tasks` routes and export arrays remain compatibility views over `entries`.
 
 Totals and statistics are derived; no aggregate counters can become stale. Timestamps are UTC ISO 8601. The browser supplies its IANA timezone. Notes keep the calendar date they were written under; session and task-completion statistics are grouped in the requested timezone. Sessions crossing midnight are split using real local day boundaries, including 23- and 25-hour daylight-saving days. The longest session for a day is that day’s longest uninterrupted portion of a session. Overlapping or future manual sessions are rejected.
 
 Bullet hierarchy uses an **ordered adjacency list**, not a JSON document. Each bullet is a row with `parent_id` (a self-referencing foreign key, null for roots) and integer `position` among its siblings. Depth is derived from the parent chain. This allows individual edits, transactional branch moves, recursive SQL queries, and per-bullet analytics without replacing a whole document. The API returns flat records with parent IDs; the UI reconstructs nested HTML lists.
 
-The API rejects cycles, missing parents, nesting notes under a different date, and moves that would push any descendant beyond eight levels. SQLite foreign keys and triggers also enforce valid parent references, acyclic trees, and same-day note ancestry. Deleting a parent promotes its children one level in the same order. Indenting or outdenting carries the whole branch. Parents complete automatically when all direct children are complete. `completed_at` remains the single persisted completion state; visibility and progress are derived from the task hierarchy. A completed child is retained while its immediate parent is open. Parents cannot be manually completed while they have unfinished children. Reopening a child reopens completed ancestors and keeps earlier completed siblings intact. Automatic completion also runs after moving or deleting the last unfinished child.
+The API rejects cycles, missing parents, cross-day nesting, and moves that would push any descendant beyond eight levels. SQLite foreign keys and triggers also enforce valid parent references, acyclic trees, and same-location ancestry. Deleting a parent promotes its children one level in the same order. In the logbook, root entries are notes; indenting under an entry converts the moved branch to its parent's kind. A branch nested under a completed task is completed too. Parents complete automatically when all direct children are complete. A checked child is retained while its immediate parent is open. Parents cannot be manually completed while they have unfinished children. Reopening a child returns the whole tree to to-dos, reopens completed ancestors, and keeps earlier completed siblings checked.
 
 Export a normalized snapshot with `GET /api/export`. For a complete SQLite backup while the app is running, use SQLite’s online backup command rather than copying a database with an active WAL:
 
@@ -121,7 +126,7 @@ Export a normalized snapshot with `GET /api/export`. For a complete SQLite backu
 sqlite3 data/still.sqlite3 ".backup 'still-backup.sqlite3'"
 ```
 
-This is a single-user application bound to `127.0.0.1`, without authentication. An internet deployment would need authentication and HTTPS.
+Authentication is available but disabled by default. While `STILL_AUTH_ENABLED=false`, an internet deployment is public: anyone with its URL can read and modify the journal. Render supplies HTTPS at the edge, but HTTPS alone does not restrict access.
 
 ## Agent API
 

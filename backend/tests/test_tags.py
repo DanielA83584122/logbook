@@ -24,7 +24,7 @@ def test_tag_arrays_are_separate_from_markdown_and_preserved_on_patch(client):
     created = note(client, '**Ship the PR**', ['Work', 'work', '#work', 'health'])
     assert created['tags'] == ['work', 'health']
     with connection() as db:
-        stored = db.execute('SELECT content, tags FROM notes WHERE id = ?', (created['id'],)).fetchone()
+        stored = db.execute("SELECT content, tags FROM entries WHERE kind = 'note' AND id = ?", (created['id'],)).fetchone()
         assert stored['content'] == '**Ship the PR**'
         assert json.loads(stored['tags']) == ['work', 'health']
         assert not db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tags'").fetchone()
@@ -114,8 +114,12 @@ def test_migration_keeps_content_ids_and_hierarchy_while_allowing_tag_only_rows(
         old_tasks = db.execute('SELECT * FROM tasks ORDER BY id').fetchall()
     initialize(); initialize()
     with connection() as db:
-        assert [tuple(row)[:-1] for row in db.execute('SELECT * FROM notes ORDER BY id')] == old_notes
-        assert [tuple(row)[:-1] for row in db.execute('SELECT * FROM tasks ORDER BY id')] == old_tasks
+        notes = [dict(row) for row in db.execute("SELECT * FROM entries WHERE kind = 'note' ORDER BY id")]
+        tasks = [dict(row) for row in db.execute("SELECT * FROM entries WHERE kind = 'task' ORDER BY id")]
+        assert [row['content'] for row in notes] == ['Parent note', 'Child note with literal #text']
+        assert notes[1]['parent_id'] == notes[0]['id']
+        assert [row['content'] for row in tasks] == ['Parent', 'Child']
+        assert tasks[1]['parent_id'] == tasks[0]['id']
         assert db.execute('PRAGMA foreign_key_check').fetchall() == []
-        db.execute("INSERT INTO notes(day_id, content, tags) VALUES (1, '', '[\"tag-only\"]')")
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 6
+        db.execute("INSERT INTO entries(kind, day_id, content, tags, created_at) VALUES ('note', 1, '', '[\"tag-only\"]', 'created')")
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 8

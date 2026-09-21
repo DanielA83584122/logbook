@@ -130,11 +130,11 @@ def test_database_constraints_guard_cycles_and_cross_day_links(client):
     child = create(client, "notes", "Child", parent["id"])
     other = create(client, "notes", "Other day", day="2026-09-15")
     with pytest.raises(sqlite3.IntegrityError), connection() as db:
-        db.execute("UPDATE notes SET parent_id = ? WHERE id = ?", (child["id"], parent["id"]))
+        db.execute("UPDATE entries SET parent_id = ? WHERE id = ?", (child["id"], parent["id"]))
     with pytest.raises(sqlite3.IntegrityError), connection() as db:
-        db.execute("UPDATE notes SET parent_id = ? WHERE id = ?", (other["id"], child["id"]))
+        db.execute("UPDATE entries SET parent_id = ? WHERE id = ?", (other["id"], child["id"]))
     with pytest.raises(sqlite3.IntegrityError), connection() as db:
-        db.execute("UPDATE notes SET parent_id = 999999 WHERE id = ?", (child["id"],))
+        db.execute("UPDATE entries SET parent_id = 999999 WHERE id = ?", (child["id"],))
 
 
 def test_migration_preserves_existing_content_and_order(tmp_path, monkeypatch):
@@ -153,9 +153,85 @@ def test_migration_preserves_existing_content_and_order(tmp_path, monkeypatch):
         """)
     initialize(); initialize()
     with connection() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 6
-        notes = [dict(row) for row in db.execute("SELECT * FROM notes ORDER BY position")]
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 8
+        notes = [dict(row) for row in db.execute("SELECT * FROM entries WHERE kind = 'note' ORDER BY position")]
         assert [row["content"] for row in notes] == ["First", "Second"]
         assert all(row["parent_id"] is None for row in notes)
         assert notes[0]["client_id"] == "old-retry-id"
-        assert db.execute("SELECT content FROM tasks WHERE id = 7").fetchone()[0] == "Existing to-do"
+        assert db.execute("SELECT content FROM entries WHERE kind = 'task'").fetchone()[0] == "Existing to-do"
+
+
+def test_interrupted_legacy_migration_rolls_back_and_retries(tmp_path, monkeypatch):
+    import backend.db as storage
+    path = tmp_path / 'interrupted.sqlite3'
+    monkeypatch.setenv('STILL_DB_PATH', str(path))
+    with sqlite3.connect(path) as db:
+        db.executescript('''
+        CREATE TABLE days(id INTEGER PRIMARY KEY, date TEXT UNIQUE, created_at TEXT);
+        CREATE TABLE tasks(id INTEGER PRIMARY KEY, content TEXT, created_at TEXT, completed_at TEXT);
+        CREATE TABLE notes(id INTEGER PRIMARY KEY, day_id INTEGER REFERENCES days(id), content TEXT,
+                           created_at TEXT, updated_at TEXT, source_task_id INTEGER, client_id TEXT);
+        INSERT INTO days VALUES(1, '2026-09-16', 'created');
+        INSERT INTO notes VALUES(1, 1, 'Survives interruption', 'created', 'updated', NULL, NULL);
+        PRAGMA user_version = 2;
+        ''')
+    original = storage._migrate_entries
+    def interrupted(db):
+        storage._create_entry_schema(db)
+        raise RuntimeError('simulated interruption')
+    monkeypatch.setattr(storage, '_migrate_entries', interrupted)
+    with pytest.raises(RuntimeError):
+        storage.initialize()
+    monkeypatch.setattr(storage, '_migrate_entries', original)
+    storage.initialize()
+    with storage.connection() as db:
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 8
+        assert db.execute('SELECT content FROM entries').fetchone()[0] == 'Survives interruption'
+        assert not db.execute("SELECT 1 FROM sqlite_master WHERE name = 'notes'").fetchone()
+
+
+def test_migration_preserves_manually_arranged_note_root_order(tmp_path, monkeypatch):
+    path = tmp_path / 'ordered.sqlite3'
+    monkeypatch.setenv('STILL_DB_PATH', str(path))
+    with sqlite3.connect(path) as db:
+        db.executescript('''
+        CREATE TABLE days(id INTEGER PRIMARY KEY, date TEXT UNIQUE, created_at TEXT);
+        CREATE TABLE tasks(id INTEGER PRIMARY KEY, content TEXT, created_at TEXT, completed_at TEXT,
+                           parent_id INTEGER, position INTEGER DEFAULT 0, client_id TEXT, tags TEXT DEFAULT '[]');
+        CREATE TABLE notes(id INTEGER PRIMARY KEY, day_id INTEGER, content TEXT, created_at TEXT,
+                           updated_at TEXT, source_task_id INTEGER, client_id TEXT, parent_id INTEGER,
+                           position INTEGER DEFAULT 0, tags TEXT DEFAULT '[]');
+        INSERT INTO days VALUES(1, '2026-09-16', 'created');
+        INSERT INTO notes VALUES(1, 1, 'Created first, moved last', 'a', 'a', NULL, NULL, NULL, 1, '[]');
+        INSERT INTO notes VALUES(2, 1, 'Created later, moved first', 'b', 'b', NULL, NULL, NULL, 0, '[]');
+        PRAGMA user_version = 6;
+        ''')
+    initialize()
+    with connection() as db:
+        rows = db.execute("SELECT content FROM entries WHERE kind = 'note' ORDER BY position, id").fetchall()
+        assert [row[0] for row in rows] == ['Created later, moved first', 'Created first, moved last']
+
+
+def test_startup_replaces_pre_unification_history_schema(tmp_path, monkeypatch):
+    path = tmp_path / 'stale-history.sqlite3'
+    monkeypatch.setenv('STILL_DB_PATH', str(path))
+    initialize()
+    with connection() as db:
+        db.execute('DROP TABLE document_changes')
+        db.execute('DROP TABLE document_operations')
+        db.executescript('''
+        CREATE TABLE document_operations(id TEXT PRIMARY KEY, created_at TEXT NOT NULL, undone INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE document_changes(
+          operation_id TEXT NOT NULL, entity TEXT NOT NULL, row_id INTEGER NOT NULL,
+          phase TEXT NOT NULL, present INTEGER NOT NULL, content TEXT, tags TEXT,
+          day_id INTEGER, parent_id INTEGER, position INTEGER, created_at TEXT,
+          updated_at TEXT, completed_at TEXT, source_task_id INTEGER, client_id TEXT,
+          PRIMARY KEY(operation_id, entity, row_id, phase)
+        );
+        INSERT INTO document_operations VALUES ('old', 'created', 0);
+        ''')
+    initialize()
+    with connection() as db:
+        columns = {row['name'] for row in db.execute('PRAGMA table_info(document_changes)')}
+        assert 'kind' in columns and 'source_task_id' not in columns
+        assert db.execute('SELECT COUNT(*) FROM document_operations').fetchone()[0] == 0

@@ -1,24 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import styled, { css } from 'styled-components';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import styled, { css, keyframes } from 'styled-components';
 import { ChartNoAxesColumn, Github, Moon, Sun } from 'lucide-react';
 import { api, errorMessage, localDate, recoverEarlierDrafts, timerDuration } from './api';
 import { FocusSound } from './audio';
 import type { Day, JournalData, Session } from './types';
 import { Button, Muted, TextButton, press } from './styles';
 import { Journal, Todos } from './components/Journal';
-import { SessionsModal } from './components/SessionsModal';
-import { StatsModal } from './components/StatsModal';
 import { TagTabs } from './components/TagTabs';
 import { JournalContext, flushDrafts } from './JournalContext';
 import { Modal } from './components/Modal';
-import { SearchModal, type SearchHit } from './components/SearchModal';
+import type { SearchHit } from './components/SearchModal';
 import { documentUndo, recordCompletion } from './documentHistory';
 import { compactViewport, timerOnlyViewport } from './layout';
 
 const JOURNAL_PAGE_SIZE = 14;
 const REPOSITORY_URL = import.meta.env.VITE_REPOSITORY_URL || 'https://github.com/divyavenn/still';
+const SessionsModal = lazy(() => import('./components/SessionsModal').then(module => ({ default: module.SessionsModal })));
+const StatsModal = lazy(() => import('./components/StatsModal').then(module => ({ default: module.StatsModal })));
+const SearchModal = lazy(() => import('./components/SearchModal').then(module => ({ default: module.SearchModal })));
 
-const Page = styled.div`
+const Page = styled.div<{ $focusing: boolean }>`
   --document-width: min(680px, calc(100vw - 64px));
   --left-margin: calc((100vw - var(--document-width)) * .54);
   --right-margin: calc(100vw - var(--document-width) - var(--left-margin));
@@ -26,27 +27,38 @@ const Page = styled.div`
   --todo-heading-height: 44px;
   @media(pointer: coarse) { --todo-heading-height: 48px; }
   height: 100dvh; overflow-x: hidden; overflow-y: auto; display: flex; flex-direction: column;
+  background-color: ${({ $focusing }) => $focusing ? 'var(--page-focus-paper)' : 'var(--page-paper)'};
+  transition: background-color 180ms ease-out;
+  [data-focus-chrome] { opacity: ${({ $focusing }) => $focusing ? 'var(--focus-chrome-opacity)' : 'var(--chrome-opacity)'}; transition: opacity 180ms ease-out; }
   @media ${compactViewport} {
     --document-width: min(680px, calc(100vw - 48px)); --page-top: 24px;
     --left-margin: calc((100vw - var(--document-width)) / 2); --right-margin: var(--left-margin);
   }
 `;
 const TopArea = styled.div`
-  display: grid; grid-template-columns: minmax(0, 1fr) 88px; gap: 24px; align-items: start;
-  flex-shrink: 0; padding-right: 12px; margin-bottom: 8px; min-height: calc(var(--todo-heading-height) + 88px);
+  display: grid; grid-template-columns: var(--todo-column, fit-content(calc(100% - 150px))) 124px; gap: 26px; align-items: start;
+  transition: grid-template-columns 220ms cubic-bezier(.2, 0, 0, 1);
+  flex-shrink: 0; padding-right: 12px; margin-bottom: 8px; min-height: calc(var(--todo-heading-height) + 124px);
   @media ${compactViewport} { display: flex; justify-content: center; padding: 0; min-height: 88px; margin-bottom: 20px; }
 `;
 const Toolbar = styled.div`
-  display: flex; flex-direction: column; align-items: center; gap: 4px; width: 88px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px; width: 124px;
   position: sticky; top: calc(var(--page-top) + var(--todo-heading-height)); margin-top: var(--todo-heading-height); z-index: 5;
   @media ${compactViewport} { position: static; margin-top: 0; }
 `;
-const TimerButton = styled.button`
-  ${press}; height: 72px; width: 72px; flex-shrink: 0; border: 0; border-radius: 50%; background: var(--timer); color: var(--timer-ink);
+const ringPulse = keyframes`
+  from { scale: 1; opacity: .65; }
+  to { scale: 1.14; opacity: 0; }
+`;
+const TimerButton = styled.button<{ $pulse: boolean; $running: boolean }>`
+  ${press}; height: 108px; width: 108px; flex-shrink: 0; border: 0; border-radius: 50%; background: var(--timer); color: var(--timer-ink);
   display: flex; justify-content: center; align-items: center; padding: 0; position: relative; margin: 8px;
   &::before { content: ''; position: absolute; inset: -8px; border: 1px solid var(--timer-ring); border-radius: 50%; pointer-events: none; transition: border-color 160ms ease-out; }
+  &::after { content: ''; position: absolute; inset: -8px; border: 1px solid ${({ $running }) => $running ? 'var(--timer-running-ring)' : 'var(--timer-ring)'}; border-radius: 50%; pointer-events: none; opacity: 0;
+    ${({ $pulse }) => $pulse && css`animation: ${ringPulse} 360ms ease-out;`} }
   &:hover { background: var(--timer-hover); }
   &[aria-pressed='true'] { background: var(--timer-running); }
+  &[aria-pressed='true'] { scale: 1.03; }
   &[aria-pressed='true']:hover { background: var(--timer-running-hover); }
   &[aria-pressed='true']::before { border-color: var(--timer-running-ring); }
   font-size: 13px; font-variant-numeric: tabular-nums;
@@ -58,15 +70,21 @@ const PageControls = styled.div`
 `;
 const pageControl = css`
   ${press}; position: relative; display: grid; place-items: center;
-  width: 32px; height: 40px; padding: 0; border: 0; border-radius: 50%;
+  width: 28px; height: 36px; padding: 0; border: 0; border-radius: 50%;
   background: transparent; color: var(--muted); text-decoration: none;
-  svg { transition: transform 140ms ease-out; }
-  &:hover { color: var(--ink); }
-  &:hover svg { transform: translateY(-1px) scale(1.06); }
+  svg, [data-shortcut-icon] { transition: scale 140ms ease-out; }
+  &:hover { color: var(--link); }
+  &:hover svg, &:hover [data-shortcut-icon] { scale: 1.05; }
   @media(pointer: coarse) { width: 44px; height: 44px; }
 `;
 const ThemeToggle = styled.button`${pageControl}`;
 const RepositoryLink = styled.a`${pageControl}`;
+const ShortcutToggle = styled.button`${pageControl}`;
+const ShortcutGlyph = styled.span`
+  width: 15px; height: 15px; display: block; background: currentColor;
+  mask: url('/icons/shortcut-flaticon.png') center / contain no-repeat;
+  -webkit-mask: url('/icons/shortcut-flaticon.png') center / contain no-repeat;
+`;
 const ThemeGlyph = styled.span<{ $shown: boolean }>`
   position: absolute; display: grid; place-items: center; pointer-events: none;
   opacity: ${({ $shown }) => $shown ? 1 : 0}; scale: ${({ $shown }) => $shown ? 1 : .25};
@@ -75,9 +93,29 @@ const ThemeGlyph = styled.span<{ $shown: boolean }>`
 `;
 const StatsToggle = styled.button`${pageControl}`;
 const SoundMenu = styled.div`display: grid; gap: 8px; padding: 4px; button { justify-content: center; } input { width: 100%; min-height: 40px; accent-color: var(--link); }`;
+const ShortcutPanel = styled.div`
+  padding: 4px 12px 8px;
+`;
+const ShortcutRows = styled.div`display: grid; gap: 2px;`;
+const ShortcutRow = styled.div`
+  min-height: 34px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px;
+  font-size: 13px; color: var(--ink);
+`;
+const Keys = styled.span`color: var(--muted); font-size: 12px; text-align: right; text-transform: lowercase; white-space: nowrap;`;
+const Demo = styled.span`
+  min-width: 0; line-height: 1.35;
+  strong { font-weight: 700; } em { font-style: italic; } u { text-underline-offset: 2px; }
+  a { color: var(--link); text-decoration: none; }
+  code { padding: 2px 5px; border-radius: 4px; background: var(--code-bg); color: var(--code-ink); font: inherit; font-size: 12px; }
+`;
 const Main = styled.main`
   width: var(--document-width); margin: var(--page-top) var(--right-margin) 0 var(--left-margin);
   flex: 1; display: flex; flex-direction: column; min-height: 0;
+`;
+const LogFrame = styled.div`
+  position: relative; flex: 1; min-height: min(240px, max(64px, calc(100dvh - 160px))); display: flex;
+  @media ${compactViewport} { min-height: 0; }
+  @media ${timerOnlyViewport} { display: none; }
 `;
 const LogViewport = styled.div`
   flex: 1; min-height: min(240px, max(64px, calc(100dvh - 160px))); overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain;
@@ -85,7 +123,31 @@ const LogViewport = styled.div`
   @media ${compactViewport} { min-height: 0; }
   @media ${timerOnlyViewport} { display: none; }
 `;
+const LogEdgeWash = styled.div<{ $shown: boolean }>`
+  position: absolute; z-index: 7; top: -2px; left: -24px; right: -24px; height: 30px; pointer-events: none;
+  opacity: ${({ $shown }) => $shown ? 1 : 0};
+  background: linear-gradient(to bottom, var(--page-paper) 0%, color-mix(in srgb, var(--page-paper) 72%, transparent) 34%, transparent 82%);
+  transition: opacity 140ms ease-out;
+  &::after {
+    content: ''; position: absolute; inset: 0;
+    background-image:
+      radial-gradient(ellipse 22% 105% at 7% -8%, var(--page-paper) 0 48%, transparent 82%),
+      radial-gradient(ellipse 30% 92% at 31% -10%, var(--page-paper) 0 44%, transparent 80%),
+      radial-gradient(ellipse 24% 112% at 56% -18%, var(--page-paper) 0 50%, transparent 84%),
+      radial-gradient(ellipse 32% 96% at 82% -9%, var(--page-paper) 0 42%, transparent 79%),
+      radial-gradient(ellipse 18% 108% at 101% -16%, var(--page-paper) 0 49%, transparent 83%);
+    mask-image: linear-gradient(to bottom, #000 0%, #000d 40%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000d 40%, transparent 100%);
+    opacity: .88;
+  }
+`;
 const Toast = styled.div`position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%); z-index: 30; max-width: min(540px, calc(100% - 32px)); display: flex; align-items: center; gap: 12px; padding: 7px 8px 7px 19px; background: var(--surface); border-radius: 12px; box-shadow: 0 0 0 1px #00000007, 0 4px 24px #31392b19; font-size: 12px;`;
+const QuietStatus = styled.div`
+  position: fixed; right: 24px; bottom: 18px; z-index: 20; pointer-events: none;
+  color: var(--muted); font-size: 11px; opacity: 0; transform: translateY(2px);
+  transition: opacity 140ms ease-out, transform 140ms ease-out;
+  &[data-show='true'] { opacity: .82; transform: translateY(0); }
+`;
 const ConnectionState = styled.div`padding: 50px 0; display: grid; gap: 16px; justify-items: start; @media ${compactViewport} { display: none; }`;
 
 export default function App() {
@@ -98,23 +160,39 @@ export default function App() {
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const tagRef = useRef<string | null>(null);
   const [completed, setCompleted] = useState(new Set<number>());
+  const [reopened, setReopened] = useState(new Set<number>());
   const [undoTask, setUndoTask] = useState<{ id: number; completedAt: string } | null>(null);
   const [target, setTarget] = useState<{ kind: 'notes' | 'tasks'; id: number } | null>(null);
   const completionTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reopenTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onComplete = (ids: number[], taskId?: number, completedAt?: string) => {
     if (completionTimeout.current) clearTimeout(completionTimeout.current);
     setCompleted(new Set(ids));
     if (taskId && completedAt) { recordCompletion(taskId, completedAt); setUndoTask({ id: taskId, completedAt }); }
     completionTimeout.current = setTimeout(() => setCompleted(new Set()), 1000);
   };
+  const onReopen = (ids: number[]) => {
+    if (reopenTimeout.current) clearTimeout(reopenTimeout.current);
+    setReopened(new Set(ids));
+    reopenTimeout.current = setTimeout(() => setReopened(new Set()), 1000);
+  };
+  useEffect(() => () => {
+    if (completionTimeout.current) clearTimeout(completionTimeout.current);
+    if (reopenTimeout.current) clearTimeout(reopenTimeout.current);
+  }, []);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [now, setNow] = useState(Date.now());
   const [statsOpen, setStatsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [soundOpen, setSoundOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const quietStatus = useRef<HTMLDivElement>(null);
+  const quietStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [logScrolled, setLogScrolled] = useState(false);
   const [sessionsDate, setSessionsDate] = useState<string | null>(null);
   const [timerBusy, setTimerBusy] = useState(false);
+  const [timerPulse, setTimerPulse] = useState(false);
   const [audible, setAudible] = useState(false);
   const [volume, setVolume] = useState(() => Math.max(0, Math.min(1, Number(localStorage.getItem('still-volume') ?? '0.22') || 0)));
   const sound = useRef(new FocusSound());
@@ -136,6 +214,22 @@ export default function App() {
     };
     window.addEventListener('keydown', shortcut);
     return () => window.removeEventListener('keydown', shortcut);
+  }, []);
+  useEffect(() => {
+    const saveState = (event: Event) => {
+      const value = (event as CustomEvent<string>).detail;
+      const status = quietStatus.current;
+      if (!status) return;
+      if (quietStatusTimer.current) clearTimeout(quietStatusTimer.current);
+      if (value === 'clear') { status.dataset.show = 'false'; return; }
+      status.textContent = value === 'saving' ? 'saving…' : 'saved'; status.dataset.show = 'true';
+      if (value === 'saved') quietStatusTimer.current = setTimeout(() => { status.dataset.show = 'false'; }, 900);
+    };
+    window.addEventListener('still-save-state', saveState);
+    return () => {
+      window.removeEventListener('still-save-state', saveState);
+      if (quietStatusTimer.current) clearTimeout(quietStatusTimer.current);
+    };
   }, []);
   const refresh = useCallback(async (includeHistory = true) => {
     const sequence = ++generation.current;
@@ -180,11 +274,16 @@ export default function App() {
     return () => { clearInterval(interval); window.removeEventListener('focus', focus); };
   }, [refresh, activeTag]);
   useEffect(() => {
+    if (!data?.active_session) return;
+    setNow(Date.now());
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [data?.active_session?.id]);
+  useEffect(() => {
     let day = localDate();
     const interval = setInterval(() => {
-      setNow(Date.now());
       const next = localDate();
-      if (next !== day) { day = next; void refresh(false).catch(e => setError(errorMessage(e))); }
+      if (next !== day) { day = next; setNow(Date.now()); void refresh(false).catch(e => setError(errorMessage(e))); }
     }, 1000);
     return () => clearInterval(interval);
   }, [refresh]);
@@ -195,6 +294,14 @@ export default function App() {
   useEffect(() => { const currentSound = sound.current; return () => currentSound.dispose(); }, []);
 
   const active = data?.active_session;
+  useEffect(() => {
+    let icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (!icon) { icon = document.createElement('link'); icon.rel = 'icon'; document.head.appendChild(icon); }
+    const paper = night ? '#011627' : '#d9dcdd';
+    const ink = active ? (night ? '#75d1c4' : '#48675e') : (night ? '#8ca0b0' : '#777b7e');
+    const inner = active ? `<circle cx="16" cy="16" r="5" fill="${ink}"/>` : '';
+    icon.href = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="${paper}"/><circle cx="16" cy="16" r="10" fill="none" stroke="${ink}" stroke-width="2"/>${inner}</svg>`)}`;
+  }, [active, night]);
   const adjustedNow = now + clockOffset.current;
   const elapsed = active ? Math.max(0, (adjustedNow - new Date(active.started_at).getTime()) / 1000) : 0;
   const toggleTimer = async () => {
@@ -209,6 +316,11 @@ export default function App() {
         if (localStorage.getItem('still-muted') !== 'true') void sound.current.start(volume).then(() => setAudible(true)).catch(() => notify('Audio paused. Open the timer’s sound menu to resume.'));
         const started = await api<Session>('/timer/start', 'POST');
         setData(current => current ? { ...current, active_session: started } : current);
+      }
+      setTimerPulse(false);
+      if (!active) {
+        requestAnimationFrame(() => setTimerPulse(true));
+        setTimeout(() => setTimerPulse(false), 400);
       }
       await refresh();
     } catch (e) { if (!active) { sound.current.stop(); setAudible(false); } notify(errorMessage(e)); }
@@ -246,14 +358,15 @@ export default function App() {
     } catch (e) { notify(errorMessage(e)); }
   };
 
-  return <JournalContext.Provider value={{ tags: data?.tags ?? [], activeTag: data?.tag ?? null, completed, onComplete, target }}><Page>
-    <PageControls role="group" aria-label="Page controls">
-    {REPOSITORY_URL && <RepositoryLink href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer" aria-label="GitHub repository" title="GitHub"><Github size={17} aria-hidden="true" /></RepositoryLink>}
-    <StatsToggle aria-label="Open focus statistics" title="Statistics · ⌘⇧S" onClick={() => setStatsOpen(true)}><ChartNoAxesColumn size={17} aria-hidden="true" /></StatsToggle>
+  return <JournalContext.Provider value={{ tags: data?.tags ?? [], activeTag: data?.tag ?? null, completed, onComplete, reopened, onReopen, target }}><Page $focusing={!!active} data-testid="page" data-focus-running={active ? 'true' : undefined}>
+    <PageControls role="group" aria-label="Page controls" data-focus-chrome>
+    {REPOSITORY_URL && <RepositoryLink href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer" aria-label="GitHub repository" title="GitHub"><Github size={15} aria-hidden="true" /></RepositoryLink>}
+    <StatsToggle aria-label="Open focus statistics" title="Statistics · ⌘⇧S" onClick={() => setStatsOpen(true)}><ChartNoAxesColumn size={15} aria-hidden="true" /></StatsToggle>
+    <ShortcutToggle aria-label="Keyboard shortcuts" title="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)}><ShortcutGlyph data-shortcut-icon aria-hidden="true" /></ShortcutToggle>
     <ThemeToggle role="switch" aria-label="Night mode" aria-checked={night}
       title={night ? 'Use day mode' : 'Use night mode'} onClick={() => setNight(value => !value)}>
-      <ThemeGlyph $shown={!night} data-icon="sun" aria-hidden="true"><Sun size={17} /></ThemeGlyph>
-      <ThemeGlyph $shown={night} data-icon="moon" aria-hidden="true"><Moon size={17} /></ThemeGlyph>
+      <ThemeGlyph $shown={!night} data-icon="sun" aria-hidden="true"><Sun size={15} /></ThemeGlyph>
+      <ThemeGlyph $shown={night} data-icon="moon" aria-hidden="true"><Moon size={15} /></ThemeGlyph>
     </ThemeToggle>
     </PageControls>
     <TagTabs tags={data?.tags ?? []} active={activeTag} onSelect={tag => { void selectTag(tag); }} />
@@ -261,10 +374,14 @@ export default function App() {
       <TopArea>
         {!data ? <ConnectionState><Muted>{error || 'Loading…'}</Muted>{error && <Button onClick={() => { setError(''); void refresh().catch(e => setError(errorMessage(e))); }}>Retry</Button>}</ConnectionState> :
           <Todos key={data.tag ?? "all"} tasks={data.tasks} refresh={refresh} notify={notify} />}
-    <Toolbar><TimerButton disabled={timerBusy || !data} aria-label={active ? 'Stop focus timer' : 'Start focus timer'} aria-pressed={!!active} title="Click to start/stop · right-click for sound" onContextMenu={e => { e.preventDefault(); setSoundOpen(true); }} onKeyDown={e => { if (e.key === 'ContextMenu' || e.shiftKey && e.key === 'F10') { e.preventDefault(); setSoundOpen(true); } }} onClick={() => void toggleTimer()}>{timerDuration(elapsed)}</TimerButton></Toolbar>
+    <Toolbar><TimerButton $pulse={timerPulse} $running={!!active} disabled={timerBusy || !data} aria-label={active ? 'Stop focus timer' : 'Start focus timer'} aria-pressed={!!active} title="Click to start/stop · right-click for sound" onContextMenu={e => { e.preventDefault(); setSoundOpen(true); }} onKeyDown={e => { if (e.key === 'ContextMenu' || e.shiftKey && e.key === 'F10') { e.preventDefault(); setSoundOpen(true); } }} onClick={() => void toggleTimer()}>{timerDuration(elapsed)}</TimerButton></Toolbar>
       </TopArea>
       {data &&
-        <LogViewport ref={logViewport} data-testid="log-scroll">
+        <LogFrame><LogViewport ref={logViewport} data-testid="log-scroll" data-top-fade={logScrolled || undefined}
+          onScroll={event => {
+            const clipped = event.currentTarget.scrollTop > 12;
+            setLogScrolled(previous => previous === clipped ? previous : clipped);
+          }}>
         <Journal key={data.tag ?? "all"} scrollRoot={logViewport} days={data.days} today={data.today} refresh={refresh} notify={notify} openSessions={setSessionsDate} secondsForDay={secondsForDay} hasMore={!!data.next_cursor} loadMore={async () => {
           if (!data.next_cursor) return;
           const filter = tagRef.current;
@@ -274,20 +391,46 @@ export default function App() {
           setData(current => current ? { ...current, days: [...current.days, ...more.days.filter(d => !current.days.some(existing => existing.date === d.date))], next_cursor: more.next_cursor } : current);
         }} />
         {error && <TextButton onClick={() => void refresh().catch(e => notify(errorMessage(e)))}>Connection lost · retry</TextButton>}
-        </LogViewport>
+        </LogViewport><LogEdgeWash data-testid="log-top-ink-wash" $shown={logScrolled} aria-hidden="true" /></LogFrame>
       }
     </Main>
-    <SessionsModal date={sessionsDate} onClose={() => setSessionsDate(null)} onChange={refresh} />
-    <StatsModal open={statsOpen} onClose={() => setStatsOpen(false)} />
-    <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} onSelect={jumpTo} />
+    <Suspense fallback={null}>
+      {sessionsDate && <SessionsModal date={sessionsDate} onClose={() => setSessionsDate(null)} onChange={refresh} />}
+      {statsOpen && <StatsModal open onClose={() => setStatsOpen(false)} />}
+      {searchOpen && <SearchModal open onClose={() => setSearchOpen(false)} onSelect={jumpTo} />}
+    </Suspense>
     <Modal open={soundOpen} onClose={() => setSoundOpen(false)} title="Focus sound" compact><SoundMenu>
       <TextButton aria-label={audible ? 'Mute focus sound' : 'Play focus sound'} onClick={() => void toggleSound()}>{audible ? 'Mute' : 'Play sound'}</TextButton>
       <input aria-label="Focus sound volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={e => { const value = Number(e.target.value); setVolume(value); localStorage.setItem('still-volume', String(value)); sound.current.setVolume(value); }} />
     </SoundMenu></Modal>
+    <Modal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" compact><ShortcutPanel>
+      <ShortcutRows>
+        <ShortcutRow><Demo>create the next entry</Demo><Keys>enter</Keys></ShortcutRow>
+        <ShortcutRow><Demo>add a line break</Demo><Keys>shift + enter</Keys></ShortcutRow>
+        <ShortcutRow><Demo>move entry right</Demo><Keys>tab</Keys></ShortcutRow>
+        <ShortcutRow><Demo>move entry left</Demo><Keys>shift + tab</Keys></ShortcutRow>
+        <ShortcutRow><Demo>jump to entry above</Demo><Keys>⌘ + ↑</Keys></ShortcutRow>
+        <ShortcutRow><Demo>jump to entry below</Demo><Keys>⌘ + ↓</Keys></ShortcutRow>
+        <ShortcutRow><Demo>select all entries</Demo><Keys>⌘ + a twice</Keys></ShortcutRow>
+        <ShortcutRow><Demo>make this <strong>bold</strong></Demo><Keys>⌘ + b</Keys></ShortcutRow>
+        <ShortcutRow><Demo>make this <em>italic</em></Demo><Keys>⌘ + i</Keys></ShortcutRow>
+        <ShortcutRow><Demo>make this <u>underlined</u></Demo><Keys>⌘ + u</Keys></ShortcutRow>
+        <ShortcutRow><Demo>add or edit a <a href="#" onClick={event => event.preventDefault()}>link</a></Demo><Keys>⌘ + k</Keys></ShortcutRow>
+        <ShortcutRow><Demo>turn text into <code>code</code></Demo><Keys>⌘ + shift + c</Keys></ShortcutRow>
+        <ShortcutRow><Demo>mark this <s>finished</s></Demo><Keys>⌘ + shift + x</Keys></ShortcutRow>
+        <ShortcutRow><Demo><strong><em>styled</em></strong> → plain text</Demo><Keys>⌘ + \</Keys></ShortcutRow>
+        <ShortcutRow><Demo>search</Demo><Keys>⌘ + f</Keys></ShortcutRow>
+        <ShortcutRow><Demo>statistics</Demo><Keys>⌘ + shift + s</Keys></ShortcutRow>
+        <ShortcutRow><Demo>sound controls</Demo><Keys>⌘ + shift + m</Keys></ShortcutRow>
+        <ShortcutRow><Demo>undo</Demo><Keys>⌘ + z</Keys></ShortcutRow>
+        <ShortcutRow><Demo>redo</Demo><Keys>⌘ + shift + z</Keys></ShortcutRow>
+      </ShortcutRows>
+    </ShortcutPanel></Modal>
     {undoTask && !message && <Toast><TextButton aria-label="Undo task completion" onClick={async () => {
       try { await documentUndo(); setUndoTask(null); }
       catch (e) { notify(errorMessage(e)); }
     }}>Undo</TextButton><TextButton aria-label="Dismiss undo" onClick={() => setUndoTask(null)}>×</TextButton></Toast>}
     {message && <Toast role="status">{message}<TextButton aria-label="Dismiss notification" onClick={() => setMessage('')}>Dismiss</TextButton></Toast>}
+    <QuietStatus ref={quietStatus} role="status" aria-live="polite" data-show="false" />
   </Page></JournalContext.Provider>;
 }

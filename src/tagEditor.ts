@@ -8,13 +8,20 @@ export const TagDecorations = Extension.create({
   addProseMirrorPlugins() {
     return [new Plugin({ props: { decorations(state) {
       const decorations: Decoration[] = [];
+      const { empty, from, $from } = state.selection;
+      const before = empty && $from.parent.type.name !== 'codeBlock' ? $from.parent.textBetween(0, $from.parentOffset, '', '\ufffc') : '';
+      const activeMatch = /(?:^|[^\p{L}\p{N}_/#&])#([\p{L}\p{N}_-]{0,64})$/u.exec(before);
+      const activeFrom = activeMatch ? from - activeMatch[1].length - 1 : -1;
       state.doc.descendants((node, position) => {
         if (node.type.name === 'codeBlock') return false;
         if (!node.isText || node.marks.some(mark => mark.type.name === 'code' || mark.type.name === 'link')) return;
         for (const tag of tagMatches(node.text ?? '')) {
-          decorations.push(Decoration.inline(position + tag.from, position + tag.to, { class: 'journal-tag', 'data-tag': tag.name }));
+          const tagFrom = position + tag.from, tagTo = position + tag.to;
+          if (tagFrom === activeFrom && tagTo === from) continue;
+          decorations.push(Decoration.inline(tagFrom, tagTo, { class: 'journal-tag', 'data-tag': tag.name }));
         }
       });
+      if (activeMatch) decorations.push(Decoration.inline(activeFrom, from, { class: 'journal-tag journal-tag-query' }));
       return DecorationSet.create(state.doc, decorations);
     } } })];
   },
@@ -33,15 +40,25 @@ export const JournalTag = Node.create({
   renderMarkdown() { return ''; },
   addKeyboardShortcuts() {
     return {
+      ArrowLeft: () => {
+        const { empty, $from, from } = this.editor.state.selection;
+        if (!empty || $from.nodeBefore?.type.name !== this.name) return false;
+        return this.editor.commands.setNodeSelection(from - $from.nodeBefore.nodeSize);
+      },
+      ArrowRight: () => {
+        const { empty, $from, from } = this.editor.state.selection;
+        if (!empty || $from.nodeAfter?.type.name !== this.name) return false;
+        return this.editor.commands.setNodeSelection(from);
+      },
       Backspace: () => {
         const { empty, $from, from } = this.editor.state.selection;
         if (!empty || $from.nodeBefore?.type.name !== this.name) return false;
-        return this.editor.commands.deleteRange({ from: from - $from.nodeBefore.nodeSize, to: from });
+        return this.editor.commands.setNodeSelection(from - $from.nodeBefore.nodeSize);
       },
       Delete: () => {
         const { empty, $from, from } = this.editor.state.selection;
         if (!empty || $from.nodeAfter?.type.name !== this.name) return false;
-        return this.editor.commands.deleteRange({ from, to: from + $from.nodeAfter.nodeSize });
+        return this.editor.commands.setNodeSelection(from);
       },
     };
   },
@@ -60,27 +77,6 @@ export function commitTypedTags(editor: Editor, includeCurrent = false) {
   });
   const tr = editor.state.tr;
   for (const match of matches.reverse()) tr.replaceWith(match.from, match.to, editor.schema.nodes.journalTag.create({ name: match.name }));
-  const atoms: { pos: number; name: string; size: number }[] = [];
-  let lastText = 0;
-  tr.doc.descendants((node, pos) => {
-    if (node.type.name === 'journalTag') atoms.push({ pos, name: node.attrs.name, size: node.nodeSize });
-    else if (node.isText && node.text?.trim()) lastText = pos + node.nodeSize;
-  });
-  if (atoms.length && (atoms[0].pos < lastText || tr.doc.lastChild?.type.name !== 'paragraph')) {
-    const names = [...new Set(atoms.map(atom => atom.name))];
-    for (const atom of [...atoms].reverse()) {
-      tr.delete(atom.pos, atom.pos + atom.size);
-      // Browsers may insert a non-breaking space beside an inline-block chip.
-      if (atom.pos > 0 && /^[ \t\u00a0]{2}$/.test(tr.doc.textBetween(atom.pos - 1, atom.pos + 1))) tr.insertText(' ', atom.pos - 1, atom.pos + 1);
-    }
-    if (tr.doc.lastChild?.type.name !== 'paragraph') tr.insert(tr.doc.content.size, editor.schema.nodes.paragraph.create());
-    const at = tr.doc.content.size - 1;
-    const nodes = names.flatMap((name, index) => [
-      ...(index || tr.doc.lastChild?.textContent && !/\s$/.test(tr.doc.lastChild.textContent) ? [editor.schema.text(' ')] : []),
-      editor.schema.nodes.journalTag.create({ name }),
-    ]);
-    tr.insert(at, nodes);
-    tr.setSelection(TextSelection.near(tr.doc.resolve(tr.mapping.map(caret, -1))));
-  }
+  if (tr.docChanged) tr.setSelection(TextSelection.near(tr.doc.resolve(tr.mapping.map(caret, 1)), 1));
   if (tr.docChanged) editor.view.dispatch(tr);
 }

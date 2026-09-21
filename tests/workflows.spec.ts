@@ -14,7 +14,7 @@ test('parent progress retains completed children, finishes automatically, and ca
   await expect(page.getByRole('button', { name: 'Reopen Progress first', exact: true })).toHaveAttribute('aria-pressed', 'true');
   const progress = page.getByRole('button', { name: 'Collapse Progress project', exact: true });
   await expect(progress).toHaveAttribute('aria-description', '1 of 2 children completed');
-  expect(await progress.evaluate(el => getComputedStyle(el, '::before').backgroundImage)).toContain('180deg');
+  await expect.poll(() => progress.evaluate(el => getComputedStyle(el, '::before').backgroundImage)).toContain('180deg');
   await expect(page.getByRole('group', { name: 'Progress first', exact: true })).toHaveCount(1);
   await page.getByRole('button', { name: 'Complete Progress last', exact: true }).click();
   await expect(page.getByRole('group', { name: 'Progress project', exact: true })).toBeVisible();
@@ -42,19 +42,69 @@ test('reopening a completed nested task returns its whole tree to to-dos', async
   await expect(todos.getByRole('button', { name: 'Reopen Return second', exact: true })).toBeVisible();
 });
 
+test('a reopened root task animates into its saved position ahead of the composer', async ({ page, request }) => {
+  await request.post('/api/tasks', { data: { content: 'Reopen anchor' } });
+  const task = await (await request.post('/api/tasks', { data: { content: 'Reopen arrival' } })).json();
+  await request.post(`/api/tasks/${task.id}/complete`);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Reopen Reopen arrival', exact: true }).click();
+
+  const todos = page.getByRole('region', { name: 'to do', exact: true });
+  const row = todos.locator(`[data-item-id="${task.id}"]`);
+  const composer = todos.locator('[data-item-id="draft"]');
+  await expect(row).toBeVisible();
+  await expect(row).not.toHaveCSS('animation-name', 'none');
+  expect(await row.evaluate((element, draft) =>
+    !!(element.compareDocumentPosition(draft as Node) & Node.DOCUMENT_POSITION_FOLLOWING), await composer.elementHandle())).toBe(true);
+  await row.evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
+  const rowBox = (await row.boundingBox())!;
+  const composerBox = (await composer.boundingBox())!;
+  expect(composerBox.y - (rowBox.y + rowBox.height)).toBeLessThan(2);
+});
+
 test('a new subtask added in the logbook starts checked and can reopen its tree', async ({ page, request }) => {
   const parent = await (await request.post('/api/tasks', { data: { content: 'Extended project' } })).json();
   await request.post(`/api/tasks/${parent.id}/complete`);
   await page.goto('/');
-  await page.getByRole('button', { name: 'Add subtask to Extended project', exact: true }).click();
-  const composer = page.getByRole('textbox', { name: 'New completed subtask', exact: true });
-  await expect(composer).toBeFocused();
+  await page.getByRole('group', { name: 'Extended project', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Edit to-do', exact: true }).press('Meta+ArrowDown');
+  await page.getByRole('textbox', { name: 'Edit to-do', exact: true }).press('Enter');
+  const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
   await composer.fill('Finished follow-up');
-  await composer.press('Enter');
+  await composer.press('Meta+ArrowDown');
+  await composer.press('Tab');
+  const subtask = page.getByRole('textbox', { name: 'New completed subtask', exact: true });
+  await expect(subtask).toBeFocused();
+  await subtask.press('Meta+ArrowDown');
+  await subtask.press('Enter');
   await expect(page.getByRole('button', { name: 'Reopen Finished follow-up', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Reopen Finished follow-up', exact: true }).click();
   const todos = page.getByRole('region', { name: 'to do', exact: true });
   await expect(todos.getByRole('group', { name: 'Extended project', exact: true })).toBeVisible();
+});
+
+test('completed tasks share note ordering and normal logbook text editing', async ({ page, request }) => {
+  const { today } = await (await request.get('/api/journal')).json();
+  await request.post('/api/notes', { data: { date: today, content: 'Mixed before' } });
+  const task = await (await request.post('/api/tasks', { data: { content: 'Mixed completed task' } })).json();
+  await request.post(`/api/tasks/${task.id}/complete`);
+  await new Promise(resolve => setTimeout(resolve, 10));
+  await request.post('/api/notes', { data: { date: today, content: 'Mixed after' } });
+  await page.goto('/');
+  const before = page.getByRole('group', { name: 'Mixed before', exact: true });
+  const completed = page.getByRole('group', { name: 'Mixed completed task', exact: true });
+  const after = page.getByRole('group', { name: 'Mixed after', exact: true });
+  expect((await before.boundingBox())!.y).toBeLessThan((await completed.boundingBox())!.y);
+  expect((await completed.boundingBox())!.y).toBeLessThan((await after.boundingBox())!.y);
+  await expect(completed).toHaveCSS('text-decoration-line', 'none');
+  expect(await completed.evaluate(el => getComputedStyle(el).color)).toBe(await before.evaluate(el => getComputedStyle(el).color));
+  await completed.click();
+  const editor = page.getByRole('textbox', { name: 'Edit to-do', exact: true });
+  await editor.fill('Mixed edited task'); await editor.press('Enter');
+  await expect(page.getByRole('group', { name: 'Mixed edited task', exact: true })).toBeVisible();
+  await page.getByRole('group', { name: 'Mixed edited task', exact: true }).click();
+  await editor.fill(''); await editor.press('Enter');
+  await expect(page.getByRole('group', { name: 'Mixed edited task', exact: true })).toHaveCount(0);
 });
 
 test('arrow navigation, merging, grouped selection, and document undo cross bullet boundaries', async ({ page, request }) => {
@@ -72,6 +122,7 @@ test('arrow navigation, merging, grouped selection, and document undo cross bull
   await expect(editor).toHaveText('Beta');
   await editor.press('Meta+ArrowUp'); await editor.press('Backspace');
   await expect(editor).toHaveText('AlphaBeta');
+  await editor.press('Meta+ArrowDown');
   await editor.press('Enter');
   const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
   await composer.press('Meta+z');
@@ -94,7 +145,7 @@ test('arrow navigation, merging, grouped selection, and document undo cross bull
     document.activeElement?.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
   });
   await expect(editor.locator('strong')).toHaveText('Replacement');
-  await editor.press('Enter'); await composer.press('Meta+z');
+  await editor.press('Meta+ArrowDown'); await editor.press('Enter'); await composer.press('Meta+z');
   await expect(page.getByRole('group', { name: 'Alpha', exact: true }).locator('strong')).toHaveText('Alpha');
   await expect(page.getByRole('group', { name: 'Beta', exact: true }).locator('strong')).toHaveText('Beta');
 });

@@ -1,9 +1,6 @@
-"""Relational before/after images for undoable document edits.
-
-Only changed entity rows are retained. Undo verifies the expected state before
-restoring anything, so edits from another window are never silently overwritten.
-"""
+"""Relational before/after images for undoable unified-entry edits."""
 import uuid
+
 from fastapi import HTTPException
 
 SCHEMA = '''
@@ -14,16 +11,19 @@ CREATE TABLE IF NOT EXISTS document_changes (
  operation_id TEXT NOT NULL REFERENCES document_operations(id),
  entity TEXT NOT NULL CHECK(entity IN ('notes','tasks')), row_id INTEGER NOT NULL,
  phase TEXT NOT NULL CHECK(phase IN ('before','after')), present INTEGER NOT NULL,
- content TEXT, tags TEXT, day_id INTEGER, parent_id INTEGER, position INTEGER,
- created_at TEXT, updated_at TEXT, completed_at TEXT, source_task_id INTEGER, client_id TEXT,
+ kind TEXT, content TEXT, tags TEXT, day_id INTEGER, parent_id INTEGER, position INTEGER,
+    created_at TEXT, updated_at TEXT, completed_at TEXT, client_id TEXT, revision INTEGER,
  PRIMARY KEY(operation_id, entity, row_id, phase)
 );
 '''
-FIELDS = ['content','tags','day_id','parent_id','position','created_at','updated_at','completed_at','source_task_id','client_id']
+FIELDS = ['kind', 'content', 'tags', 'day_id', 'parent_id', 'position', 'created_at', 'updated_at', 'completed_at', 'client_id', 'revision']
 
 
 def snapshot(db):
-    return {table: {r['id']: dict(r) for r in db.execute(f'SELECT * FROM {table}')} for table in ('tasks', 'notes')}
+    result = {'notes': {}, 'tasks': {}}
+    for row in db.execute('SELECT * FROM entries'):
+        result['notes' if row['kind'] == 'note' else 'tasks'][row['id']] = dict(row)
+    return result
 
 
 def record(db, before, now):
@@ -47,40 +47,40 @@ def restore(db, operation, redo=False):
     if not event:
         raise HTTPException(404, 'Edit history not found.')
     if bool(event['undone']) != redo:
-        return  # retry after a lost response
+        return
     expected_phase, desired_phase = ('before', 'after') if redo else ('after', 'before')
-    columns = {table: [r['name'] for r in db.execute(f'PRAGMA table_info({table})')] for table in ('tasks','notes')}
+    columns = [row['name'] for row in db.execute('PRAGMA table_info(entries)')]
     phases = {}
     for phase in (expected_phase, desired_phase):
-        phases[phase] = {(r['entity'], r['row_id']): ({'id': r['row_id'], **{key: r[key] for key in columns[r['entity']] if key != 'id'}} if r['present'] else None)
-                         for r in db.execute('SELECT * FROM document_changes WHERE operation_id = ? AND phase = ?', (operation, phase))}
+        phases[phase] = {(row['entity'], row['row_id']): (
+            {'id': row['row_id'], **{key: row[key] for key in columns if key != 'id'}} if row['present'] else None
+        ) for row in db.execute('SELECT * FROM document_changes WHERE operation_id = ? AND phase = ?', (operation, phase))}
     expected, desired = phases[expected_phase], phases[desired_phase]
     current = snapshot(db)
     for (table, row_id), row in expected.items():
-        # Timestamps are audit metadata; a later inverse edit may change them.
         actual = current[table].get(row_id)
-        comparable = lambda value: {k: v for k, v in value.items() if k != 'updated_at'} if value else None
+        comparable = lambda value: {key: item for key, item in value.items() if key not in ('updated_at', 'revision')} if value else None
         if comparable(actual) != comparable(row):
             raise HTTPException(409, 'This entry changed elsewhere. Undo would overwrite those changes.')
         if desired[(table, row_id)] is None:
             for child in current[table].values():
                 if child['parent_id'] == row_id and (table, child['id']) not in desired:
                     raise HTTPException(409, 'New children were added to this entry. Undo would move them.')
-    # Detach affected links before restoring parent rows, avoiding transient cycles.
-    for table, row_id in desired:
-        db.execute(f'UPDATE {table} SET parent_id = NULL WHERE id = ?', (row_id,))
-    for table in ('notes', 'tasks'):
-        for (entity, row_id), row in desired.items():
-            if entity == table and row is None:
-                db.execute(f'DELETE FROM {table} WHERE id = ?', (row_id,))
-    for table in ('tasks', 'notes'):
-        for (entity, _), row in desired.items():
-            if entity != table or row is None:
-                continue
-            restored = {**row, 'parent_id': None}
-            keys = columns[table]
-            db.execute(f"INSERT INTO {table}({','.join(keys)}) VALUES ({','.join('?' for _ in keys)}) ON CONFLICT(id) DO UPDATE SET {','.join(k+'=excluded.'+k for k in keys if k != 'id')}", [restored[k] for k in keys])
-    for (table, row_id), row in desired.items():
+    for _, row_id in desired:
+        db.execute('UPDATE entries SET parent_id = NULL WHERE id = ?', (row_id,))
+    for (_, row_id), row in desired.items():
+        if row is None:
+            db.execute('DELETE FROM entries WHERE id = ?', (row_id,))
+    for _, row in desired.items():
+        if row is None:
+            continue
+        actual = current['notes' if row['kind'] == 'note' else 'tasks'].get(row['id'])
+        restored = {**row, 'parent_id': None,
+                    'revision': max(row.get('revision') or 1, (actual or {}).get('revision') or 0) + 1}
+        db.execute(f"INSERT INTO entries({','.join(columns)}) VALUES ({','.join('?' for _ in columns)}) "
+                   f"ON CONFLICT(id) DO UPDATE SET {','.join(key + '=excluded.' + key for key in columns if key != 'id')}",
+                   [restored[key] for key in columns])
+    for (_, row_id), row in desired.items():
         if row is not None:
-            db.execute(f'UPDATE {table} SET parent_id = ? WHERE id = ?', (row['parent_id'], row_id))
+            db.execute('UPDATE entries SET parent_id = ? WHERE id = ?', (row['parent_id'], row_id))
     db.execute('UPDATE document_operations SET undone = ? WHERE id = ?', (int(not redo), operation))

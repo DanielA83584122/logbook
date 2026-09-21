@@ -47,25 +47,32 @@ export function recoverEarlierDrafts(today: string): Promise<boolean> {
     let changed = false;
     for (const key of Object.keys(localStorage)) {
       if (!/^still-draft-\d{4}-\d{2}-\d{2}$/.test(key) || key === `still-draft-${today}`) continue;
-      const raw = localStorage.getItem(key);
-      if (!raw) continue;
-      const draft = JSON.parse(raw) as { id: number | null; content: string; saved: string; tags?: string[]; savedTags?: string[]; clientId?: string; parentId?: number | null; afterId?: number | null };
-      if (draft.content !== draft.saved || JSON.stringify(draft.tags ?? []) !== JSON.stringify(draft.savedTags ?? [])) {
-        if (draft.content.trim() || draft.tags?.length) {
-          // Persist the retry key before making a request, including for older draft formats.
-          if (!draft.clientId) {
-            draft.clientId = crypto.randomUUID(); localStorage.setItem(key, JSON.stringify(draft));
-          }
-          await api(draft.id ? `/notes/${draft.id}` : '/notes', draft.id ? 'PATCH' : 'POST', {
-            content: draft.content, tags: draft.tags, date: key.slice('still-draft-'.length), client_id: draft.clientId,
-            parent_id: draft.parentId ?? null, after_id: draft.afterId ?? null,
-          });
-        } else if (draft.id) await api(`/notes/${draft.id}`, 'DELETE');
-        changed = true;
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        const draft = JSON.parse(raw) as { id: number | null; kind?: 'notes' | 'tasks'; revision?: number | null; requestId?: string; content: string; saved: string; tags?: string[]; savedTags?: string[]; clientId?: string; parentId?: number | null; afterId?: number | null };
+        if (typeof draft.content !== 'string' || typeof draft.saved !== 'string') continue;
+        if (draft.content !== draft.saved || JSON.stringify(draft.tags ?? []) !== JSON.stringify(draft.savedTags ?? [])) {
+          if (!draft.clientId) draft.clientId = crypto.randomUUID();
+          if (!draft.requestId) draft.requestId = crypto.randomUUID();
+          localStorage.setItem(key, JSON.stringify(draft));
+          const kind = draft.kind === 'tasks' ? 'tasks' : 'notes';
+          const change = draft.content.trim() || draft.tags?.length ? {
+            kind, id: draft.id, content: draft.content, tags: draft.tags, date: key.slice('still-draft-'.length), client_id: draft.clientId,
+            parent_id: draft.parentId ?? null, after_id: draft.afterId ?? null, expected_revision: draft.revision ?? null,
+          } : { kind, id: draft.id, delete: true, expected_revision: draft.revision ?? null };
+          await api('/document/edit', 'POST', { changes: [change], request_id: draft.requestId });
+          changed = true;
+          // An unmounting composer can still be finishing a save. Do not erase newer recovery data.
+          const latest = localStorage.getItem(key);
+          if (latest === JSON.stringify(draft)) localStorage.removeItem(key);
+        } else {
+          localStorage.removeItem(key);
+        }
+      } catch {
+        // One malformed or conflicting draft must not block recovery of the rest.
+        continue;
       }
-      // An unmounting composer can still be finishing a save. Do not erase newer recovery data.
-      const latest = localStorage.getItem(key);
-      if (latest === raw || latest === JSON.stringify(draft)) localStorage.removeItem(key);
     }
     return changed;
   })().finally(() => { recovery = null; });

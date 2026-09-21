@@ -8,22 +8,30 @@ test.afterEach(({ page }) => { expect(errors.get(page)).toEqual([]); });
 for (const kind of ['notes', 'tasks'] as const) {
   test(`typed tags become removable chips and separate metadata in ${kind}`, async ({ page, request }) => {
     await page.goto('/');
+    if (kind === 'tasks' && await page.getByRole('button', { name: 'Add to-do', exact: true }).count()) {
+      await page.getByRole('button', { name: 'Add to-do', exact: true }).click();
+    }
     const composer = page.getByRole('textbox', { name: kind === 'notes' ? 'New journal bullet' : 'New to-do', exact: true });
     await composer.pressSequentially(`A tagged ${kind} #unique-${kind}`);
     await composer.press('Enter');
     await expect(composer).toHaveText('');
-    const preview = page.getByRole('group', { name: `A tagged ${kind}`, exact: true });
+    const preview = page.getByRole('group', { name: new RegExp(`^A tagged ${kind}`) });
     await expect(preview.locator(`[data-tag="unique-${kind}"]`)).toHaveText(`#unique-${kind}`);
     let data = await (await request.get('/api/export')).json();
-    const row = data[kind].find((item: { content: string }) => item.content === `A tagged ${kind}`);
+    const row = data[kind].find((item: { content: string }) => item.content === `A tagged ${kind} #unique-${kind}`);
     expect(row.tags).toEqual([`unique-${kind}`]);
-    expect(row.content).not.toContain('#');
+    expect(row.content).toContain(`#unique-${kind}`);
     await page.reload();
     await expect(preview.locator('[data-tag]')).toBeVisible();
     await preview.click();
     const editor = page.getByRole('textbox', { name: kind === 'notes' ? 'Edit note' : 'Edit to-do', exact: true });
-    await editor.locator('[data-tag]').click();
-    await page.keyboard.press('Backspace');
+    await editor.press('Meta+ArrowDown');
+    await editor.press('ArrowLeft');
+    await expect(editor.locator('[data-tag]')).toHaveClass(/ProseMirror-selectednode/);
+    await editor.press('ArrowRight');
+    await editor.press('Backspace');
+    await expect(editor.locator('[data-tag]')).toHaveClass(/ProseMirror-selectednode/);
+    await editor.press('Backspace');
     await expect(editor.locator('[data-tag]')).toHaveCount(0);
     await editor.press('Enter');
     await expect(preview).toBeVisible();
@@ -35,14 +43,26 @@ for (const kind of ['notes', 'tasks'] as const) {
 
 test('autocomplete cycles existing tags with arrows and keeps code literal', async ({ page, request }) => {
   const { today } = await (await request.get('/api/journal')).json();
-  await request.post('/api/notes', { data: { date: today, content: 'Tag vocabulary', tags: ['alpha', 'alpine', 'beta'] } });
+  await request.post('/api/notes', { data: { date: today, content: 'Tag vocabulary', tags: ['alpha', 'alpine', 'alto', 'beta'] } });
   await page.goto('/');
   const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
   await composer.pressSequentially('Read #');
   const suggestions = page.getByRole('listbox', { name: 'Tags', exact: true });
-  await expect(suggestions.getByRole('option')).toHaveCount(3);
+  await expect(composer.locator('.journal-tag-query')).toHaveText('#');
+  await expect(suggestions).toHaveCount(0);
   await composer.pressSequentially('al');
-  await expect(suggestions.getByRole('option')).toHaveCount(2);
+  await expect(suggestions.getByRole('option')).toHaveCount(3);
+  const query = composer.locator('.journal-tag-query');
+  await expect.poll(() => query.evaluate(element => getComputedStyle(element, '::after').content)).toBe('"pha"');
+  expect(await query.evaluate(element => getComputedStyle(element, '::after').color)).not.toBe(await query.evaluate(element => getComputedStyle(element).color));
+  const alternate = suggestions.getByRole('option', { name: '#alpine', exact: true });
+  const third = suggestions.getByRole('option', { name: '#alto', exact: true });
+  await expect(alternate).toHaveCSS('border-radius', '999px');
+  const [queryBox, alternateBox, thirdBox] = await Promise.all([query.boundingBox(), alternate.boundingBox(), third.boundingBox()]);
+  expect(alternateBox!.x).toBeCloseTo(queryBox!.x, 0);
+  expect(alternateBox!.y).toBeGreaterThan(queryBox!.y + queryBox!.height);
+  expect(thirdBox!.x).toBeCloseTo(queryBox!.x, 0);
+  expect(thirdBox!.y).toBeGreaterThan(alternateBox!.y + alternateBox!.height);
   await composer.press('ArrowDown');
   await expect(suggestions.getByRole('option', { name: '#alpine', exact: true })).toHaveAttribute('aria-selected', 'true');
   await composer.press('ArrowUp');
@@ -51,9 +71,9 @@ test('autocomplete cycles existing tags with arrows and keeps code literal', asy
   await expect(suggestions).toHaveCount(0);
   await expect(composer.locator('[data-tag="alpine"]')).toBeVisible();
   await composer.press('Enter');
-  await expect(page.getByRole('group', { name: 'Read', exact: true }).locator('[data-tag="alpine"]')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Read #alpine', exact: true }).locator('[data-tag="alpine"]')).toBeVisible();
   const data = await (await request.get('/api/export')).json();
-  expect(data.notes.find((item: { content: string }) => item.content === 'Read').tags).toEqual(['alpine']);
+  expect(data.notes.find((item: { content: string }) => item.content === 'Read #alpine').tags).toEqual(['alpine']);
   await composer.pressSequentially('Literal '); await composer.press('Meta+Shift+c');
   await composer.pressSequentially('#not-a-tag'); await composer.press('Meta+Shift+c'); await composer.press('Enter');
   const literal = page.getByRole('group', { name: 'Literal #not-a-tag', exact: true });

@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
 from datetime import date as CalendarDate, datetime, timedelta, timezone as dt_timezone
 from pathlib import Path
+import base64
+import hmac
 import json
 import os
 from typing import Annotated, Literal
@@ -14,8 +16,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from .db import connection, ensure_day, initialize
 from .tags import bullet_dict, list_tags, matching_ids, normalize_tag, normalize_tags
 from .stats import EMPTY_TOTALS, daily_totals, parse, slices, stamp
-from .hierarchy import descendants, place, remove_preserving_children, validate_parent
-from .tasks import completed_tasks_by_day, visible_tasks
+from .hierarchy import descendants, next_position, place, remove_preserving_children, validate_parent
+from .tasks import visible_tasks
 from .history import snapshot, record, restore
 from .agent import AgentJournal, AgentQuery, DISCOVERY_LINKS, READ_HEADERS, markdown_journal, read_journal
 
@@ -33,6 +35,8 @@ def get_zone(name):
 
 @asynccontextmanager
 async def lifespan(_app):
+    if auth_enabled() and not os.environ.get('STILL_AUTH_PASSWORD'):
+        raise RuntimeError('STILL_AUTH_PASSWORD is required when STILL_AUTH_ENABLED is true.')
     initialize()
     yield
 
@@ -41,9 +45,34 @@ app = FastAPI(title="Still Logbook API", version="1.0.0", lifespan=lifespan,
               description="Personal focus journal. Timestamps are UTC; daily statistics use the requested IANA timezone.")
 
 
+def auth_enabled():
+    return os.environ.get('STILL_AUTH_ENABLED', '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+@app.middleware('http')
+async def authenticate(request: Request, call_next):
+    if not auth_enabled() or request.url.path == '/api/health':
+        return await call_next(request)
+    password = os.environ.get('STILL_AUTH_PASSWORD', '')
+    supplied = request.headers.get('authorization', '')
+    valid = False
+    if supplied.startswith('Basic '):
+        try:
+            username, candidate = base64.b64decode(supplied[6:]).decode().split(':', 1)
+            valid = hmac.compare_digest(username, os.environ.get('STILL_AUTH_USER', 'still')) and hmac.compare_digest(candidate, password)
+        except (ValueError, UnicodeDecodeError):
+            pass
+    elif supplied.startswith('Bearer '):
+        valid = hmac.compare_digest(supplied[7:], password)
+    if not valid:
+        return Response(status_code=401, headers={'WWW-Authenticate': 'Basic realm="Still", charset="UTF-8"'})
+    return await call_next(request)
+
+
 class Content(BaseModel):
     content: str = Field(max_length=10000, description="Markdown text only. Tags are separate metadata, not hashtags embedded in content.")
     tags: list[str] | None = Field(default=None, max_length=50, description="Optional list of tag names. Omit when editing to preserve existing tags; use [] to clear them.")
+    expected_revision: int | None = Field(default=None, ge=1, exclude=True)
 
     @field_validator("tags")
     @classmethod
@@ -70,6 +99,7 @@ class NewNote(NewBullet):
 class BulletLocation(BaseModel):
     parent_id: int | None = Field(ge=1)
     after_id: int | None = Field(default=None, ge=1)
+    expected_revision: int | None = Field(default=None, ge=1, exclude=True)
 
 
 class SessionEdit(BaseModel):
@@ -90,10 +120,56 @@ class StopTimer(BaseModel):
 
 def required(db, table, item_id):
     # table names are internal constants, never supplied by the caller.
-    row = db.execute(f"SELECT * FROM {table} WHERE id = ?", (item_id,)).fetchone()
+    if table in ('notes', 'tasks'):
+        kind = 'note' if table == 'notes' else 'task'
+        row = db.execute("SELECT * FROM entries WHERE id = ? AND kind = ?", (item_id, kind)).fetchone()
+    else:
+        row = db.execute(f"SELECT * FROM {table} WHERE id = ?", (item_id,)).fetchone()
     if not row:
         raise HTTPException(404, "That item no longer exists.")
     return bullet_dict(row)
+
+
+def check_revision(row, expected):
+    if expected is not None and row['revision'] != expected:
+        raise HTTPException(409, 'This entry changed elsewhere. Your local draft was preserved.')
+
+
+def move_entry(db, table, item_id, parent_id, after_id, now):
+    """Move an entry and let its new parent determine note/task identity."""
+    row = required(db, table, item_id)
+    parent = db.execute('SELECT * FROM entries WHERE id = ?', (parent_id,)).fetchone() if parent_id is not None else None
+    if parent_id is not None and parent is None:
+        raise HTTPException(404, 'The parent entry no longer exists.')
+    target_kind = parent['kind'] if parent else ('task' if row['day_id'] is None else 'note')
+    target_table = 'tasks' if target_kind == 'task' else 'notes'
+    if parent and parent['day_id'] != row['day_id']:
+        raise HTTPException(409, 'Nested entries must belong to the same list or date.')
+    tree = descendants(db, table, item_id)
+    if parent_id in {entry['id'] for entry, _ in tree}:
+        raise HTTPException(409, 'A bullet cannot be nested inside itself or its descendants.')
+    if target_table != table:
+        old_parent = row['parent_id']
+        db.execute('UPDATE entries SET parent_id = NULL, revision = revision + 1 WHERE id = ?', (item_id,))
+        if old_parent is not None:
+            old_siblings = db.execute('SELECT id FROM entries WHERE kind = ? AND parent_id = ? ORDER BY position, id',
+                                      (row['kind'], old_parent)).fetchall()
+            for position, sibling in enumerate(old_siblings):
+                db.execute('UPDATE entries SET position = ?, revision = revision + 1 WHERE id = ? AND position != ?',
+                           (position, sibling['id'], position))
+        for entry, _ in tree:
+            completed_at = now if target_kind == 'task' and entry['day_id'] is not None else None
+            db.execute('UPDATE entries SET kind = ?, completed_at = ?, updated_at = ?, revision = revision + 1 WHERE id = ?',
+                       (target_kind, completed_at, now, entry['id']))
+    elif target_kind == 'task' and parent and parent['completed_at']:
+        # A checked group cannot contain unchecked descendants. Moving a branch
+        # into it has the same semantics as creating a new checked subtask.
+        for entry, _ in tree:
+            db.execute('UPDATE entries SET completed_at = COALESCE(completed_at, ?), updated_at = ?, revision = revision + 1 WHERE id = ?',
+                       (now, now, entry['id']))
+    place(db, target_table, item_id, parent_id, after_id,
+          allow_completed_parent=bool(parent and parent['completed_at']))
+    return target_table
 
 
 def session_dict(row, now=None):
@@ -119,28 +195,36 @@ def journal(timezone: str = "UTC", before: CalendarDate | None = None, tag: str 
     now = utcnow()
     today = now.astimezone(zone).date().isoformat()
     with connection() as db:
-        ensure_day(db, today, stamp(now))
         sessions = [dict(r) for r in db.execute("SELECT * FROM sessions ORDER BY started_at")]
         totals = daily_totals(sessions, zone, now)
         dates = {r["date"] for r in db.execute("SELECT date FROM days")}
         dates.update(totals)
-        completed_tasks = completed_tasks_by_day(db, zone, tag)
+        dates.add(today)
         note_ids = matching_ids(db, "notes", tag) if tag else None
         task_ids = set(matching_ids(db, "tasks", tag)) if tag else None
         if note_ids is not None:
-            dates = {r[0] for r in db.execute("SELECT DISTINCT days.date FROM days JOIN notes ON notes.day_id = days.id WHERE notes.id IN (SELECT value FROM json_each(?))", (json.dumps(note_ids),))}
-        dates.update(completed_tasks)
+            all_ids = [*note_ids, *task_ids]
+            dates = {r[0] for r in db.execute("SELECT DISTINCT days.date FROM days JOIN entries ON entries.day_id = days.id WHERE entries.id IN (SELECT value FROM json_each(?))", (json.dumps(all_ids),))}
         if tag:
             dates.add(today)
         ordered = sorted((d for d in dates if (before is None or d < before.isoformat()) and (on is None or d == str(on))), reverse=True)
         selected = ordered[:limit]
-        notes = {}
+        entries = {}
         if selected:
             placeholders = ",".join("?" for _ in selected)
-            for row in db.execute(f"SELECT notes.*, days.date FROM notes JOIN days ON notes.day_id = days.id WHERE days.date IN ({placeholders}) ORDER BY notes.position, notes.id", selected):
-                if note_ids is None or row["id"] in note_ids:
-                    notes.setdefault(row["date"], []).append(bullet_dict(row))
-        days = [{"date": d, "notes": notes.get(d, []), "tasks": completed_tasks.get(d, []), **totals.get(d, EMPTY_TOTALS)} for d in selected]
+            for row in db.execute(f"SELECT entries.*, days.date FROM entries JOIN days ON entries.day_id = days.id WHERE days.date IN ({placeholders}) ORDER BY entries.position, entries.id", selected):
+                included = note_ids is None or row['kind'] == 'note' and row['id'] in note_ids or row['kind'] == 'task' and row['id'] in task_ids
+                if included:
+                    item = {**bullet_dict(row), 'kind': 'notes' if row['kind'] == 'note' else 'tasks'}
+                    entries.setdefault(row['date'], []).append(item)
+        days = []
+        for d in selected:
+            day_entries = entries.get(d, [])
+            day_notes = [row for row in day_entries if row['kind'] == 'notes']
+            day_tasks = [row for row in day_entries if row['kind'] == 'tasks']
+            days.append({"date": d, "notes": day_notes, "tasks": day_tasks,
+                         "entries": day_entries,
+                         **totals.get(d, EMPTY_TOTALS)})
         tasks = visible_tasks(db)
         if task_ids is not None:
             tasks = [task for task in tasks if task["id"] in task_ids]
@@ -166,10 +250,12 @@ class DocumentChange(BaseModel):
     after_id: int | None = None
     client_id: str | None = None
     move: bool = False
+    expected_revision: int | None = Field(default=None, ge=1)
 
 
 class DocumentBatch(BaseModel):
     changes: list[DocumentChange] = Field(min_length=1, max_length=1000)
+    request_id: str | None = Field(default=None, min_length=1, max_length=80)
 
 
 @app.post('/api/document/edit')
@@ -177,28 +263,38 @@ def edit_document(body: DocumentBatch, timezone: str = "UTC"):
     now = stamp(utcnow())
     with connection() as db:
         db.execute('BEGIN IMMEDIATE')
+        if body.request_id:
+            receipt = db.execute('SELECT response FROM document_requests WHERE request_id = ?', (body.request_id,)).fetchone()
+            if receipt:
+                return json.loads(receipt['response'])
         before = snapshot(db)
         results = []
+        promoted = []
         for change in body.changes:
             table = change.kind
+            entry_kind = 'note' if table == 'notes' else 'task'
             item_id = change.id
             if item_id is None and change.client_id:
-                existing = db.execute(f'SELECT id FROM {table} WHERE client_id = ?', (change.client_id,)).fetchone()
+                existing = db.execute('SELECT id FROM entries WHERE kind = ? AND client_id = ?', (entry_kind, change.client_id)).fetchone()
                 item_id = existing['id'] if existing else None
-            row = required(db, table, item_id) if item_id else None
-            completed_retry = False
-            if table == 'tasks' and row and row['completed_at'] and change.id is None:
-                parent = db.execute('SELECT completed_at FROM tasks WHERE id = ?', (row['parent_id'],)).fetchone()
-                completed_retry = bool(parent and parent['completed_at'] and row['parent_id'] == change.parent_id)
-            if table == 'tasks' and row and row['completed_at'] and not completed_retry:
-                raise HTTPException(409, 'Reopen this completed task before editing it.')
+            found = db.execute('SELECT * FROM entries WHERE id = ?', (item_id,)).fetchone() if item_id else None
+            row = bullet_dict(found) if found and found['kind'] == entry_kind else None
             if change.delete:
                 if row:
-                    remove_preserving_children(db, table, item_id)
+                    check_revision(row, change.expected_revision)
+                    promoted.extend(remove_preserving_children(db, table, item_id))
+                elif found:
+                    raise HTTPException(409, 'That entry has a different kind.')
                 results.append(None)
                 continue
+            if item_id and row is None:
+                raise HTTPException(404, 'That item no longer exists.')
+            if row:
+                check_revision(row, change.expected_revision)
             if change.move and row:
-                place(db, table, item_id, change.parent_id, change.after_id)
+                table = move_entry(db, table, item_id, change.parent_id, change.after_id, now)
+                if table == 'tasks':
+                    promoted.append(item_id)
             else:
                 try:
                     value = Content(content=change.content, tags=change.tags if change.tags is not None else (row or {}).get('tags', []))
@@ -207,29 +303,38 @@ def edit_document(body: DocumentBatch, timezone: str = "UTC"):
                 encoded = json.dumps(value.tags or [])
                 if row:
                     if row['content'] != value.content or row['tags'] != (value.tags or []):
-                        db.execute(f'UPDATE {table} SET content = ?, tags = ? WHERE id = ?', (value.content, encoded, item_id))
-                        if table == 'notes':
-                            db.execute('UPDATE notes SET updated_at = ? WHERE id = ?', (now, item_id))
+                        db.execute('UPDATE entries SET content = ?, tags = ?, updated_at = ?, revision = revision + 1 WHERE id = ?', (value.content, encoded, now, item_id))
                 else:
                     if table == 'notes':
                         if not change.date:
                             raise HTTPException(422, 'A note needs a date.')
                         day_id = ensure_day(db, change.date, now)
                         validate_parent(db, table, change.parent_id, day_id)
-                        cursor = db.execute('INSERT INTO notes(day_id, content, tags, created_at, updated_at, parent_id, client_id) VALUES (?, ?, ?, ?, ?, ?, ?)', (day_id, value.content, encoded, now, now, change.parent_id, change.client_id))
+                        cursor = db.execute("INSERT INTO entries(kind, day_id, content, tags, created_at, updated_at, parent_id, client_id) VALUES ('note', ?, ?, ?, ?, ?, ?, ?)", (day_id, value.content, encoded, now, now, change.parent_id, change.client_id))
                     else:
                         parent = required(db, 'tasks', change.parent_id) if change.parent_id is not None else None
                         completed_at = now if parent and parent['completed_at'] else None
-                        validate_parent(db, table, change.parent_id, allow_completed=bool(completed_at))
-                        cursor = db.execute('INSERT INTO tasks(content, tags, created_at, completed_at, parent_id, client_id) VALUES (?, ?, ?, ?, ?, ?)',
-                                            (value.content, encoded, now, completed_at, change.parent_id, change.client_id))
+                        day_id = parent['day_id'] if parent else None
+                        validate_parent(db, table, change.parent_id, day_id, allow_completed=bool(completed_at))
+                        cursor = db.execute("INSERT INTO entries(kind, day_id, content, tags, created_at, updated_at, completed_at, parent_id, client_id) VALUES ('task', ?, ?, ?, ?, ?, ?, ?, ?)",
+                                            (day_id, value.content, encoded, now, now, completed_at, change.parent_id, change.client_id))
                     item_id = cursor.lastrowid
                     place(db, table, item_id, change.parent_id, change.after_id,
                           allow_completed_parent=table == 'tasks' and bool(completed_at))
             results.append(required(db, table, item_id))
         parents = [before['tasks'][change.id]['parent_id'] for change in body.changes if change.kind == 'tasks' and change.id in before['tasks']]
-        finished = finish_ready_parents(db, parents, get_zone(timezone), utcnow())
-        return {'items': results, 'operation_id': record(db, before, now), 'completed_task_ids': finished}
+        zone, instant = get_zone(timezone), utcnow()
+        finished = finish_ready_parents(db, parents, zone, instant)
+        for item_id in promoted:
+            row = db.execute("SELECT * FROM entries WHERE kind = 'task' AND id = ? AND parent_id IS NULL", (item_id,)).fetchone()
+            if row and row['completed_at']:
+                archive_task_tree(db, bullet_dict(row), zone, instant)
+        response = {'items': [required(db, 'notes' if item['kind'] == 'note' else 'tasks', item['id']) if item else None for item in results],
+                    'operation_id': record(db, before, now), 'completed_task_ids': finished}
+        if body.request_id:
+            db.execute('INSERT INTO document_requests(request_id, response, created_at) VALUES (?, ?, ?)',
+                       (body.request_id, json.dumps(response), now))
+        return response
 
 
 class HistoryDirection(BaseModel):
@@ -263,13 +368,12 @@ def search(q: Annotated[str, Query(min_length=1, max_length=200)],
     terms = q.casefold().split()
     with connection() as db:
         rows = [{**bullet_dict(r), 'kind': 'notes'} for r in db.execute(
-            'SELECT notes.*, days.date FROM notes JOIN days ON notes.day_id = days.id ORDER BY days.date DESC, notes.position, notes.id')]
-        archived = [
-            {**task, 'kind': 'tasks', 'date': day}
-            for day, tasks in completed_tasks_by_day(db, dt_timezone.utc).items()
-            for task in tasks
-        ]
-        rows = [{**r, 'kind': 'tasks', 'date': None} for r in visible_tasks(db)] + archived + rows
+            "SELECT entries.*, days.date FROM entries JOIN days ON entries.day_id = days.id WHERE entries.kind = 'note' ORDER BY days.date DESC, entries.position, entries.id")]
+        archived = [{**bullet_dict(r), 'kind': 'tasks'} for r in db.execute(
+            "SELECT entries.*, days.date FROM entries JOIN days ON entries.day_id = days.id WHERE entries.kind = 'task' ORDER BY days.date DESC, entries.position, entries.id")]
+        active = [{**bullet_dict(r), 'kind': 'tasks', 'date': None} for r in db.execute(
+            "SELECT * FROM entries WHERE kind = 'task' AND day_id IS NULL ORDER BY position, id")]
+        rows = active + archived + rows
         matches = [r for r in rows if terms and all(term in (r['content'] + ' ' + ' '.join('#' + tag for tag in r['tags'])).casefold() for term in terms)]
         return {'results': matches[offset:offset + limit], 'next_offset': offset + limit if len(matches) > offset + limit else None}
 
@@ -280,16 +384,15 @@ def add_note(body: NewNote):
     with connection() as db:
         db.execute("BEGIN IMMEDIATE")
         if body.client_id:
-            existing = db.execute("SELECT notes.*, days.date FROM notes JOIN days ON days.id = notes.day_id WHERE client_id = ?", (body.client_id,)).fetchone()
+            existing = db.execute("SELECT entries.*, days.date FROM entries JOIN days ON days.id = entries.day_id WHERE kind = 'note' AND client_id = ?", (body.client_id,)).fetchone()
             if existing:
                 tags = body.tags if body.tags is not None else json.loads(existing["tags"])
-                db.execute("UPDATE notes SET content = ?, tags = ?, updated_at = ? WHERE id = ?", (body.content, json.dumps(tags), now, existing["id"]))
-                return {**bullet_dict(existing), "content": body.content, "tags": tags, "updated_at": now}
+                db.execute("UPDATE entries SET content = ?, tags = ?, updated_at = ?, revision = revision + 1 WHERE id = ?", (body.content, json.dumps(tags), now, existing["id"]))
+                return {**required(db, 'notes', existing['id']), 'date': existing['date']}
         day_id = ensure_day(db, body.date, now)
         validate_parent(db, "notes", body.parent_id, day_id)
-        cursor = db.execute("INSERT INTO notes(day_id, content, created_at, updated_at, client_id, parent_id) VALUES (?, ?, ?, ?, ?, ?)",
-                            (day_id, body.content, now, now, body.client_id, body.parent_id))
-        db.execute("UPDATE notes SET tags = ? WHERE id = ?", (json.dumps(body.tags or []), cursor.lastrowid))
+        cursor = db.execute("INSERT INTO entries(kind, day_id, content, tags, created_at, updated_at, client_id, parent_id) VALUES ('note', ?, ?, ?, ?, ?, ?, ?)",
+                            (day_id, body.content, json.dumps(body.tags or []), now, now, body.client_id, body.parent_id))
         place(db, "notes", cursor.lastrowid, body.parent_id, body.after_id)
         return {**required(db, "notes", cursor.lastrowid), "date": str(body.date)}
 
@@ -298,8 +401,9 @@ def add_note(body: NewNote):
 def edit_note(note_id: int, body: Content):
     with connection() as db:
         note = required(db, "notes", note_id)
+        check_revision(note, body.expected_revision)
         tags = body.tags if body.tags is not None else note["tags"]
-        db.execute("UPDATE notes SET content = ?, tags = ?, updated_at = ? WHERE id = ?", (body.content, json.dumps(tags), stamp(utcnow()), note_id))
+        db.execute("UPDATE entries SET content = ?, tags = ?, updated_at = ?, revision = revision + 1 WHERE id = ?", (body.content, json.dumps(tags), stamp(utcnow()), note_id))
         return required(db, "notes", note_id)
 
 
@@ -307,7 +411,8 @@ def edit_note(note_id: int, body: Content):
 def delete_note(note_id: int):
     with connection() as db:
         db.execute("BEGIN IMMEDIATE")
-        required(db, "notes", note_id)
+        if not db.execute("SELECT 1 FROM entries WHERE id = ? AND kind = 'note'", (note_id,)).fetchone():
+            return
         remove_preserving_children(db, "notes", note_id)
 
 
@@ -315,9 +420,10 @@ def delete_note(note_id: int):
 def move_note(note_id: int, body: BulletLocation):
     with connection() as db:
         db.execute("BEGIN IMMEDIATE")
-        place(db, "notes", note_id, body.parent_id, body.after_id)
-        db.execute("UPDATE notes SET updated_at = ? WHERE id = ?", (stamp(utcnow()), note_id))
-        return required(db, "notes", note_id)
+        check_revision(required(db, 'notes', note_id), body.expected_revision)
+        final_table = move_entry(db, "notes", note_id, body.parent_id, body.after_id, stamp(utcnow()))
+        db.execute("UPDATE entries SET updated_at = ?, revision = revision + 1 WHERE id = ?", (stamp(utcnow()), note_id))
+        return required(db, final_table, note_id)
 
 
 @app.post("/api/tasks", status_code=201)
@@ -325,21 +431,22 @@ def add_task(body: NewBullet):
     with connection() as db:
         db.execute("BEGIN IMMEDIATE")
         if body.client_id:
-            existing = db.execute("SELECT * FROM tasks WHERE client_id = ?", (body.client_id,)).fetchone()
+            existing = db.execute("SELECT * FROM entries WHERE kind = 'task' AND client_id = ?", (body.client_id,)).fetchone()
             if existing:
                 if existing["completed_at"]:
-                    parent = db.execute("SELECT completed_at FROM tasks WHERE id = ?", (existing["parent_id"],)).fetchone()
+                    parent = db.execute("SELECT completed_at FROM entries WHERE kind = 'task' AND id = ?", (existing["parent_id"],)).fetchone()
                     if not parent or not parent["completed_at"]:
                         raise HTTPException(409, "That to-do has already been completed.")
                 tags = body.tags if body.tags is not None else json.loads(existing["tags"])
-                db.execute("UPDATE tasks SET content = ?, tags = ? WHERE id = ?", (body.content, json.dumps(tags), existing["id"]))
-                return {**bullet_dict(existing), "content": body.content, "tags": tags}
+                db.execute("UPDATE entries SET content = ?, tags = ?, updated_at = ?, revision = revision + 1 WHERE id = ?", (body.content, json.dumps(tags), stamp(utcnow()), existing["id"]))
+                return required(db, 'tasks', existing['id'])
         parent = required(db, "tasks", body.parent_id) if body.parent_id is not None else None
-        completed_at = stamp(utcnow()) if parent and parent["completed_at"] else None
-        validate_parent(db, "tasks", body.parent_id, allow_completed=bool(completed_at))
-        cursor = db.execute("INSERT INTO tasks(content, created_at, completed_at, parent_id, client_id) VALUES (?, ?, ?, ?, ?)",
-                            (body.content, stamp(utcnow()), completed_at, body.parent_id, body.client_id))
-        db.execute("UPDATE tasks SET tags = ? WHERE id = ?", (json.dumps(body.tags or []), cursor.lastrowid))
+        now = stamp(utcnow())
+        completed_at = now if parent and parent["completed_at"] else None
+        day_id = parent['day_id'] if parent else None
+        validate_parent(db, "tasks", body.parent_id, day_id, allow_completed=bool(completed_at))
+        cursor = db.execute("INSERT INTO entries(kind, day_id, content, tags, created_at, updated_at, completed_at, parent_id, client_id) VALUES ('task', ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (day_id, body.content, json.dumps(body.tags or []), now, now, completed_at, body.parent_id, body.client_id))
         place(db, "tasks", cursor.lastrowid, body.parent_id, body.after_id, allow_completed_parent=bool(completed_at))
         return required(db, "tasks", cursor.lastrowid)
 
@@ -349,21 +456,23 @@ def move_task(task_id: int, body: BulletLocation, timezone: str = "UTC"):
     with connection() as db:
         db.execute("BEGIN IMMEDIATE")
         task = required(db, "tasks", task_id)
-        if task["completed_at"]:
-            raise HTTPException(409, "Cannot move a completed to-do.")
-        place(db, "tasks", task_id, body.parent_id, body.after_id)
-        finish_ready_parents(db, [task["parent_id"]], get_zone(timezone), utcnow())
-        return required(db, "tasks", task_id)
+        check_revision(task, body.expected_revision)
+        final_table = move_entry(db, "tasks", task_id, body.parent_id, body.after_id, stamp(utcnow()))
+        zone, now = get_zone(timezone), utcnow()
+        finish_ready_parents(db, [task["parent_id"]], zone, now)
+        moved = required(db, final_table, task_id)
+        if final_table == 'tasks' and moved['parent_id'] is None and moved['completed_at']:
+            archive_task_tree(db, moved, zone, now)
+        return required(db, final_table, task_id)
 
 
 @app.patch("/api/tasks/{task_id}")
 def edit_task(task_id: int, body: Content):
     with connection() as db:
         task = required(db, "tasks", task_id)
-        if task["completed_at"]:
-            raise HTTPException(409, "That task is already in your journal.")
+        check_revision(task, body.expected_revision)
         tags = body.tags if body.tags is not None else task["tags"]
-        db.execute("UPDATE tasks SET content = ?, tags = ? WHERE id = ?", (body.content, json.dumps(tags), task_id))
+        db.execute("UPDATE entries SET content = ?, tags = ?, updated_at = ?, revision = revision + 1 WHERE id = ?", (body.content, json.dumps(tags), stamp(utcnow()), task_id))
         return required(db, "tasks", task_id)
 
 
@@ -372,12 +481,32 @@ def finish_task(db, task, now):
     child = task
     while child and not child['completed_at']:
         completed_ids.append(child['id'])
-        db.execute("UPDATE tasks SET completed_at = ? WHERE id = ?", (stamp(now), child["id"]))
+        db.execute("UPDATE entries SET completed_at = ?, updated_at = ?, revision = revision + 1 WHERE id = ?", (stamp(now), stamp(now), child["id"]))
         parent = child['parent_id']
-        if parent is None or db.execute('SELECT 1 FROM tasks WHERE parent_id = ? AND completed_at IS NULL', (parent,)).fetchone():
+        if parent is None or db.execute("SELECT 1 FROM entries WHERE kind = 'task' AND parent_id = ? AND completed_at IS NULL", (parent,)).fetchone():
             break
         child = required(db, 'tasks', parent)
     return completed_ids
+
+
+def root_task(db, task):
+    while task['parent_id'] is not None:
+        task = required(db, 'tasks', task['parent_id'])
+    return task
+
+
+def archive_task_tree(db, task, zone, now):
+    root = root_task(db, required(db, 'tasks', task['id']))
+    if not root['completed_at'] or root['day_id'] is not None:
+        return
+    day_id = ensure_day(db, now.astimezone(zone).date(), stamp(now))
+    position = next_position(db, 'tasks', None, day_id)
+    tree = descendants(db, 'tasks', root['id'])
+    if any(not row['completed_at'] for row, _ in tree):
+        raise HTTPException(409, 'A completed task tree cannot contain unfinished descendants.')
+    db.execute('UPDATE entries SET day_id = ?, position = ?, revision = revision + 1 WHERE id = ?', (day_id, position, root['id']))
+    for row, _ in tree[1:]:
+        db.execute('UPDATE entries SET day_id = ?, revision = revision + 1 WHERE id = ?', (day_id, row['id']))
 
 
 def finish_ready_parents(db, parents, zone, now):
@@ -385,15 +514,17 @@ def finish_ready_parents(db, parents, zone, now):
     for parent in set(parents):
         if parent is None:
             continue
-        row = db.execute('SELECT * FROM tasks WHERE id = ?', (parent,)).fetchone()
-        children = db.execute('SELECT completed_at FROM tasks WHERE parent_id = ?', (parent,)).fetchall()
+        row = db.execute("SELECT * FROM entries WHERE kind = 'task' AND id = ?", (parent,)).fetchone()
+        children = db.execute("SELECT completed_at FROM entries WHERE kind = 'task' AND parent_id = ?", (parent,)).fetchall()
         if row and not row['completed_at'] and children and all(child['completed_at'] for child in children):
-            completed.extend(finish_task(db, bullet_dict(row), now))
+            finished = finish_task(db, bullet_dict(row), now)
+            completed.extend(finished)
+            archive_task_tree(db, required(db, 'tasks', finished[-1]), zone, now)
     return completed
 
 
 @app.post("/api/tasks/{task_id}/complete")
-def complete_task(task_id: int, timezone: str = "UTC"):
+def complete_task(task_id: int, timezone: str = "UTC", expected_revision: int | None = Query(default=None, ge=1)):
     zone = get_zone(timezone)
     now = utcnow()
     with connection() as db:
@@ -401,15 +532,18 @@ def complete_task(task_id: int, timezone: str = "UTC"):
         task = required(db, "tasks", task_id)
         if task["completed_at"]:
             return {"completed": True, "task_ids": [], "completed_at": task['completed_at']}
-        if db.execute('SELECT 1 FROM tasks WHERE parent_id = ? AND completed_at IS NULL', (task_id,)).fetchone():
+        check_revision(task, expected_revision)
+        if db.execute("SELECT 1 FROM entries WHERE kind = 'task' AND parent_id = ? AND completed_at IS NULL", (task_id,)).fetchone():
             raise HTTPException(409, 'Complete the children to finish this parent.')
         completed_ids = finish_task(db, task, now)
+        archive_task_tree(db, task, zone, now)
         return {"completed": True, "task_ids": completed_ids, "completed_at": stamp(now)}
 
 
 class ReopenTask(BaseModel):
     completed_at: str | None = None
     record_history: bool = False
+    expected_revision: int | None = Field(default=None, ge=1)
 
 
 @app.post('/api/tasks/{task_id}/reopen')
@@ -420,10 +554,18 @@ def reopen_task(task_id: int, body: ReopenTask):
         task = required(db, 'tasks', task_id)
         if not task['completed_at']:
             return {'reopened': []}
+        check_revision(task, body.expected_revision)
         if body.completed_at and task['completed_at'] != body.completed_at:
             raise HTTPException(409, 'This task has changed since that completion.')
-        # Reopening a completed group also reopens its children. A leaf reopens
-        # only itself and completed ancestors, retaining its completed siblings.
+        root = root_task(db, task)
+        if root['day_id'] is not None:
+            active_position = next_position(db, 'tasks', None, None)
+            tree = descendants(db, 'tasks', root['id'])
+            db.execute('UPDATE entries SET day_id = NULL, position = ?, revision = revision + 1 WHERE id = ?', (active_position, root['id']))
+            for row, _ in tree[1:]:
+                db.execute('UPDATE entries SET day_id = NULL, revision = revision + 1 WHERE id = ?', (row['id'],))
+        # A root unchecks its descendants. A leaf unchecks itself and completed
+        # ancestors, preserving the checked state of its siblings.
         reopen = [r['id'] for r, _ in descendants(db, 'tasks', task_id) if r['completed_at']]
         parent = task['parent_id']
         while parent is not None:
@@ -432,7 +574,7 @@ def reopen_task(task_id: int, body: ReopenTask):
                 reopen.append(parent)
             parent = ancestor['parent_id']
         for item_id in reopen:
-            db.execute('UPDATE tasks SET completed_at = NULL WHERE id = ?', (item_id,))
+            db.execute('UPDATE entries SET completed_at = NULL, updated_at = ?, revision = revision + 1 WHERE id = ?', (stamp(utcnow()), item_id))
         return {'reopened': reopen, 'operation_id': record(db, before, stamp(utcnow())) if before is not None else None}
 
 
@@ -440,11 +582,16 @@ def reopen_task(task_id: int, body: ReopenTask):
 def delete_task(task_id: int, timezone: str = "UTC"):
     with connection() as db:
         db.execute("BEGIN IMMEDIATE")
-        task = required(db, "tasks", task_id)
-        if task["completed_at"]:
-            raise HTTPException(409, "Edit the completed note in your journal instead.")
-        remove_preserving_children(db, "tasks", task_id)
+        row = db.execute("SELECT * FROM entries WHERE id = ? AND kind = 'task'", (task_id,)).fetchone()
+        if row is None:
+            return
+        task = bullet_dict(row)
+        promoted = remove_preserving_children(db, "tasks", task_id)
         finish_ready_parents(db, [task["parent_id"]], get_zone(timezone), utcnow())
+        for item_id in promoted:
+            row = db.execute("SELECT * FROM entries WHERE kind = 'task' AND id = ? AND parent_id IS NULL", (item_id,)).fetchone()
+            if row and row['completed_at']:
+                archive_task_tree(db, bullet_dict(row), get_zone(timezone), utcnow())
 
 
 @app.get("/api/timer")
@@ -545,9 +692,9 @@ def stats_data(start, end, timezone):
         # Completed sessions only: statistics stay reproducible while a timer runs.
         sessions = [dict(r) for r in db.execute("SELECT * FROM sessions WHERE ended_at IS NOT NULL")]
         totals = daily_totals(sessions, zone, now)
-        notes = {r["date"]: r["count"] for r in db.execute("SELECT days.date, COUNT(notes.id) AS count FROM days JOIN notes ON days.id = notes.day_id GROUP BY days.date")}
+        notes = {r["date"]: r["count"] for r in db.execute("SELECT days.date, COUNT(entries.id) AS count FROM days JOIN entries ON days.id = entries.day_id WHERE entries.kind = 'note' GROUP BY days.date")}
         completed = {}
-        for row in db.execute("SELECT completed_at FROM tasks WHERE completed_at IS NOT NULL"):
+        for row in db.execute("SELECT completed_at FROM entries WHERE kind = 'task' AND completed_at IS NOT NULL"):
             d = parse(row["completed_at"]).astimezone(zone).date().isoformat()
             completed[d] = completed.get(d, 0) + 1
     daily = []
@@ -581,9 +728,14 @@ def daily_stats(start: CalendarDate | None = None, end: CalendarDate | None = No
 @app.get("/api/export")
 def export():
     with connection() as db:
-        return {"schema_version": 6, "content_format": "markdown", "exported_at": stamp(utcnow()),
-                **{table: [bullet_dict(r) for r in db.execute(f"SELECT * FROM {table} ORDER BY 1, 2")]
-                   for table in ("days", "notes", "tasks", "sessions")}}
+        entries = [bullet_dict(r) for r in db.execute('SELECT * FROM entries ORDER BY id')]
+        return {"schema_version": 8, "content_format": "markdown", "exported_at": stamp(utcnow()),
+                "days": [dict(r) for r in db.execute('SELECT * FROM days ORDER BY id')],
+                "entries": entries,
+                # Compatibility views for existing exports and clients.
+                "notes": [row for row in entries if row['kind'] == 'note'],
+                "tasks": [row for row in entries if row['kind'] == 'task'],
+                "sessions": [dict(r) for r in db.execute('SELECT * FROM sessions ORDER BY id')]}
 
 
 def agent_snapshot(query):
@@ -637,6 +789,7 @@ dist = Path(os.environ.get('STILL_DIST_PATH', Path(__file__).resolve().parents[1
 if dist.is_dir():
     app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
     app.mount("/fonts", StaticFiles(directory=dist / "fonts"), name="fonts")
+    app.mount("/icons", StaticFiles(directory=dist / "icons"), name="icons")
 
     @app.get("/")
     def index(request: Request, query: Annotated[AgentQuery, Query()]):

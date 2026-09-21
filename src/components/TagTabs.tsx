@@ -26,9 +26,13 @@ const Panel = styled.div<{ $open: boolean }>`
   padding: 48px clamp(24px, calc(var(--sidebar-width) * .12), 48px) 32px;
   overflow-y: auto; background: var(--paper);
   opacity: ${({ $open }) => $open ? 1 : 0};
+  transform: translateX(${({ $open }) => $open ? '0' : '-18px'});
   visibility: ${({ $open }) => $open ? 'visible' : 'hidden'};
   pointer-events: ${({ $open }) => $open ? 'auto' : 'none'};
-  transition: opacity 140ms ease-out, visibility 140ms;
+  transition-property: opacity, transform, visibility;
+  transition-duration: 180ms, 220ms, 0s;
+  transition-timing-function: ease-out, cubic-bezier(.2, 0, 0, 1), linear;
+  transition-delay: ${({ $open }) => $open ? '0s' : '0s, 0s, 220ms'};
 `;
 const Heading = styled.h2`margin: 0 0 18px; font-size: 22px; font-weight: 400; letter-spacing: -.02em;`;
 const Home = styled.button`
@@ -76,7 +80,7 @@ export function TagTabs({ tags, active, onSelect }: { tags: Tag[]; active: strin
       }}
       onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}
       onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); } }}>
-      <Panel $open={open} aria-hidden={!open} inert={!open}>
+      <Panel data-testid="tag-panel" $open={open} aria-hidden={!open} inert={!open}>
         <Heading><Home type="button" onClick={() => select(null)}>logbook</Home></Heading>
         <Collection>{tags.map(tag => <TagPill key={tag.name} type="button"
           aria-pressed={tag.name === active} onClick={() => select(tag.name)}>#{tag.name}</TagPill>)}</Collection>

@@ -383,7 +383,8 @@ test('loads older days automatically and saves edits to historical notes', async
   await page.getByRole('textbox', { name: 'Edit note' }).press('Enter');
   await expect(page.getByRole('group', { name: 'A revised historical thought.', exact: true })).toBeVisible();
   await page.getByRole('group', { name: 'A revised historical thought.', exact: true }).click();
-  await page.getByRole('textbox', { name: 'Edit note' }).fill('');
+  await page.getByRole('textbox', { name: 'Edit note' }).press('Meta+a');
+  await page.getByRole('textbox', { name: 'Edit note' }).press('Backspace');
   await page.getByRole('textbox', { name: 'Edit note' }).press('Enter');
   await expect(page.getByRole('group', { name: 'A revised historical thought.', exact: true })).toHaveCount(0);
 });

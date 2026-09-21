@@ -8,11 +8,12 @@
     "dev:api": ".venv/bin/python -m uvicorn backend.app:app --reload --host 127.0.0.1 --port 8000",
     "dev:web": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build",
-    "start": ".venv/bin/python -m uvicorn backend.app:app --host 127.0.0.1 --port 8000",
+    "start": "sh -c 'if [ -x .venv/bin/python ]; then exec .venv/bin/python -m uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8000}; else exec python3 -m uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8000}; fi'",
     "test": ".venv/bin/python -m pytest backend/tests -q",
-    "test:e2e": "playwright test"
+    "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {
+    "@chenglou/pretext": "^0.0.9",
     "@tiptap/core": "^3.31.3",
     "@tiptap/extension-code": "^3.31.3",
     "@tiptap/extension-link": "^3.31.3",

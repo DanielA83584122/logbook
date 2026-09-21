@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: still-logbook
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r backend/requirements.lock.txt && npm ci && npm run build
+    startCommand: python -m uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: STILL_DB_PATH
+        value: /var/data/still.sqlite3
+      - key: STILL_AUTH_ENABLED
+        value: "false"
+      - key: PYTHON_VERSION
+        value: 3.14.7
+      - key: NODE_VERSION
+        value: 24.13.0
+    disk:
+      name: still-data
+      mountPath: /var/data
+      sizeGB: 1

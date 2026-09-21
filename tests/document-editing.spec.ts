@@ -1,6 +1,65 @@
 import { expect, test } from '@playwright/test';
 
+test('midnight retires the previous day composer and leaves only today active', async ({ page }) => {
+  await page.clock.install({ time: new Date('2026-09-20T23:59:59-07:00') });
+  let today = '2026-09-20';
+  await page.route('**/api/journal?*', route => route.fulfill({ json: {
+    today, server_time: new Date(`${today}T23:59:59-07:00`).toISOString(), active_session: null,
+    next_cursor: null, tags: [], tag: null, tasks: [],
+    days: today === '2026-09-20'
+      ? [{ date: '2026-09-20', focused_seconds: 0, notes: [] }]
+      : [{ date: '2026-09-21', focused_seconds: 0, notes: [] }, { date: '2026-09-20', focused_seconds: 0, notes: [] }],
+  } }));
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'New journal bullet', exact: true })).toHaveCount(1);
+  today = '2026-09-21';
+  await page.clock.runFor(2000);
+  await expect(page.getByRole('textbox', { name: 'New journal bullet', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('region', { name: /2026-09-20/ }).getByRole('textbox')).toHaveCount(0);
+});
+
+test('outdenting keeps the returned revision so the next edit saves normally', async ({ page, request }) => {
+  const parent = await (await request.post('/api/tasks', { data: { content: 'Revision parent' } })).json();
+  const child = await (await request.post('/api/tasks', { data: { content: 'Revision child', parent_id: parent.id } })).json();
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Expand Revision parent', exact: true }).click();
+  await page.getByRole('group', { name: 'Revision child', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: 'Edit to-do', exact: true });
+  await editor.press('Shift+Tab');
+  await editor.fill('Revision child moved');
+  await page.getByRole('button', { name: 'Start focus timer', exact: true }).focus();
+  await expect.poll(async () => {
+    const rows = (await (await request.get('/api/export')).json()).tasks as Array<{ id: number; parent_id: number | null; content: string }>;
+    return rows.find(row => row.id === child.id);
+  }).toMatchObject({ parent_id: null, content: 'Revision child moved' });
+  await expect(page.getByText('This entry was saved elsewhere. Reloaded the latest version.', { exact: true })).toHaveCount(0);
+});
+
 for (const kind of ['notes', 'tasks'] as const) {
+  test(`Enter splits ${kind} at the caret and carries formatted trailing text into the new entry`, async ({ page, request }) => {
+    const { today } = await (await request.get('/api/journal')).json();
+    const row = await (await request.post(`/api/${kind}`, { data: { date: today, content: 'Alpha **Omega**' } })).json();
+    await page.goto('/');
+    await page.locator(`[data-kind="${kind}"][data-item-id="${row.id}"] [role="group"]`).click();
+    const editor = page.getByRole('textbox', { name: kind === 'notes' ? 'Edit note' : 'Edit to-do', exact: true });
+    await editor.evaluate(element => {
+      const node = document.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode()!;
+      const range = document.createRange(); range.setStart(node, node.textContent!.length); range.collapse(true);
+      const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+    });
+    await editor.press('Enter');
+    const next = page.getByRole('textbox', { name: kind === 'notes' ? 'New journal bullet' : 'New to-do', exact: true });
+    await expect(next).toBeFocused();
+    await expect(next).toHaveText('Omega');
+    await expect(next.locator('strong')).toHaveText('Omega');
+    await expect(page.locator(`[data-kind="${kind}"]`).getByRole('group', { name: 'Alpha', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Start focus timer', exact: true }).focus();
+    await expect.poll(async () => {
+      const rows = (await (await request.get('/api/export')).json())[kind] as Array<{ content: string }>;
+      return rows.map(item => item.content);
+    }).toEqual(expect.arrayContaining(['Alpha', '**Omega**']));
+  });
+
   test(`Enter keeps new ${kind} siblings focused and in order at root and nested levels`, async ({ page, request }) => {
     const { today } = await (await request.get('/api/journal')).json();
     for (const nested of [false, true]) {
@@ -64,6 +123,35 @@ for (const kind of ['notes', 'tasks'] as const) {
   });
 }
 
+test('inline tags keep their caret position and move with the trailing half of an Enter split', async ({ page, request }) => {
+  const { today } = await (await request.get('/api/journal')).json();
+  const row = await (await request.post('/api/notes', { data: { date: today, content: 'Before #move after', tags: ['move'] } })).json();
+  await page.goto('/');
+  const saved = page.locator(`[data-kind="notes"][data-item-id="${row.id}"] [role="group"]`);
+  await saved.click();
+  let editor = page.getByRole('textbox', { name: 'Edit note', exact: true });
+  await editor.press('Meta+ArrowDown');
+  await editor.pressSequentially(' tail');
+  await expect(editor).toHaveText('Before #move after tail');
+  await editor.evaluate(element => {
+    const node = document.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode()!;
+    const range = document.createRange(); range.setStart(node, node.textContent!.length); range.collapse(true);
+    const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+  });
+  await editor.press('Enter');
+  const next = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
+  await expect(next.locator('[data-tag="move"]')).toBeVisible();
+  await expect(next).toHaveText('#move after tail');
+  await page.getByRole('button', { name: 'Start focus timer', exact: true }).focus();
+  await expect.poll(async () => {
+    const notes = (await (await request.get('/api/export')).json()).notes as Array<{ content: string; tags: string[] }>;
+    return notes.filter(note => note.content === 'Before' || note.content === '#move after tail').map(note => ({ content: note.content, tags: note.tags }));
+  }).toEqual(expect.arrayContaining([
+    { content: 'Before', tags: [] },
+    { content: '#move after tail', tags: ['move'] },
+  ]));
+});
+
 test('clicking beneath a past date opens an end bullet and abandoned empty drafts disappear', async ({ page, request }) => {
   const date = '2026-09-01';
   await request.post('/api/notes', { data: { date, content: 'Historical starting point' } });
@@ -85,4 +173,65 @@ test('clicking beneath a past date opens an end bullet and abandoned empty draft
   const { days } = await (await request.get(`/api/journal?on=${date}`)).json();
   const notes = days.find((day: { date: string }) => day.date === date).notes;
   expect(notes.at(-1).content).toBe('A new historical note');
+});
+
+test('typing while Enter waits for the server is acknowledged before the editor advances', async ({ page, request }) => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let held = false;
+  await page.route('**/api/document/edit*', async route => {
+    const body = route.request().postDataJSON();
+    if (!held && body.changes?.some((change: { content?: string }) => change.content === 'Before response')) {
+      held = true;
+      const response = await route.fetch();
+      await gate;
+      await route.fulfill({ response });
+    } else await route.continue();
+  });
+  await page.goto('/');
+  const editor = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
+  await editor.fill('Before response');
+  await editor.press('Enter');
+  await expect.poll(() => held).toBe(true);
+  await editor.pressSequentially(' plus late typing');
+  release();
+  await expect(editor).toHaveText('');
+  await expect.poll(async () => {
+    const notes = (await (await request.get('/api/export')).json()).notes;
+    return notes.some((row: { content: string }) => row.content === 'Before response plus late typing');
+  }).toBe(true);
+});
+
+test('Backspace merges a completed task into the preceding note', async ({ page, request }) => {
+  const { today } = await (await request.get('/api/journal')).json();
+  await request.post('/api/notes', { data: { date: today, content: 'Mixed note ' } });
+  const task = await (await request.post('/api/tasks', { data: { content: 'mixed task' } })).json();
+  await request.post(`/api/tasks/${task.id}/complete`);
+  await page.goto('/');
+  const row = page.locator(`[data-kind="tasks"][data-item-id="${task.id}"] [role="group"]`).first();
+  await row.focus(); await row.press('Enter');
+  const editor = page.getByRole('textbox', { name: 'Edit to-do', exact: true });
+  await editor.press('Meta+ArrowUp'); await editor.press('Backspace');
+  await expect(page.getByRole('textbox', { name: 'Edit note', exact: true })).toHaveText('Mixed note mixed task');
+  const exported = await (await request.get('/api/export')).json();
+  expect(exported.tasks.some((row: { id: number }) => row.id === task.id)).toBe(false);
+});
+
+test('recovery applies an earlier completed-task draft through the unified endpoint', async ({ page, request }) => {
+  const task = await (await request.post('/api/tasks', { data: { content: 'Task before recovery' } })).json();
+  await request.post(`/api/tasks/${task.id}/complete`);
+  const archived = (await (await request.get('/api/export')).json()).tasks.find((row: { id: number }) => row.id === task.id);
+  const key = 'still-draft-2000-01-01';
+  await page.addInitScript(({ key, archived }) => localStorage.setItem(key, JSON.stringify({
+    active: true, mode: 'edit', kind: 'tasks', id: archived.id, revision: archived.revision,
+    content: 'Task recovered correctly', saved: archived.content, tags: [], savedTags: [],
+    clientId: crypto.randomUUID(), requestId: crypto.randomUUID(), parentId: null, afterId: null, hiddenTag: null,
+  })), { key, archived });
+  await page.goto('/');
+  await expect.poll(async () => {
+    const tasks = (await (await request.get('/api/export')).json()).tasks;
+    return tasks.find((row: { id: number }) => row.id === task.id)?.content;
+  }).toBe('Task recovered correctly');
+  expect(await page.evaluate(key => localStorage.getItem(key), key)).toBeNull();
+  await request.delete(`/api/tasks/${task.id}`);
 });
