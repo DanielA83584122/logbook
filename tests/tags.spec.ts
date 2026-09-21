@@ -16,7 +16,23 @@ for (const kind of ['notes', 'tasks'] as const) {
     await composer.press('Enter');
     await expect(composer).toHaveText('');
     const preview = page.getByRole('group', { name: new RegExp(`^A tagged ${kind}`) });
-    await expect(preview.locator(`[data-tag="unique-${kind}"]`)).toHaveText(`#unique-${kind}`);
+    const tag = preview.locator(`[data-tag="unique-${kind}"]`);
+    await expect(tag).toHaveText(`#unique-${kind}`);
+    const tagTypography = await tag.evaluate(element => {
+      const style = getComputedStyle(element), parent = getComputedStyle(element.parentElement!);
+      const background = getComputedStyle(element, '::before');
+      return { fontFamily: style.fontFamily, parentFontFamily: parent.fontFamily,
+        fontSize: style.fontSize, parentFontSize: parent.fontSize,
+        verticalAlign: style.verticalAlign,
+        paddingLeft: style.paddingLeft, paddingRight: style.paddingRight,
+        marginLeft: style.marginLeft, marginRight: style.marginRight,
+        transform: style.transform, backgroundTransform: background.transform };
+    });
+    expect(tagTypography).toMatchObject({
+      fontFamily: tagTypography.parentFontFamily, paddingLeft: '7px', paddingRight: '8px', marginLeft: '0px', marginRight: '0px',
+      verticalAlign: 'baseline', transform: 'none', backgroundTransform: 'none',
+    });
+    expect(parseFloat(tagTypography.parentFontSize) - parseFloat(tagTypography.fontSize)).toBeCloseTo(.5, 1);
     let data = await (await request.get('/api/export')).json();
     const row = data[kind].find((item: { content: string }) => item.content === `A tagged ${kind} #unique-${kind}`);
     expect(row.tags).toEqual([`unique-${kind}`]);
@@ -44,6 +60,29 @@ for (const kind of ['notes', 'tasks'] as const) {
     expect((await (await request.get('/api/tags')).json()).some((tag: { name: string }) => tag.name === `unique-${kind}`)).toBe(false);
   });
 }
+
+test('arrow keys treat a freshly typed tag as one character without adding spaces', async ({ page, request }) => {
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
+  await composer.pressSequentially('before #cursor-chip');
+  await expect(composer.locator('.journal-tag-query')).toHaveText('#cursor-chip');
+  await composer.press('ArrowLeft');
+  const tag = composer.locator('[data-tag="cursor-chip"]');
+  await expect(tag).toHaveCount(1);
+  await expect(tag).toHaveClass(/ProseMirror-selectednode/);
+  await expect(tag).toHaveText('#cursor-chip');
+  await composer.press('ArrowLeft');
+  await composer.press('ArrowRight');
+  await expect(tag).toHaveClass(/ProseMirror-selectednode/);
+  await composer.press('ArrowRight');
+  await composer.pressSequentially(' after');
+  await composer.press('Enter');
+  const preview = page.getByRole('group', { name: 'before #cursor-chip after', exact: true });
+  await expect(preview).toBeVisible();
+  const data = await (await request.get('/api/export')).json();
+  const row = data.notes.find((item: { content: string }) => item.content === 'before #cursor-chip after');
+  expect(row.tags).toEqual(['cursor-chip']);
+});
 
 test('autocomplete cycles existing tags with arrows and keeps code literal', async ({ page, request }) => {
   const { today } = await (await request.get('/api/journal')).json();

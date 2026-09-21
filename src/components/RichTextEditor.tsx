@@ -9,7 +9,7 @@ import { Field } from '../styles';
 import { Modal } from './Modal';
 import { useJournalContext } from '../JournalContext';
 import { normalizeTag } from '../tagSyntax';
-import { TagDecorations, commitTypedTags } from '../tagEditor';
+import { TagDecorations, commitTypedTags, selectTypedTag } from '../tagEditor';
 import { documentUndo } from '../documentHistory';
 import { errorMessage } from '../api';
 
@@ -215,6 +215,10 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
         }
         if (pending && event.key === 'Escape') { event.preventDefault(); suggest(null); return true; }
         const mod = event.metaKey || event.ctrlKey;
+        if (!mod && !event.shiftKey && editor && (event.key === 'ArrowLeft' || event.key === 'ArrowRight') &&
+            selectTypedTag(editor, event.key === 'ArrowLeft' ? 'left' : 'right')) {
+          event.preventDefault(); return true;
+        }
         if (mod && ['z', 'y'].includes(event.key.toLowerCase())) {
           event.preventDefault();
           const forward = event.shiftKey || event.key.toLowerCase() === 'y';
@@ -292,7 +296,7 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
     if (!names.length) { suggest(null); return; }
     const rect = current.view.coordsAtPos(from);
     const start = current.view.coordsAtPos(from - match[1].length - 1);
-    const left = Math.max(12, Math.min(start.left - 9, window.innerWidth - 242));
+    const left = Math.max(12, Math.min(start.left - 7, window.innerWidth - 242));
     suggest({ from: from - match[1].length - 1, to: from, query, names, index: 0,
       left, top: rect.top });
   };
@@ -300,7 +304,12 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
     const pending = suggestionRef.current;
     if (!editor || !pending) return;
     suggest(null);
-    editor.chain().insertContentAt({ from: pending.from, to: pending.to }, [{ type: 'journalTag', attrs: { name } }, { type: 'text', text: ' ' }]).run();
+    const next = editor.state.doc.resolve(pending.to).nodeAfter;
+    const needsSpace = !next || next.isText && !/^\s/u.test(next.text ?? '') || next.type.name === 'journalTag';
+    editor.chain().insertContentAt({ from: pending.from, to: pending.to }, [
+      { type: 'journalTag', attrs: { name } },
+      ...(needsSpace ? [{ type: 'text', text: ' ' }] : []),
+    ]).run();
     editor.view.dom.focus();
   };
   useEffect(() => {

@@ -17,6 +17,7 @@ const OutlineSurface = styled.div`
   --bullet-padding: 4px 0;
   --bullet-line-height: 1.2;
   --bullet-paragraph-gap: .2em;
+  --bullet-marker-offset: .5px;
 `;
 const List = styled.ul`list-style: none; padding: 0; margin: 0;`;
 const Children = styled(List)<{ $task: boolean }>`
@@ -76,7 +77,7 @@ const ComposerTarget = styled.button<{ $floating: boolean }>`
 `;
 const Marker = styled.span<{ $task: boolean }>`
   display: flex; width: 40px; min-width: 40px; height: var(--bullet-row-height); align-items: center; justify-content: center; color: var(--ink);
-  &::before { content: ${({ $task }) => $task ? "''" : "'–'"}; font-size: 14px;
+  &::before { content: ${({ $task }) => $task ? "''" : "'–'"}; font-size: 14px; translate: 0 var(--bullet-marker-offset);
     ${({ $task }) => $task ? 'width: 12px; height: 12px; border: 1.25px solid currentColor; border-radius: 50%;' : ''} }
   @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px; }
 `;
@@ -90,11 +91,11 @@ const Checkbox = styled.button<{ $checked?: boolean; $suppressPreview?: boolean 
   position: relative; display: flex; align-items: center; justify-content: center; width: 40px; min-width: 40px; height: var(--bullet-row-height);
   border: 0; padding: 0; background: transparent; border-radius: 50%; color: var(--ink);
   transition: transform 120ms ease-out; &:active { transform: scale(0.96); }
-  &::before { content: ''; width: 12px; height: 12px; border: 1.25px solid currentColor; border-radius: 50%; transition-property: background-color, border-color; transition-duration: 120ms; transition-timing-function: ease-out; }
+  &::before { content: ''; width: 12px; height: 12px; border: 1.25px solid currentColor; border-radius: 50%; translate: 0 var(--bullet-marker-offset); transition-property: background-color, border-color; transition-duration: 120ms; transition-timing-function: ease-out; }
   &::after { content: ''; position: absolute; width: 7px; height: 7px; background: currentColor;
     mask: url('/icons/check-flaticon.svg') center / contain no-repeat;
     -webkit-mask: url('/icons/check-flaticon.svg') center / contain no-repeat;
-    opacity: ${({ $checked }) => $checked ? 1 : 0}; scale: ${({ $checked }) => $checked ? 1 : .25};
+    opacity: ${({ $checked }) => $checked ? 1 : 0}; scale: ${({ $checked }) => $checked ? 1 : .25}; translate: 0 var(--bullet-marker-offset);
     filter: blur(${({ $checked }) => $checked ? 0 : 4}px);
     transition-property: opacity, scale, filter; transition-duration: 150ms; transition-timing-function: cubic-bezier(.2, 0, 0, 1); }
   @media (hover: hover) {
@@ -109,7 +110,7 @@ const Checkbox = styled.button<{ $checked?: boolean; $suppressPreview?: boolean 
 const Disclosure = styled.button<{ $open: boolean; $task: boolean; $progress: number }>`
   width: 40px; min-width: 40px; height: var(--bullet-row-height); padding: 0; border: 0;
   display: grid; place-items: center; background: transparent; border-radius: 4px; color: ${({ $task }) => $task ? 'var(--ink)' : 'var(--muted)'};
-  &::before { content: ''; width: 5px; height: 5px; border-right: 1.25px solid currentColor; border-bottom: 1.25px solid currentColor;
+  &::before { content: ''; width: 5px; height: 5px; border-right: 1.25px solid currentColor; border-bottom: 1.25px solid currentColor; translate: 0 var(--bullet-marker-offset);
     transform: rotate(${({ $open }) => $open ? '45deg' : '-45deg'}); transition: transform 140ms ease-out; }
   ${({ $task, $progress }) => $task && css`&::before { --task-progress: ${$progress * 360}deg; width: 12px; height: 12px; border: 1px solid currentColor; border-radius: 50%; transform: none; background: conic-gradient(currentColor var(--task-progress), transparent 0); transition: --task-progress 240ms ease-out; }`}
   @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px;

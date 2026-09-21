@@ -23,31 +23,25 @@ def rebuild(output=DEFAULT_SEED_PATH):
     ]
     entries = [
         # Open task trees: checked children demonstrate partial parent progress.
-        (1, "task", None, "Prepare the Series B pitch without saying “platform” more than twelve times", ["fundraising"], None, 0, "2026-09-20T18:00:00Z", "2026-09-20T18:00:00Z", None),
-        (2, "task", None, "Make one chart Monica cannot immediately disprove", ["fundraising"], 1, 0, "2026-09-20T18:02:00Z", "2026-09-20T19:10:00Z", "2026-09-20T19:10:00Z"),
-        (3, "task", None, "Remove the slide titled “Why Hooli Is Technically Evil”", ["fundraising"], 1, 1, "2026-09-20T18:03:00Z", "2026-09-20T18:03:00Z", None),
-        (4, "task", None, "Practice eye contact with a houseplant", ["fundraising"], 1, 2, "2026-09-20T18:04:00Z", "2026-09-20T18:04:00Z", None),
-        (5, "task", None, "Fix the middle-out demo before Gavin Belson invents it retroactively", ["product"], None, 1, "2026-09-20T19:00:00Z", "2026-09-20T19:00:00Z", None),
-        (6, "task", None, "Reproduce the bug on a computer we do not own", ["product"], 5, 0, "2026-09-20T19:01:00Z", "2026-09-20T20:00:00Z", "2026-09-20T20:00:00Z"),
-        (7, "task", None, "Explain to Dinesh that “works on my laptop” is not a QA strategy", ["product"], 5, 1, "2026-09-20T19:02:00Z", "2026-09-20T19:02:00Z", None),
-        (8, "task", None, "Retrieve the laptop from Dinesh", ["product"], 7, 0, "2026-09-20T19:03:00Z", "2026-09-20T19:03:00Z", None),
-        (9, "task", None, "Return Erlich’s smoke machine before the security deposit becomes philosophical", ["office"], None, 2, "2026-09-20T20:00:00Z", "2026-09-20T20:00:00Z", None),
+        (1, "task", None, "make the series b deck monica doesn't hate", [], None, 0, "2026-09-20T18:00:00Z", "2026-09-20T18:00:00Z", None),
+        (3, "task", None, "delete slide about hooli being evil", [], 1, 1, "2026-09-20T18:03:00Z", "2026-09-20T18:03:00Z", None),
+        (8, "task", None, "get laptop back from dinesh", [], None, 1, "2026-09-20T19:03:00Z", "2026-09-20T19:03:00Z", None),
+        (9, "task", None, "return erlich's smoke machine", [], None, 2, "2026-09-20T20:00:00Z", "2026-09-20T20:00:00Z", None),
 
         # September 19: notes and a completed task tree are deliberately interleaved.
-        (10, "note", 1, "The office internet died, so productivity briefly became measurable.", ["office"], None, 0, "2026-09-19T16:05:00Z", "2026-09-19T16:05:00Z", None),
-        (11, "note", 1, "Gilfoyle called this “a useful decentralization exercise.”", ["office"], 10, 0, "2026-09-19T16:06:00Z", "2026-09-19T16:06:00Z", None),
-        (12, "task", 1, "Make the demo button do the thing the demo button says", ["product"], None, 1, "2026-09-19T16:10:00Z", "2026-09-19T17:08:00Z", "2026-09-19T17:08:00Z"),
-        (13, "task", 1, "Connect the button", ["product"], 12, 0, "2026-09-19T16:11:00Z", "2026-09-19T16:44:00Z", "2026-09-19T16:44:00Z"),
-        (14, "task", 1, "Rename `final_final_REAL.ts`", ["product"], 12, 1, "2026-09-19T16:12:00Z", "2026-09-19T17:07:00Z", "2026-09-19T17:07:00Z"),
-        (15, "note", 1, "Investor feedback: “Love the technology. Could it be less technological?” I wrote this down because apparently that’s leadership.", ["fundraising", "meetings"], None, 2, "2026-09-19T17:15:00Z", "2026-09-19T17:15:00Z", None),
+        (13, "task", 1, "connect button", [], None, 1, "2026-09-19T16:11:00Z", "2026-09-19T16:44:00Z", "2026-09-19T16:44:00Z"),
+        (15, "note", 1, "investor feedback: “love the technology. could it be less technological?”", ["fundraising"], None, 2, "2026-09-19T17:15:00Z", "2026-09-19T17:15:00Z", None),
+        (22, "note", 1, "read [the tail at scale](https://research.google/pubs/the-tail-at-scale/).", [], None, 3, "2026-09-19T18:00:00Z", "2026-09-19T18:00:00Z", None),
+        (23, "note", 1, "actual customers notice waiting, investors notice axis green", [], 22, 0, "2026-09-19T18:02:00Z", "2026-09-19T18:02:00Z", None),
+
 
         # September 20: more hierarchy, Markdown, tags, and another completed tree.
-        (16, "note", 2, "Stand-up lasted **nine minutes**. Either we’re becoming efficient or everyone has stopped listening.", ["meetings"], None, 0, "2026-09-20T16:05:00Z", "2026-09-20T16:05:00Z", None),
-        (17, "note", 2, "Dinesh used seven of those minutes to say “blockchain” in four different tenses.", ["meetings"], 16, 0, "2026-09-20T16:06:00Z", "2026-09-20T16:06:00Z", None),
-        (18, "task", 2, "Deploy a build that survives contact with another computer", ["product"], None, 1, "2026-09-20T17:00:00Z", "2026-09-20T17:50:00Z", "2026-09-20T17:50:00Z"),
-        (19, "task", 2, "Replace `localhost` with an actual hostname", ["product"], 18, 0, "2026-09-20T17:01:00Z", "2026-09-20T17:28:00Z", "2026-09-20T17:28:00Z"),
-        (20, "task", 2, "Ask Gilfoyle to remove the Satan ASCII art from `/health`", ["product"], 18, 1, "2026-09-20T17:02:00Z", "2026-09-20T17:49:00Z", "2026-09-20T17:49:00Z"),
-        (21, "note", 2, "Monica looked at the burn chart, then at me, then back at the burn chart. Somehow the chart looked worried.", ["fundraising"], None, 2, "2026-09-20T18:00:00Z", "2026-09-20T18:00:00Z", None),
+        (20, "task", 2, "get gilfoyle's satan ascii art out of `/health`", [], None, 1, "2026-09-20T17:02:00Z", "2026-09-20T17:49:00Z", "2026-09-20T17:49:00Z"),
+        (27, "note", 2, "if we beat estimates by a lot, assume measurement bug. check headers, dict leakage, dup files", [], None, 3, "2026-09-20T18:22:00Z", "2026-09-20T18:22:00Z", None),
+        (28, "note", 2, "compare [brotli](https://www.rfc-editor.org/rfc/rfc7932) and [zstd](https://www.rfc-editor.org/rfc/rfc8878)", [], 27, 0, "2026-09-20T18:24:00Z", "2026-09-20T18:24:00Z", None),
+        (29, "note", 2, "dinesh logo sucks ass", [], 28, 0, "2026-09-20T18:25:00Z", "2026-09-20T18:25:00Z", None),
+        (31, "note", 2, "use this: [architecture decision records](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions)", [], None, 4, "2026-09-20T19:00:00Z", "2026-09-20T19:00:00Z", None),
+        (34, "note", 2, "new rule: anyone saying “obviously” has to produce a measurement or buy lunch", [], 31, 2, "2026-09-20T19:06:00Z", "2026-09-20T19:06:00Z", None),
     ]
     sessions = [
         (1, "2026-09-19T16:04:00Z", "2026-09-19T17:12:00Z"),

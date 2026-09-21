@@ -125,7 +125,8 @@ export function documentWithTags(content: string, tags: string[]): JSONContent {
     if (!last || last.type !== 'paragraph') { last = { type: 'paragraph', content: [] }; document.content.push(last); }
     last.content ??= [];
     for (const name of missing) {
-      if (last.content.length) last.content.push({ type: 'text', text: ' ' });
+      const tail = last.content.at(-1);
+      if (last.content.length && !(tail?.type === 'text' && /\s$/u.test(tail.text ?? ''))) last.content.push({ type: 'text', text: ' ' });
       last.content.push({ type: 'journalTag', attrs: { name } });
     }
   }
@@ -163,10 +164,13 @@ export function serializeBullet(document: JSONContent): { content: string; tags:
 }
 
 const inlineTagStyles = css`
-  display: inline-block; max-width: 100%; vertical-align: baseline; transform: translateY(1px);
-  padding: 3px 10px 3px 9px; margin: 3px 4px; border-radius: 999px;
-  background: var(--tag-bg); color: var(--tag-ink);
-  font-size: .86em; line-height: 1.3; white-space: normal; overflow-wrap: anywhere;
+  display: inline-block; position: relative; isolation: isolate; max-width: 100%; vertical-align: baseline;
+  padding: 0 8px 0 7px; margin: 0; color: var(--tag-ink);
+  font: inherit; font-size: calc(1em - .5px); white-space: normal; overflow-wrap: anywhere;
+  &::before {
+    content: ''; position: absolute; z-index: -1; inset: -1px 0;
+    border-radius: 999px; background: var(--tag-bg);
+  }
 `;
 const TagBubble = styled.span`${inlineTagStyles}`;
 
@@ -174,7 +178,8 @@ export const richTextStyles = css`
   font-size: var(--bullet-size, 18px); line-height: var(--bullet-line-height, 1.4); overflow-wrap: anywhere; white-space: pre-wrap;
   .journal-tag { ${inlineTagStyles} }
   .journal-tag-query::after { content: var(--tag-completion, ''); color: var(--link); }
-  .journal-tag.ProseMirror-selectednode { outline: none; background: var(--tag-ink); color: var(--paper); }
+  .journal-tag.ProseMirror-selectednode { outline: none; color: var(--paper); }
+  .journal-tag.ProseMirror-selectednode::before { background: var(--tag-ink); }
   p { margin: 0; }
   p + p { margin-top: var(--bullet-paragraph-gap, .4em); }
   strong { font-weight: 700; }

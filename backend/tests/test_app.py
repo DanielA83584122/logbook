@@ -32,6 +32,8 @@ def test_first_run_installs_seed_once_without_replacing_runtime_data(tmp_path, m
     with sqlite3.connect(runtime) as db:
         sample_count = db.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
         assert sample_count > 0
+        assert db.execute("SELECT COUNT(*) FROM entries WHERE kind = 'task' AND tags != '[]'").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM entries WHERE kind = 'note' AND content LIKE '%](https://%'").fetchone()[0] >= 3
         db.execute("UPDATE entries SET content = 'my private edit' WHERE id = (SELECT MIN(id) FROM entries)")
         db.commit()
 

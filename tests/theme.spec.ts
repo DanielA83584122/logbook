@@ -68,6 +68,11 @@ test('reference typography, wider margins and persistent night mode', async ({ p
   const noteBullet = page.locator('[data-kind="notes"][data-item-id="102"] > div > [aria-hidden="true"]');
   await expect(taskBubble).toHaveCSS('color', 'rgb(28, 28, 28)');
   await expect(noteBullet).toHaveCSS('color', 'rgb(28, 28, 28)');
+  expect(await taskBubble.evaluate(element => ({
+    ring: getComputedStyle(element, '::before').translate,
+    check: getComputedStyle(element, '::after').translate,
+  }))).toEqual({ ring: '0px 0.5px', check: '0px 0.5px' });
+  expect(await noteBullet.evaluate(element => getComputedStyle(element, '::before').translate)).toBe('0px 0.5px');
   const toggle = page.getByRole('switch', { name: 'Night mode', exact: true });
   const toggleBox = (await toggle.boundingBox())!;
   expect(toggleBox.x).toBeGreaterThan(main.x + main.width);

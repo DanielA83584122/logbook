@@ -1,5 +1,5 @@
 import { Extension, Node, type Editor } from '@tiptap/core';
-import { Plugin, TextSelection } from '@tiptap/pm/state';
+import { NodeSelection, Plugin, TextSelection } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import { tagMatches, normalizeTag } from './tagSyntax';
 
@@ -63,6 +63,30 @@ export const JournalTag = Node.create({
     };
   },
 });
+
+export function selectTypedTag(editor: Editor, direction: 'left' | 'right') {
+  const { empty, from: caret } = editor.state.selection;
+  if (!empty) return false;
+  let target: { from: number; to: number; name: string } | null = null;
+  editor.state.doc.descendants((node, position) => {
+    if (target || node.type.name === 'codeBlock') return false;
+    if (!node.isText || node.marks.some(mark => mark.type.name === 'code' || mark.type.name === 'link')) return;
+    for (const match of tagMatches(node.text ?? '')) {
+      const from = position + match.from, to = position + match.to;
+      const inside = caret > from && caret < to;
+      if (inside || direction === 'left' && caret === to || direction === 'right' && caret === from) {
+        target = { from, to, name: match.name };
+        return false;
+      }
+    }
+  });
+  if (!target) return false;
+  const { from, to, name } = target;
+  const tr = editor.state.tr.replaceWith(from, to, editor.schema.nodes.journalTag.create({ name }));
+  tr.setSelection(NodeSelection.create(tr.doc, from));
+  editor.view.dispatch(tr);
+  return true;
+}
 
 export function commitTypedTags(editor: Editor, includeCurrent = false) {
   const { from: caret } = editor.state.selection;
