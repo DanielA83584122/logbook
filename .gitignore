@@ -3,6 +3,7 @@ node_modules/
 dist/
 data/
 *.sqlite3*
+!seed/still-seed.sqlite3
 __pycache__/
 .pytest_cache/
 test-results/

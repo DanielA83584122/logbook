@@ -1,12 +1,17 @@
 """SQLite storage for the unified note/task entry tree."""
 import json
 import os
+import shutil
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
 from .history import FIELDS as HISTORY_FIELDS, SCHEMA as HISTORY_SCHEMA
 from .tags import initialize_tags
+
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_DB_PATH = ROOT / "data/still.sqlite3"
+DEFAULT_SEED_PATH = ROOT / "seed/still-seed.sqlite3"
 
 BASE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS days (id INTEGER PRIMARY KEY, date TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL);
@@ -79,7 +84,36 @@ CREATE TABLE IF NOT EXISTS notes (
 
 
 def db_path():
-    return Path(os.environ.get("STILL_DB_PATH", Path(__file__).resolve().parents[1] / "data/still.sqlite3"))
+    return Path(os.environ.get("STILL_DB_PATH", DEFAULT_DB_PATH))
+
+
+def _seed_on_first_run(path):
+    configured = os.environ.get("STILL_SEED_ON_FIRST_RUN")
+    if configured is None:
+        return path == DEFAULT_DB_PATH
+    return configured.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _install_seed(path):
+    """Atomically install the public sample database when no runtime DB exists."""
+    if path.exists() or not _seed_on_first_run(path):
+        return False
+    seed = Path(os.environ.get("STILL_SEED_PATH", DEFAULT_SEED_PATH))
+    if not seed.is_file():
+        return False
+
+    # Build the copy beside its destination, then link it into place without
+    # replacing a database another process may have created in the meantime.
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.seed")
+    shutil.copyfile(seed, temporary)
+    try:
+        try:
+            os.link(temporary, path)
+            return True
+        except FileExistsError:
+            return False
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 @contextmanager
@@ -248,6 +282,7 @@ def _upgrade_entries_v8(db):
 def initialize():
     path = db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    _install_seed(path)
     db = sqlite3.connect(path, timeout=10)
     db.row_factory = sqlite3.Row
     try:

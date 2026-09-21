@@ -1,4 +1,5 @@
 import importlib
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
@@ -21,6 +22,23 @@ def add_session(client, start, seconds):
     response = client.post("/api/sessions", json={"started_at": start, "duration_seconds": seconds})
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def test_first_run_installs_seed_once_without_replacing_runtime_data(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime.sqlite3"
+    monkeypatch.setenv("STILL_DB_PATH", str(runtime))
+    monkeypatch.setenv("STILL_SEED_ON_FIRST_RUN", "true")
+    module.initialize()
+    with sqlite3.connect(runtime) as db:
+        sample_count = db.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
+        assert sample_count > 0
+        db.execute("UPDATE entries SET content = 'my private edit' WHERE id = (SELECT MIN(id) FROM entries)")
+        db.commit()
+
+    module.initialize()
+    with sqlite3.connect(runtime) as db:
+        assert db.execute("SELECT content FROM entries WHERE id = (SELECT MIN(id) FROM entries)").fetchone()[0] == "my private edit"
+        assert db.execute("SELECT COUNT(*) FROM entries").fetchone()[0] == sample_count
 
 
 def test_journal_starts_on_local_day_and_persists_notes(client):

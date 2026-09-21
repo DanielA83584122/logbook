@@ -26,7 +26,7 @@ npm start
 
 Then open **http://127.0.0.1:8000**. Start or restart FastAPI after building so it registers the static assets.
 
-For Render, `render.yaml` defines one Python web service, a persistent disk mounted at `/var/data`, and `STILL_DB_PATH=/var/data/still.sqlite3`. Keep the service at one instance: SQLite lives on that service's persistent disk. Authentication is currently disabled with `STILL_AUTH_ENABLED=false`. To enable it later, set that variable to `true` and add a secret `STILL_AUTH_PASSWORD`; the username defaults to `still` and can be changed with `STILL_AUTH_USER`.
+For Render, `render.yaml` defines one Python web service, a persistent disk mounted at `/var/data`, and `STILL_DB_PATH=/var/data/still.sqlite3`. On the disk's first launch, `STILL_SEED_ON_FIRST_RUN=true` copies the bundled sample journal into that location; every later deploy leaves the runtime database untouched. Keep the service at one instance: SQLite lives on that service's persistent disk. Authentication is currently disabled with `STILL_AUTH_ENABLED=false`. To enable it later, set that variable to `true` and add a secret `STILL_AUTH_PASSWORD`; the username defaults to `still` and can be changed with `STILL_AUTH_USER`.
 
 Vite uses the official `esbuild-wasm` package through an npm override. This avoids a native esbuild executable that is killed on this Mac. Application code still runs normally in the browser.
 
@@ -96,7 +96,11 @@ Command/Ctrl+F opens search across all stored notes and tasks, including complet
 
 ## Data and time
 
-The default database is **`data/still.sqlite3`**. Override it with `STILL_DB_PATH` when starting FastAPI. There is no seeded or fabricated journal data.
+The runtime database is **`data/still.sqlite3`** by default and remains ignored by Git. The first launch copies the fictional sample journal from **`seed/still-seed.sqlite3`** only when the runtime database does not exist. Pulling new code therefore never replaces personal entries. Delete the runtime database if you intentionally want to start over from the sample, or set `STILL_SEED_ON_FIRST_RUN=false` before first launch to start empty.
+
+Override the runtime location with `STILL_DB_PATH`. Custom locations start empty unless `STILL_SEED_ON_FIRST_RUN=true`; the Render Blueprint enables it so a brand-new persistent disk gets the sample. `STILL_SEED_PATH` can point to a different starter database.
+
+After editing the fictional starter content in `scripts/build_seed.py`, rebuild the tracked database with `python -m scripts.build_seed`.
 
 SQLite fits a personal logbook: no cloud account, no secrets to configure, and a portable database. Foreign keys, WAL mode, transactional writes, and a unique index allowing only one running session protect consistency. Numbered, transactional schema upgrades run at startup; the current schema is version 8. Entry IDs use SQLite AUTOINCREMENT so a deleted ID is never assigned to a different entry. The legacy migration preserves note IDs, remaps the former task ID space, and retains each list's saved order.
 
