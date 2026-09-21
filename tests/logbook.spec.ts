@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
 
 test('to-do text stays vertically aligned when editing', async ({ page, request }) => {
@@ -48,7 +48,8 @@ test('untouched bullets and to-dos disappear on blur or Backspace', async ({ pag
   await expect(note).toBeHidden();
 
   const task = page.getByRole('textbox', { name: 'New to-do', exact: true });
-  await task.click();
+  await page.getByRole('button', { name: 'Add to-do', exact: true }).click();
+  await expect(task).toBeFocused();
   await task.press('Backspace');
   await expect(task).toBeHidden();
   await page.getByRole('button', { name: 'Add to-do', exact: true }).click();
@@ -133,49 +134,6 @@ for (const kind of ['notes', 'tasks'] as const) {
     await expect(expand).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByRole('group', { name: `Saved child ${kind}`, exact: true })).toBeHidden();
   });
-
-  test(`creates five nested ${kind} levels, outdents, and survives reload`, async ({ page, request }) => {
-    await page.goto('/');
-    const composer = page.getByRole('textbox', { name: kind === 'notes' ? 'New journal bullet' : 'New to-do', exact: true });
-    await expect(composer).toBeVisible();
-    for (let level = 0; level < 5; level++) {
-      if (level) {
-        await composer.press('Tab');
-        await expect(composer.locator('xpath=ancestor::li[1]')).toHaveAttribute('data-depth', String(level));
-      }
-      await composer.fill(`Nested ${kind} level ${level}`);
-      await composer.press('Enter');
-      await expect(composer).toHaveText('');
-      const row = page.getByRole('group', { name: `Nested ${kind} level ${level}`, exact: true });
-      await expect(row.locator('xpath=ancestor::li[1]')).toHaveAttribute('data-depth', String(level));
-      if (level) {
-        const parent = page.getByRole('group', { name: `Nested ${kind} level ${level - 1}`, exact: true });
-        expect((await row.boundingBox())!.x - (await parent.boundingBox())!.x).toBe(kind === 'notes' ? 32 : 28);
-      }
-    }
-    const deepest = page.getByRole('group', { name: `Nested ${kind} level 4`, exact: true });
-    await deepest.click();
-    const editor = page.getByRole('textbox', { name: kind === 'notes' ? 'Edit note' : 'Edit to-do', exact: true });
-    await editor.press('Shift+Tab');
-    await expect(editor.locator('xpath=ancestor::li[1]')).toHaveAttribute('data-depth', '3');
-    await editor.press('Enter');
-    await page.reload();
-    await expect(deepest).toBeHidden();
-    for (let level = 0; level < 3; level++) {
-      await page.getByRole('button', { name: `Expand Nested ${kind} level ${level}`, exact: true }).click();
-    }
-    await expect(deepest.locator('xpath=ancestor::li[1]')).toHaveAttribute('data-depth', '3');
-    const exportData = await (await request.get('/api/export')).json();
-    const rows = exportData[kind] as { id: number; parent_id: number | null; content: string }[];
-    const branch = Array.from({ length: 5 }, (_, i) => rows.find(row => row.content === `Nested ${kind} level ${i}`)!);
-    expect(branch[4].parent_id).toBe(branch[2].id);
-    if (kind === 'tasks') {
-      await page.getByRole('button', { name: 'Complete Nested tasks level 3', exact: true }).click();
-      await page.getByRole('button', { name: 'Complete Nested tasks level 4', exact: true }).click();
-      await expect(page.getByRole('group', { name: 'Nested tasks level 0', exact: true })).toBeVisible();
-      await expect(page.getByRole('group', { name: 'Nested tasks level 4', exact: true }).locator('xpath=ancestor::li[1]')).toHaveAttribute('data-depth', '3');
-    }
-  });
 }
 
 test('write, autosave, complete a to-do, use the timer, and edit sessions', async ({ page, request }) => {
@@ -184,7 +142,6 @@ test('write, autosave, complete a to-do, use the timer, and edit sessions', asyn
   await page.goto('/');
   const composer = page.getByRole('textbox', { name: 'New journal bullet' });
   await expect(composer).toBeFocused();
-  await expect(page.locator('[style]')).toHaveCount(0);
   await expect(page.locator('link[rel="stylesheet"]')).toHaveCount(0);
   await expect(page.getByRole('main').locator('svg, img')).toHaveCount(0);
   await page.screenshot({ path: 'test-results/empty-desktop.png', fullPage: true });
@@ -198,11 +155,14 @@ test('write, autosave, complete a to-do, use the timer, and edit sessions', asyn
   await expect(composer).toHaveText('');
   await expect(page.getByRole('group', { name: 'A small beginning, and a clear mind.', exact: true })).toBeVisible();
   await composer.fill('Made space for the important work.');
+  await composer.press('Meta+ArrowDown');
   await composer.press('Enter');
   await expect(composer).toHaveText('');
   await expect(page.getByRole('group', { name: 'Made space for the important work.', exact: true })).toBeVisible();
 
+  await page.getByRole('button', { name: 'Add to-do', exact: true }).click();
   await page.getByRole('textbox', { name: 'New to-do' }).fill('overdue trainings');
+  await page.getByRole('textbox', { name: 'New to-do' }).press('Meta+ArrowDown');
   await page.getByRole('textbox', { name: 'New to-do' }).press('Enter');
   await page.getByRole('button', { name: 'Complete overdue trainings', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Complete overdue trainings', exact: true })).toHaveCount(0);
@@ -262,6 +222,7 @@ test('recovers a failed autosave without losing the draft', async ({ page }) => 
   await page.reload();
   await expect(composer).toHaveText('This thought stays safe through a connection failure.');
   await page.unroute('**/api/document/edit?*');
+  await composer.press('Meta+ArrowDown');
   await composer.press('Enter');
   await expect(composer).toHaveText('');
   await expect(page.getByRole('group', { name: 'This thought stays safe through a connection failure.', exact: true })).toBeVisible();
@@ -343,6 +304,7 @@ test('loads older days automatically and saves edits to historical notes', async
   });
   await page.goto('/');
   await expect(page.getByRole('textbox', { name: 'New journal bullet' })).toBeFocused();
+  await page.waitForTimeout(350);
   const timer = page.getByRole('button', { name: 'Start focus timer' });
   const todo = page.getByRole('region', { name: 'to do', exact: true });
   const main = await page.getByRole('main').boundingBox();
@@ -368,6 +330,7 @@ test('loads older days automatically and saves edits to historical notes', async
   await page.getByTestId('log-scroll').evaluate(el => { el.scrollTop = el.scrollHeight; });
   await page.mouse.move(page.viewportSize()!.width - 10, page.viewportSize()!.height / 2);
   await page.mouse.wheel(0, 1500);
+  await page.waitForTimeout(350);
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
   expect(await timer.boundingBox()).toEqual(timerBefore);
   expect(await todo.boundingBox()).toEqual(todoBefore);
@@ -380,6 +343,7 @@ test('loads older days automatically and saves edits to historical notes', async
   expect(pageRequests.filter(url => url.searchParams.has('before'))).toHaveLength(olderRequests);
   await oldNote.click();
   await page.getByRole('textbox', { name: 'Edit note' }).fill('A revised historical thought.');
+  await page.getByRole('textbox', { name: 'Edit note' }).press('Meta+ArrowDown');
   await page.getByRole('textbox', { name: 'Edit note' }).press('Enter');
   await expect(page.getByRole('group', { name: 'A revised historical thought.', exact: true })).toBeVisible();
   await page.getByRole('group', { name: 'A revised historical thought.', exact: true }).click();

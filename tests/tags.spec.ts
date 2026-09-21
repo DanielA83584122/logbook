@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
 
 const errors = new WeakMap<Page, string[]>();
@@ -6,7 +6,7 @@ test.beforeEach(({ page }) => { errors.set(page, []); page.on('pageerror', error
 test.afterEach(({ page }) => { expect(errors.get(page)).toEqual([]); });
 
 for (const kind of ['notes', 'tasks'] as const) {
-  test(`typed tags become removable chips and separate metadata in ${kind}`, async ({ page, request }) => {
+  test(`typed tags become removable inline atoms and metadata in ${kind}`, async ({ page, request }) => {
     await page.goto('/');
     if (kind === 'tasks' && await page.getByRole('button', { name: 'Add to-do', exact: true }).count()) {
       await page.getByRole('button', { name: 'Add to-do', exact: true }).click();
@@ -25,7 +25,11 @@ for (const kind of ['notes', 'tasks'] as const) {
     await expect(preview.locator('[data-tag]')).toBeVisible();
     await preview.click();
     const editor = page.getByRole('textbox', { name: kind === 'notes' ? 'Edit note' : 'Edit to-do', exact: true });
-    await editor.press('Meta+ArrowDown');
+    await editor.evaluate(element => {
+      const tag = element.querySelector('[data-tag]')!;
+      const range = document.createRange(); range.setStartAfter(tag); range.collapse(true);
+      const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+    });
     await editor.press('ArrowLeft');
     await expect(editor.locator('[data-tag]')).toHaveClass(/ProseMirror-selectednode/);
     await editor.press('ArrowRight');
@@ -79,6 +83,7 @@ test('autocomplete cycles existing tags with arrows and keeps code literal', asy
   const literal = page.getByRole('group', { name: 'Literal #not-a-tag', exact: true });
   await expect(literal.locator('code')).toHaveText('#not-a-tag');
   await expect(literal.locator('[data-tag]')).toHaveCount(0);
+  await page.waitForTimeout(250);
   const a11y = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
   expect(a11y.violations).toEqual([]);
 });
@@ -114,7 +119,13 @@ test('hover tabs filter nested notes and tasks, hide the active tag, and preserv
   await page.getByRole('group', { name: 'Focus parent', exact: true }).click();
   const editor = page.getByRole('textbox', { name: 'Edit note', exact: true });
   await expect(editor.locator('[data-tag]')).toHaveCount(0);
-  await editor.fill('Focus parent edited'); await editor.press('Enter');
+  await expect.poll(() => page.evaluate(() => {
+    const draft = JSON.parse(localStorage.getItem('still-draft-2026-09-21') ?? 'null');
+    return draft && { hiddenTag: draft.hiddenTag, savedTags: draft.savedTags };
+  })).toEqual({ hiddenTag: 'focused', savedTags: ['focused'] });
+  await editor.fill('Focus parent edited');
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('still-draft-2026-09-21') ?? 'null')?.tags)).toEqual(['focused']);
+  await editor.press('Enter');
   await expect(page.getByRole('group', { name: 'Focus parent edited', exact: true })).toBeVisible();
   let data = await (await request.get('/api/export')).json();
   expect(data.notes.find((item: { id: number }) => item.id === parent.id).tags).toEqual(['focused']);
@@ -161,7 +172,7 @@ test('to-do region expands for all rows and leaves a usable journal below', asyn
   await expect(page.getByRole('textbox', { name: 'New journal bullet', exact: true })).toBeVisible();
 });
 
-test('a tag-only bullet is metadata, and deleting the final tagged bullet removes its tab', async ({ page, request }) => {
+test('a tag-only entry stores its inline atom, and deleting it removes the final tab', async ({ page, request }) => {
   await page.goto('/');
   const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
   await composer.pressSequentially('#only-chip'); await composer.press('Enter');
@@ -170,7 +181,7 @@ test('a tag-only bullet is metadata, and deleting the final tagged bullet remove
   await expect(preview.locator('[data-tag="only-chip"]')).toBeVisible();
   const data = await (await request.get('/api/export')).json();
   const stored = data.notes.find((row: { tags: string[] }) => row.tags.includes('only-chip'));
-  expect(stored.content).toBe('');
+  expect(stored.content).toBe('#only-chip');
   await preview.click();
   const editor = page.getByRole('textbox', { name: 'Edit note', exact: true });
   await editor.locator('[data-tag]').click(); await page.keyboard.press('Backspace'); await editor.press('Enter');

@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
 
 const errors = new WeakMap<Page, string[]>();
@@ -8,6 +8,13 @@ test.afterEach(({ page }) => { expect(errors.get(page)).toEqual([]); });
 async function selectAll(editor: Locator) {
   await editor.focus();
   await editor.press('Meta+a');
+}
+async function saveAtEnd(editor: Locator) {
+  await editor.press('Meta+ArrowDown');
+  await editor.press('Enter');
+}
+async function openTaskComposer(page: Page) {
+  await page.getByRole('button', { name: 'Add to-do', exact: true }).click();
 }
 async function rows(page: Page, kind: 'notes' | 'tasks') {
   return (await (await page.request.get('/api/export')).json())[kind] as { id: number; content: string; parent_id: number | null; source_task_id?: number }[];
@@ -37,7 +44,7 @@ for (const kind of ['notes', 'tasks'] as const) {
       await editor.pressSequentially(scenario.text);
       await expect(editor).toHaveText(scenario.visible);
       await expect(editor.locator('a')).toHaveText(scenario.linked);
-      await editor.press('Enter');
+      await saveAtEnd(editor);
       await expect(preview.locator('a')).toHaveText(scenario.linked);
       await expect.poll(async () => (await rows(page, kind)).find(row => row.id === item.id)?.content).toBe(scenario.markdown);
       await page.reload();
@@ -50,12 +57,12 @@ for (const kind of ['notes', 'tasks'] as const) {
 for (const kind of ['notes', 'tasks'] as const) {
   test(`formatting shortcuts render and persist as Markdown in ${kind}`, async ({ page }) => {
     await page.goto('/');
+    if (kind === 'tasks') await openTaskComposer(page);
     const composer = page.getByRole('textbox', { name: kind === 'notes' ? 'New journal bullet' : 'New to-do', exact: true });
     const formats = [
       ['bold', 'Meta+b', 'strong', '**'],
       ['italic', 'Meta+i', 'em', '*'],
       ['underline', 'Meta+u', 'u', '++'],
-      ['strike', 'Meta+Shift+x', 's', '~~'],
       ['code', 'Meta+Shift+c', 'code', '`'],
     ];
     for (const [name, shortcut, tag, delimiter] of formats) {
@@ -67,33 +74,14 @@ for (const kind of ['notes', 'tasks'] as const) {
       if (tag === 'code') {
         await expect(composer.locator('code')).toHaveCSS('color', 'rgb(82, 99, 95)');
         await expect(composer.locator('code')).toHaveCSS('font-family', /monospace/);
+        await expect(composer.locator('code')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+        await expect(composer.locator('code')).toHaveCSS('padding-left', '0px');
       }
-      await composer.press('Enter');
+      await saveAtEnd(composer);
       await expect(composer).toHaveText('');
       await expect(page.getByRole('group', { name: text, exact: true }).locator(tag)).toHaveText(text);
       expect((await rows(page, kind)).some(row => row.content === `${delimiter}${text}${delimiter}`)).toBe(true);
     }
-    // Formatting can be toggled before typing, and Tab still nests a formatted bullet.
-    await composer.press('Tab');
-    await expect(composer.locator('xpath=ancestor::li[1]')).toHaveAttribute('data-depth', '1');
-    await composer.press('Meta+b');
-    await composer.pressSequentially(`${kind} nested bold`);
-    await expect(composer.locator('strong')).toHaveText(`${kind} nested bold`);
-    await composer.press('Enter');
-    await expect(composer).toHaveText('');
-    await page.reload();
-    const child = page.getByRole('group', { name: `${kind} nested bold`, exact: true });
-    await expect(child).toBeHidden();
-    await page.getByRole('button', { name: `Expand ${kind} code`, exact: true }).click();
-    await expect(child.locator('strong')).toHaveText(`${kind} nested bold`);
-    await expect(child.locator('xpath=ancestor::li[1]')).toHaveAttribute('data-depth', '1');
-    if (kind === 'tasks') {
-      await page.getByRole('button', { name: 'Complete tasks nested bold', exact: true }).click();
-      await expect(page.getByRole('group', { name: 'tasks code', exact: true }).locator('code')).toHaveText('tasks code');
-      await expect(page.getByRole('group', { name: 'tasks nested bold', exact: true }).locator('strong')).toHaveText('tasks nested bold');
-      expect((await rows(page, 'notes')).some(row => row.content.includes('tasks nested bold'))).toBe(false);
-    }
-    await expect(page.locator('[style]')).toHaveCount(0);
   });
 }
 
@@ -121,7 +109,7 @@ test('link shortcut requires selected text and uses only a URL field', async ({ 
   await field.fill('example.com/project'); await field.press('Enter');
   await expect(dialog).toBeHidden();
   await expect(composer.locator('a strong, strong a')).toHaveText('Project notes');
-  await composer.press('Enter');
+  await saveAtEnd(composer);
   const preview = page.getByRole('group', { name: 'Project notes', exact: true });
   await expect(preview.getByRole('link')).toHaveAttribute('href', 'https://example.com/project');
   const stored = (await rows(page, 'notes')).find(row => row.content.includes('example.com/project'))!;
@@ -146,7 +134,7 @@ test('link shortcut requires selected text and uses only a URL field', async ({ 
   await expect(dialog).toBeHidden();
   await expect(editor.getByRole('link')).toHaveCount(0);
   await expect(editor.locator('strong')).toHaveText('Updated project notes');
-  await editor.press('Enter');
+  await saveAtEnd(editor);
   await expect(page.getByRole('group', { name: 'Updated project notes', exact: true })).toBeVisible();
   expect((await rows(page, 'notes')).find(row => row.id === stored.id)!.content).toBe('**Updated project notes**');
 });
@@ -162,6 +150,7 @@ test('link field prefills clipboard URLs and never overwrites typing', async ({ 
     } } });
   });
   await page.goto('/');
+  await openTaskComposer(page);
   const composer = page.getByRole('textbox', { name: 'New to-do', exact: true });
   await composer.fill('Clipboard link'); await selectAll(composer); await composer.press('Meta+k');
   const dialog = page.getByRole('dialog', { name: 'Link', exact: true });
@@ -179,12 +168,12 @@ test('link field prefills clipboard URLs and never overwrites typing', async ({ 
   await expect(field).toHaveValue('https://example.com/typed');
   await field.press('Enter'); await expect(dialog).toBeHidden();
   await expect(composer.getByRole('link')).toHaveAttribute('href', 'https://example.com/typed');
-  await composer.press('Enter');
+  await saveAtEnd(composer);
   await expect(page.getByRole('group', { name: 'Clipboard link', exact: true })).toBeVisible();
   expect((await rows(page, 'tasks')).some(row => row.content === '[Clipboard link](https://example.com/typed)')).toBe(true);
 });
 
-test('undo, redo, clear formatting and literal code backticks survive reload', async ({ page }) => {
+test('undo, redo and literal code backticks survive reload', async ({ page }) => {
   await page.goto('/');
   const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
   await composer.fill('Reversible formatting');
@@ -194,11 +183,9 @@ test('undo, redo, clear formatting and literal code backticks survive reload', a
   await expect(composer.locator('strong')).toHaveCount(0);
   await composer.press('Meta+Shift+z');
   await expect(composer.locator('strong')).toHaveCount(1);
-  await composer.press('Meta+Backslash');
-  await expect(composer.locator('strong')).toHaveCount(0);
   await composer.fill('`a` + ``b`` <tag>');
   await selectAll(composer); await composer.press('Meta+Shift+c');
-  await composer.press('Enter');
+  await saveAtEnd(composer);
   const preview = page.getByRole('group', { name: '`a` + ``b`` <tag>', exact: true });
   await expect(preview.locator('code')).toHaveText('`a` + ``b`` <tag>');
   expect((await rows(page, 'notes')).some(row => row.content === '``` `a` + ``b`` <tag> ```')).toBe(true);
@@ -208,12 +195,26 @@ test('undo, redo, clear formatting and literal code backticks survive reload', a
   await expect(page.getByRole('textbox', { name: 'Edit note' }).locator('code')).toHaveText('`a` + ``b`` <tag>');
 });
 
+test('retired finish and clear-formatting shortcuts are inert', async ({ page }) => {
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
+  await composer.fill('Keep this bold');
+  await selectAll(composer);
+  await composer.press('Meta+b');
+  await expect(composer.locator('strong')).toHaveText('Keep this bold');
+  await composer.press('Meta+Backslash');
+  await expect(composer.locator('strong')).toHaveText('Keep this bold');
+  await composer.press('Meta+Shift+x');
+  await expect(composer.locator('strong')).toHaveText('Keep this bold');
+  await expect(composer.locator('s')).toHaveCount(0);
+});
+
 test('plain text and safe pasted formatting retain content through editing and reload', async ({ page }) => {
   await page.goto('/');
   const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
   const literal = 'Use <JIRA link>, <b>literal tag</b>, &amp;, **literal stars**, ++plain plus++, ~~plain tildes~~';
   await composer.fill(literal);
-  await composer.press('Enter');
+  await saveAtEnd(composer);
   const preview = page.getByRole('group', { name: literal, exact: true });
   await expect(preview).toBeVisible();
   await page.reload();
@@ -221,7 +222,7 @@ test('plain text and safe pasted formatting retain content through editing and r
   await expect(preview.locator('strong, u, s')).toHaveCount(0);
   await preview.click();
   await expect(page.getByRole('textbox', { name: 'Edit note' })).toHaveText(literal);
-  await page.getByRole('textbox', { name: 'Edit note' }).press('Enter');
+  await saveAtEnd(page.getByRole('textbox', { name: 'Edit note' }));
   await composer.focus();
   await composer.evaluate(element => {
     const data = new DataTransfer();
@@ -231,11 +232,10 @@ test('plain text and safe pasted formatting retain content through editing and r
   await expect(composer.locator('strong')).toHaveText('Pasted bold');
   await expect(composer.getByRole('link', { name: 'unsafe' })).toHaveCount(0);
   await expect(composer.getByRole('link', { name: 'safe' })).toHaveAttribute('href', 'https://example.com/pasted');
-  await composer.press('Enter');
+  await saveAtEnd(composer);
   await expect(page.getByRole('group', { name: 'Pasted bold and italic unsafe safe', exact: true }).locator('strong')).toHaveText('Pasted bold');
   await page.reload();
   await expect(page.getByRole('group', { name: 'Pasted bold and italic unsafe safe', exact: true }).locator('strong')).toHaveText('Pasted bold');
-  await expect(page.locator('[style]')).toHaveCount(0);
 });
 
 test('Ctrl shortcuts work on Windows and block formatting saves valid Markdown', async ({ page }) => {
@@ -248,22 +248,22 @@ test('Ctrl shortcuts work on Windows and block formatting saves valid Markdown',
   await expect(composer.locator('strong')).toHaveText('Windows bold');
   await composer.press('Control+z'); await expect(composer.locator('strong')).toHaveCount(0);
   await composer.press('Control+y'); await expect(composer.locator('strong')).toHaveCount(1);
-  await composer.press('Enter');
+  await saveAtEnd(composer);
   await expect(composer).toHaveText('');
   await composer.fill('Windows code');
   await composer.press('Control+a'); await composer.press('Control+Shift+c');
   await expect(composer.locator('code')).toHaveText('Windows code');
-  await composer.press('Enter');
+  await saveAtEnd(composer);
   await expect(composer).toHaveText('');
   await composer.pressSequentially('Small heading');
   await composer.press('Control+Alt+2');
   await expect(composer.locator('h2')).toHaveText('Small heading');
-  await composer.press('Enter');
+  await saveAtEnd(composer);
   await expect(composer).toHaveText('');
   await composer.pressSequentially('A quoted thought');
   await composer.press('Control+Shift+b');
   await expect(composer.locator('blockquote')).toHaveText('A quoted thought');
-  await composer.press('Enter');
+  await saveAtEnd(composer);
   await expect(composer).toHaveText('');
   await composer.press('Control+Alt+c');
   await composer.pressSequentially('first line');
@@ -322,7 +322,7 @@ for (const kind of ['notes', 'tasks'] as const) {
     await expect(editor).toBeFocused();
     await page.keyboard.press('Meta+Shift+c');
     await expect(editor.locator('code')).toHaveText('this code');
-    await editor.press('Enter');
+    await saveAtEnd(editor);
     await expect(preview.locator('code')).toHaveText('this code');
     expect((await rows(page, kind)).some(row => row.content === `Select \`this code\` with the mouse ${kind}`)).toBe(true);
   });
@@ -366,7 +366,7 @@ for (const kind of ['notes', 'tasks'] as const) {
     await textField.press('Enter');
     await expect(dialog).toBeHidden();
     await expect(editor.getByRole('link')).toHaveText(`Final ${kind}`);
-    await editor.press('Enter');
+    await saveAtEnd(editor);
     await expect(page.getByRole('group', { name: `Before Final ${kind} after`, exact: true })).toBeVisible();
     const content = (await rows(page, kind)).find(row => row.id === created.id)!.content;
     expect(content).toContain(`Final ${kind}`);

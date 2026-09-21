@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 test('tag collection opens only in the outer half-margin, dims the page, and returns through logbook', async ({ page }) => {
   const tags = ['work', 'health', 'reading', 'ideas', 'garden', 'longer-project-name'];

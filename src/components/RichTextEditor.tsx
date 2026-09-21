@@ -88,7 +88,7 @@ export type RichTextHandle = {
 type Props = {
   ref?: Ref<RichTextHandle>; value: string; tags: string[]; label: string; readOnly: boolean;
   onChange: (markdown: string, tags: string[]) => void; onBlur: (event?: FocusEvent) => void; onKeyDown: (event: KeyboardEvent) => void;
-  onBoundary?: (direction: 'up' | 'down' | 'backspace' | 'delete') => void;
+  onBoundary?: (direction: 'backspace' | 'delete') => void;
   onSelectDocument?: () => void;
 };
 
@@ -238,12 +238,8 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
           }
         }
         if (!mod && !event.shiftKey && view.state.selection.empty) {
-          const { from, $from } = view.state.selection;
-          const first = $from.depth > 0 && $from.before(1) === 0;
-          const last = $from.depth > 0 && $from.after(1) === view.state.doc.content.size;
-          const direction = event.key === 'ArrowUp' && first && view.endOfTextblock('up') ? 'up'
-            : event.key === 'ArrowDown' && last && view.endOfTextblock('down') ? 'down'
-            : event.key === 'Backspace' && from === 1 ? 'backspace'
+          const { from } = view.state.selection;
+          const direction = event.key === 'Backspace' && from === 1 ? 'backspace'
             : event.key === 'Delete' && from === view.state.doc.content.size - 1 ? 'delete' : null;
           if (direction && callbacks.current.onBoundary) { event.preventDefault(); callbacks.current.onBoundary(direction); return true; }
         }
@@ -254,12 +250,6 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
           event.preventDefault();
           openLink('shortcut');
           return true;
-        }
-        if (mod && event.shiftKey && event.key.toLowerCase() === 'x') {
-          event.preventDefault(); editor?.commands.toggleStrike(); return true;
-        }
-        if (mod && event.key === '\\') {
-          event.preventDefault(); editor?.chain().unsetAllMarks().clearNodes().run(); return true;
         }
         if (event.key === 'Enter' && !mod && editor?.isActive('codeBlock')) return false;
         if (event.key === 'Enter' && editor) {

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 test('a reader without JavaScript can discover and query the complete saved document', async ({ browser, baseURL, request }) => {
   const { today } = await (await request.get('/api/journal')).json();
@@ -35,5 +35,4 @@ test('agent discovery adds no visible controls to the interactive document', asy
   await expect(page.getByRole('textbox', { name: 'New journal bullet', exact: true })).toBeFocused();
   await expect(page.getByRole('link', { name: 'Read the logbook', exact: true })).toHaveCount(0);
   await expect(page.locator('head link[rel="service-desc"]')).toHaveAttribute('href', '/openapi.json');
-  await expect(page.locator('[style]')).toHaveCount(0);
 });

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 test('parent progress retains completed children, finishes automatically, and can be undone', async ({ page, request }) => {
   const parent = await (await request.post('/api/tasks', { data: { content: 'Progress project' } })).json();
@@ -107,25 +107,26 @@ test('completed tasks share note ordering and normal logbook text editing', asyn
   await expect(page.getByRole('group', { name: 'Mixed edited task', exact: true })).toHaveCount(0);
 });
 
-test('arrow navigation, merging, grouped selection, and document undo cross bullet boundaries', async ({ page, request }) => {
+test('merging, grouped selection, and document undo cross bullet boundaries', async ({ page, request }) => {
   const { today } = await (await request.get('/api/journal')).json();
-  const parent = await (await request.post('/api/notes', { data: { date: today, content: 'Navigation root', tags: ['navigation'] } })).json();
-  await request.post('/api/notes', { data: { date: today, content: 'Alpha', parent_id: parent.id, tags: ['navigation'] } });
-  await request.post('/api/notes', { data: { date: today, content: 'Beta', parent_id: parent.id, tags: ['navigation'] } });
+  const parent = await (await request.post('/api/notes', { data: { date: today, content: 'Navigation root' } })).json();
+  await request.post('/api/notes', { data: { date: today, content: 'Alpha', parent_id: parent.id } });
+  await request.post('/api/notes', { data: { date: today, content: 'Beta', parent_id: parent.id } });
   await page.goto('/');
-  await page.getByRole('navigation', { name: 'Tags' }).hover();
-  await page.getByRole('button', { name: '#navigation', exact: true }).click();
   await page.getByRole('button', { name: 'Expand Navigation root', exact: true }).click();
-  await page.getByRole('group', { name: 'Alpha', exact: true }).click();
+  await page.getByRole('group', { name: 'Beta', exact: true }).click();
   let editor = page.getByRole('textbox', { name: 'Edit note', exact: true });
-  await editor.press('Meta+ArrowDown'); await editor.press('ArrowDown');
   await expect(editor).toHaveText('Beta');
-  await editor.press('Meta+ArrowUp'); await editor.press('Backspace');
+  await editor.evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element); range.collapse(true);
+    const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+  });
+  await editor.press('Backspace');
   await expect(editor).toHaveText('AlphaBeta');
   await editor.press('Meta+ArrowDown');
   await editor.press('Enter');
-  const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
-  await composer.press('Meta+z');
+  await page.getByRole('button', { name: 'Start focus timer', exact: true }).focus();
+  await page.keyboard.press('Meta+z');
   await expect(page.getByRole('group', { name: 'Alpha', exact: true })).toBeVisible();
   await expect(page.getByRole('group', { name: 'Beta', exact: true })).toBeVisible();
   await page.getByRole('group', { name: 'Alpha', exact: true }).click();
@@ -145,20 +146,24 @@ test('arrow navigation, merging, grouped selection, and document undo cross bull
     document.activeElement?.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
   });
   await expect(editor.locator('strong')).toHaveText('Replacement');
-  await editor.press('Meta+ArrowDown'); await editor.press('Enter'); await composer.press('Meta+z');
+  await editor.press('Meta+ArrowDown'); await editor.press('Enter');
+  await page.getByRole('button', { name: 'Start focus timer', exact: true }).focus();
+  await page.keyboard.press('Meta+z');
   await expect(page.getByRole('group', { name: 'Alpha', exact: true }).locator('strong')).toHaveText('Alpha');
   await expect(page.getByRole('group', { name: 'Beta', exact: true }).locator('strong')).toHaveText('Beta');
 });
 
-test('a tag shortcut settles at the end without leaving a gap in the text', async ({ page, request }) => {
+test('an inline tag stays at its typed position without leaving a gap in the text', async ({ page, request }) => {
   await page.goto('/');
   const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
   await composer.pressSequentially('Start #stable-chip finish');
-  await expect(composer).toHaveText('Start finish #stable-chip');
+  await expect(composer).toHaveText(/Start #stable-chip\sfinish/);
+  await composer.press('Meta+ArrowDown');
   await composer.press('Enter');
-  await expect(page.getByRole('group', { name: 'Start finish', exact: true })).toHaveText('Start finish #stable-chip');
+  await expect(page.getByRole('group', { name: 'Start #stable-chip finish', exact: true })).toHaveText(/Start #stable-chip\sfinish/);
   const data = await (await request.get('/api/export')).json();
-  expect(data.notes.find((row: { content: string }) => row.content === 'Start finish').tags).toEqual(['stable-chip']);
+  const row = data.notes.find((item: { content: string }) => item.content.replaceAll('\u00a0', ' ') === 'Start #stable-chip finish');
+  expect(row.tags).toEqual(['stable-chip']);
 });
 
 test('search opens an unloaded historical match and its collapsed ancestors', async ({ page, request }) => {

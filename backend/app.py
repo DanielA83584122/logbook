@@ -184,6 +184,22 @@ def health():
     return {"status": "ok", "storage": "sqlite"}
 
 
+if os.environ.get('STILL_TEST_MODE') == '1':
+    @app.delete('/api/test/reset', status_code=204, include_in_schema=False)
+    def reset_test_database():
+        """Give each browser test a clean database; this route does not exist in production."""
+        with connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            db.execute('DELETE FROM document_changes')
+            db.execute('DELETE FROM document_operations')
+            db.execute('DELETE FROM document_requests')
+            db.execute('DELETE FROM entries')
+            db.execute('DELETE FROM sessions')
+            db.execute('DELETE FROM days')
+            db.execute("DELETE FROM sqlite_sequence WHERE name = 'entries'")
+        return Response(status_code=204)
+
+
 @app.get("/api/journal")
 def journal(timezone: str = "UTC", before: CalendarDate | None = None, tag: str | None = None, on: CalendarDate | None = None,
             limit: Annotated[int, Query(ge=1, le=100)] = 21):

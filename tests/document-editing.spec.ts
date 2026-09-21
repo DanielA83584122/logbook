@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 test('midnight retires the previous day composer and leaves only today active', async ({ page }) => {
   await page.clock.install({ time: new Date('2026-09-20T23:59:59-07:00') });
@@ -26,6 +26,7 @@ test('outdenting keeps the returned revision so the next edit saves normally', a
   await page.getByRole('group', { name: 'Revision child', exact: true }).click();
   const editor = page.getByRole('textbox', { name: 'Edit to-do', exact: true });
   await editor.press('Shift+Tab');
+  await expect(editor).toBeFocused();
   await editor.fill('Revision child moved');
   await page.getByRole('button', { name: 'Start focus timer', exact: true }).focus();
   await expect.poll(async () => {
@@ -33,6 +34,21 @@ test('outdenting keeps the returned revision so the next edit saves normally', a
     return rows.find(row => row.id === child.id);
   }).toMatchObject({ parent_id: null, content: 'Revision child moved' });
   await expect(page.getByText('This entry was saved elsewhere. Reloaded the latest version.', { exact: true })).toHaveCount(0);
+});
+
+test('retired entry-jump shortcuts leave the active editor in place', async ({ page, request }) => {
+  const { today } = await (await request.get('/api/journal')).json();
+  const first = await (await request.post('/api/notes', { data: { date: today, content: 'Stay in this entry' } })).json();
+  await request.post('/api/notes', { data: { date: today, content: 'Do not jump here', after_id: first.id } });
+  await page.goto('/');
+  await page.getByRole('group', { name: 'Stay in this entry', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: 'Edit note', exact: true });
+  await editor.press('Meta+ArrowDown');
+  await expect(editor).toBeFocused();
+  await expect(editor).toHaveText('Stay in this entry');
+  await editor.press('Meta+ArrowUp');
+  await expect(editor).toBeFocused();
+  await expect(editor).toHaveText('Stay in this entry');
 });
 
 for (const kind of ['notes', 'tasks'] as const) {

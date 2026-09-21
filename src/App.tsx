@@ -96,17 +96,19 @@ const SoundMenu = styled.div`display: grid; gap: 8px; padding: 4px; button { jus
 const ShortcutPanel = styled.div`
   padding: 4px 12px 8px;
 `;
-const ShortcutRows = styled.div`display: grid; gap: 2px;`;
-const ShortcutRow = styled.div`
-  min-height: 34px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 20px;
-  font-size: 13px; color: var(--ink);
+const ShortcutRows = styled.div`
+  display: grid; grid-template-columns: minmax(0, 1fr) max-content; column-gap: 20px; row-gap: 2px;
 `;
-const Keys = styled.span`color: var(--muted); font-size: 12px; text-align: right; text-transform: lowercase; white-space: nowrap;`;
+const ShortcutRow = styled.div`
+  display: contents;
+  > * { min-height: 34px; padding: 8px 0; box-sizing: border-box; }
+`;
+const Keys = styled.span`color: var(--muted); font-size: 12px; text-align: left; text-transform: lowercase; white-space: nowrap;`;
 const Demo = styled.span`
-  min-width: 0; line-height: 1.35;
+  min-width: 0; line-height: 1.35; font-size: 13px; color: var(--ink); text-align: left;
   strong { font-weight: 700; } em { font-style: italic; } u { text-underline-offset: 2px; }
   a { color: var(--link); text-decoration: none; }
-  code { padding: 2px 5px; border-radius: 4px; background: var(--code-bg); color: var(--code-ink); font: inherit; font-size: 12px; }
+  code { padding: 0; border-radius: 0; background: transparent; color: var(--code-ink); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
 `;
 const Main = styled.main`
   width: var(--document-width); margin: var(--page-top) var(--right-margin) 0 var(--left-margin);
@@ -208,8 +210,6 @@ export default function App() {
       if (event.metaKey || event.ctrlKey) {
         if (['z', 'y'].includes(event.key.toLowerCase())) { event.preventDefault(); void documentUndo(event.shiftKey || event.key.toLowerCase() === 'y').catch(e => notify(errorMessage(e))); }
         if (event.key.toLowerCase() === 'f') { event.preventDefault(); setSearchOpen(true); }
-        if (event.shiftKey && event.key.toLowerCase() === 's') { event.preventDefault(); setStatsOpen(true); }
-        if (event.shiftKey && event.key.toLowerCase() === 'm') { event.preventDefault(); setSoundOpen(true); }
       }
     };
     window.addEventListener('keydown', shortcut);
@@ -361,7 +361,7 @@ export default function App() {
   return <JournalContext.Provider value={{ tags: data?.tags ?? [], activeTag: data?.tag ?? null, completed, onComplete, reopened, onReopen, target }}><Page $focusing={!!active} data-testid="page" data-focus-running={active ? 'true' : undefined}>
     <PageControls role="group" aria-label="Page controls" data-focus-chrome>
     {REPOSITORY_URL && <RepositoryLink href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer" aria-label="GitHub repository" title="GitHub"><Github size={15} aria-hidden="true" /></RepositoryLink>}
-    <StatsToggle aria-label="Open focus statistics" title="Statistics · ⌘⇧S" onClick={() => setStatsOpen(true)}><ChartNoAxesColumn size={15} aria-hidden="true" /></StatsToggle>
+    <StatsToggle aria-label="Open focus statistics" title="Statistics" onClick={() => setStatsOpen(true)}><ChartNoAxesColumn size={15} aria-hidden="true" /></StatsToggle>
     <ShortcutToggle aria-label="Keyboard shortcuts" title="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)}><ShortcutGlyph data-shortcut-icon aria-hidden="true" /></ShortcutToggle>
     <ThemeToggle role="switch" aria-label="Night mode" aria-checked={night}
       title={night ? 'Use day mode' : 'Use night mode'} onClick={() => setNight(value => !value)}>
@@ -404,24 +404,18 @@ export default function App() {
       <input aria-label="Focus sound volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={e => { const value = Number(e.target.value); setVolume(value); localStorage.setItem('still-volume', String(value)); sound.current.setVolume(value); }} />
     </SoundMenu></Modal>
     <Modal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" compact><ShortcutPanel>
-      <ShortcutRows>
+      <ShortcutRows data-testid="shortcut-rows">
         <ShortcutRow><Demo>create the next entry</Demo><Keys>enter</Keys></ShortcutRow>
         <ShortcutRow><Demo>add a line break</Demo><Keys>shift + enter</Keys></ShortcutRow>
-        <ShortcutRow><Demo>move entry right</Demo><Keys>tab</Keys></ShortcutRow>
-        <ShortcutRow><Demo>move entry left</Demo><Keys>shift + tab</Keys></ShortcutRow>
-        <ShortcutRow><Demo>jump to entry above</Demo><Keys>⌘ + ↑</Keys></ShortcutRow>
-        <ShortcutRow><Demo>jump to entry below</Demo><Keys>⌘ + ↓</Keys></ShortcutRow>
+        <ShortcutRow><Demo>indent entry</Demo><Keys>tab</Keys></ShortcutRow>
+        <ShortcutRow><Demo>outdent entry</Demo><Keys>shift + tab</Keys></ShortcutRow>
         <ShortcutRow><Demo>select all entries</Demo><Keys>⌘ + a twice</Keys></ShortcutRow>
         <ShortcutRow><Demo>make this <strong>bold</strong></Demo><Keys>⌘ + b</Keys></ShortcutRow>
         <ShortcutRow><Demo>make this <em>italic</em></Demo><Keys>⌘ + i</Keys></ShortcutRow>
         <ShortcutRow><Demo>make this <u>underlined</u></Demo><Keys>⌘ + u</Keys></ShortcutRow>
         <ShortcutRow><Demo>add or edit a <a href="#" onClick={event => event.preventDefault()}>link</a></Demo><Keys>⌘ + k</Keys></ShortcutRow>
         <ShortcutRow><Demo>turn text into <code>code</code></Demo><Keys>⌘ + shift + c</Keys></ShortcutRow>
-        <ShortcutRow><Demo>mark this <s>finished</s></Demo><Keys>⌘ + shift + x</Keys></ShortcutRow>
-        <ShortcutRow><Demo><strong><em>styled</em></strong> → plain text</Demo><Keys>⌘ + \</Keys></ShortcutRow>
         <ShortcutRow><Demo>search</Demo><Keys>⌘ + f</Keys></ShortcutRow>
-        <ShortcutRow><Demo>statistics</Demo><Keys>⌘ + shift + s</Keys></ShortcutRow>
-        <ShortcutRow><Demo>sound controls</Demo><Keys>⌘ + shift + m</Keys></ShortcutRow>
         <ShortcutRow><Demo>undo</Demo><Keys>⌘ + z</Keys></ShortcutRow>
         <ShortcutRow><Demo>redo</Demo><Keys>⌘ + shift + z</Keys></ShortcutRow>
       </ShortcutRows>

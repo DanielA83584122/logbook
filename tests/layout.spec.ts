@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 const today = '2026-09-17';
 test.beforeEach(async ({ page }) => {
@@ -19,6 +19,7 @@ test('timer aligns to the first task and journal text without overlapping page c
   const note = page.getByRole('group', { name: 'Current note 0', exact: true });
   for (const width of [1440, 1280, 1024, 900, 760, 641]) {
     await page.setViewportSize({ width, height: 900 });
+    await page.waitForTimeout(350);
     await expect.poll(async () => {
       const settled = (await timer.boundingBox())!;
       return settled.x + settled.width / 2;

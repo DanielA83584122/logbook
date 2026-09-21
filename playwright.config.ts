@@ -16,7 +16,7 @@ export default defineConfig({
   },
   webServer: {
     command: `.venv/bin/python -m uvicorn backend.app:app --host 127.0.0.1 --port ${port}`,
-    env: { STILL_DB_PATH: `/tmp/still-e2e-${Date.now()}.sqlite3`, ...(process.env.STILL_DIST_PATH ? { STILL_DIST_PATH: process.env.STILL_DIST_PATH } : {}) },
+    env: { STILL_DB_PATH: `/tmp/still-e2e-${Date.now()}.sqlite3`, STILL_TEST_MODE: '1', ...(process.env.STILL_DIST_PATH ? { STILL_DIST_PATH: process.env.STILL_DIST_PATH } : {}) },
     url: `http://127.0.0.1:${port}/api/health`,
     reuseExistingServer: false,
   },

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
 
 async function checkAccessibility(page: Page) {
@@ -33,10 +33,25 @@ test('reference typography, wider margins and persistent night mode', async ({ p
   await shortcuts.click();
   const shortcutDialog = page.getByRole('dialog', { name: 'Keyboard shortcuts', exact: true });
   await expect(shortcutDialog).toBeVisible();
-  await expect(shortcutDialog.getByText('move entry right', { exact: true })).toBeVisible();
-  await expect(shortcutDialog.getByText('sound controls', { exact: true })).toBeVisible();
+  await expect(shortcutDialog.getByText('indent entry', { exact: true })).toBeVisible();
+  await expect(shortcutDialog.getByText('outdent entry', { exact: true })).toBeVisible();
+  await expect(shortcutDialog.getByText('statistics', { exact: true })).toHaveCount(0);
+  await expect(shortcutDialog.getByText('sound controls', { exact: true })).toHaveCount(0);
+  await expect(shortcutDialog.getByText('jump to entry above', { exact: true })).toHaveCount(0);
+  await expect(shortcutDialog.getByText('jump to entry below', { exact: true })).toHaveCount(0);
+  await expect(shortcutDialog.getByText('mark this finished', { exact: true })).toHaveCount(0);
+  await expect(shortcutDialog.getByText('styled → plain text', { exact: true })).toHaveCount(0);
+  const shortcutRows = shortcutDialog.getByTestId('shortcut-rows');
+  const commandStarts = await shortcutRows.locator(':scope > div > span:first-child').evaluateAll(elements => elements.map(element => element.getBoundingClientRect().x));
+  const keyStarts = await shortcutRows.locator(':scope > div > span:last-child').evaluateAll(elements => elements.map(element => element.getBoundingClientRect().x));
+  expect(Math.max(...commandStarts) - Math.min(...commandStarts)).toBeLessThan(1);
+  expect(Math.max(...keyStarts) - Math.min(...keyStarts)).toBeLessThan(1);
   await page.keyboard.press('Escape');
   await expect(shortcutDialog).toBeHidden();
+  await page.keyboard.press('Meta+Shift+S');
+  await expect(page.getByRole('dialog', { name: 'Statistics', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Meta+Shift+M');
+  await expect(page.getByRole('dialog', { name: 'Focus sound', exact: true })).toHaveCount(0);
   const main = (await page.getByRole('main').boundingBox())!;
   const timer = (await page.getByRole('button', { name: 'Start focus timer', exact: true }).boundingBox())!;
   const task = (await page.getByRole('group', { name: 'Review the draft', exact: true }).boundingBox())!;
@@ -49,6 +64,10 @@ test('reference typography, wider margins and persistent night mode', async ({ p
   expect(ring).toEqual({ border: '1px', radius: '50%', inset: '-8px' });
   await expect(page.getByRole('link', { name: 'project notes', exact: true })).toHaveCSS('color', 'rgb(33, 105, 176)');
   await expect(page.getByRole('link', { name: 'project notes', exact: true })).toHaveCSS('text-decoration-line', 'none');
+  const taskBubble = page.getByRole('button', { name: 'Complete Review the draft', exact: true });
+  const noteBullet = page.locator('[data-kind="notes"][data-item-id="102"] > div > [aria-hidden="true"]');
+  await expect(taskBubble).toHaveCSS('color', 'rgb(28, 28, 28)');
+  await expect(noteBullet).toHaveCSS('color', 'rgb(28, 28, 28)');
   const toggle = page.getByRole('switch', { name: 'Night mode', exact: true });
   const toggleBox = (await toggle.boundingBox())!;
   expect(toggleBox.x).toBeGreaterThan(main.x + main.width);
@@ -84,6 +103,8 @@ test('reference typography, wider margins and persistent night mode', async ({ p
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(1, 22, 39)');
   await expect(page.locator('body')).toHaveCSS('color', 'rgb(192, 199, 209)');
   await expect(page.getByRole('link', { name: 'project notes', exact: true })).toHaveCSS('color', 'rgb(117, 209, 196)');
+  await expect(taskBubble).toHaveCSS('color', 'rgb(192, 199, 209)');
+  await expect(noteBullet).toHaveCSS('color', 'rgb(192, 199, 209)');
   await checkLinkEditor('rgb(117, 209, 196)', 'rgb(183, 164, 221)');
   await page.getByRole('navigation', { name: 'Tags' }).hover();
   await expect(page.getByRole('button', { name: '#work', exact: true })).toHaveCSS('opacity', '1');

@@ -37,6 +37,7 @@ def test_journal_starts_on_local_day_and_persists_notes(client):
 
 def test_authentication_flag_defaults_off_and_can_protect_the_api(client, monkeypatch):
     assert client.get('/api/export').status_code == 200
+    assert client.delete('/api/test/reset').status_code == 404
     monkeypatch.setenv('STILL_AUTH_ENABLED', 'true')
     monkeypatch.setenv('STILL_AUTH_PASSWORD', 'private-test-password')
     assert client.get('/api/health').status_code == 200

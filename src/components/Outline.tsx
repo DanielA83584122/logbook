@@ -75,9 +75,9 @@ const ComposerTarget = styled.button<{ $floating: boolean }>`
   @media(pointer: coarse) { min-height: 44px; }
 `;
 const Marker = styled.span<{ $task: boolean }>`
-  display: flex; width: 40px; min-width: 40px; height: var(--bullet-row-height); align-items: center; justify-content: center;
+  display: flex; width: 40px; min-width: 40px; height: var(--bullet-row-height); align-items: center; justify-content: center; color: var(--ink);
   &::before { content: ${({ $task }) => $task ? "''" : "'–'"}; font-size: 14px;
-    ${({ $task }) => $task ? 'width: 12px; height: 12px; border: 1.25px solid var(--checkbox); border-radius: 50%;' : ''} }
+    ${({ $task }) => $task ? 'width: 12px; height: 12px; border: 1.25px solid currentColor; border-radius: 50%;' : ''} }
   @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px; }
 `;
 const DraftItem = styled(Item)<{ $emptyTask: boolean }>`
@@ -88,7 +88,7 @@ const DraftItem = styled(Item)<{ $emptyTask: boolean }>`
 `;
 const Checkbox = styled.button<{ $checked?: boolean; $suppressPreview?: boolean }>`
   position: relative; display: flex; align-items: center; justify-content: center; width: 40px; min-width: 40px; height: var(--bullet-row-height);
-  border: 0; padding: 0; background: transparent; border-radius: 50%; color: var(--checkbox);
+  border: 0; padding: 0; background: transparent; border-radius: 50%; color: var(--ink);
   transition: transform 120ms ease-out; &:active { transform: scale(0.96); }
   &::before { content: ''; width: 12px; height: 12px; border: 1.25px solid currentColor; border-radius: 50%; transition-property: background-color, border-color; transition-duration: 120ms; transition-timing-function: ease-out; }
   &::after { content: ''; position: absolute; width: 7px; height: 7px; background: currentColor;
@@ -108,7 +108,7 @@ const Checkbox = styled.button<{ $checked?: boolean; $suppressPreview?: boolean 
 `;
 const Disclosure = styled.button<{ $open: boolean; $task: boolean; $progress: number }>`
   width: 40px; min-width: 40px; height: var(--bullet-row-height); padding: 0; border: 0;
-  display: grid; place-items: center; background: transparent; border-radius: 4px; color: var(--muted);
+  display: grid; place-items: center; background: transparent; border-radius: 4px; color: ${({ $task }) => $task ? 'var(--ink)' : 'var(--muted)'};
   &::before { content: ''; width: 5px; height: 5px; border-right: 1.25px solid currentColor; border-bottom: 1.25px solid currentColor;
     transform: rotate(${({ $open }) => $open ? '45deg' : '-45deg'}); transition: transform 140ms ease-out; }
   ${({ $task, $progress }) => $task && css`&::before { --task-progress: ${$progress * 360}deg; width: 12px; height: 12px; border: 1px solid currentColor; border-radius: 50%; transform: none; background: conic-gradient(currentColor var(--task-progress), transparent 0); transition: --task-progress 240ms ease-out; }`}
@@ -460,40 +460,24 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   });
 
   useEffect(() => {
-    const navigate = (event: Event) => {
-      const detail = (event as CustomEvent<{ key: string; id: number | null; end: boolean }>).detail;
-      if (detail.key !== key) return;
-      const row = records.current.find(item => item.id === detail.id);
-      if (row && (archived || !row.completed_at)) {
-        const offset = detail.end ? markdownText(row.content).length : 0;
-        select(row, undefined, undefined, { anchor: offset, head: offset });
-      } else if (detail.id === null) { persist(blank(records.current, true)); focus(); }
-    };
     const append = (event: Event) => { if ((event as CustomEvent<string>).detail === key) beginBullet(); };
-    window.addEventListener('still-navigate-bullet', navigate);
     window.addEventListener('still-new-bullet', append);
-    return () => { window.removeEventListener('still-navigate-bullet', navigate); window.removeEventListener('still-new-bullet', append); };
+    return () => window.removeEventListener('still-new-bullet', append);
   });
-  const boundary = (direction: 'up' | 'down' | 'backspace' | 'delete') => void run(async () => {
+  const boundary = (direction: 'backspace' | 'delete') => void run(async () => {
     const currentElement = surface.current?.querySelector('[contenteditable]')?.closest('li');
     const elements = [...document.querySelectorAll<HTMLElement>('li[data-outline-key][data-item-id]')].filter(el => el.offsetParent !== null && !el.closest('[aria-hidden="true"]') && el.dataset.done !== 'true');
     const index = elements.findIndex(el => el === currentElement);
-    const backwards = direction === 'up' || direction === 'backspace';
+    const backwards = direction === 'backspace';
     const adjacent = elements[index + (backwards ? -1 : 1)];
-    if (!adjacent || (direction === 'backspace' || direction === 'delete') && adjacent.dataset.outlineKey !== key) {
+    if (!adjacent || adjacent.dataset.outlineKey !== key) {
       if (direction === 'backspace' && !current.current.content.trim() && !current.current.tags.length) {
         await save(); persist(blank(records.current, false));
       }
       return;
     }
     const id = adjacent.dataset.itemId === 'draft' ? null : Number(adjacent.dataset.itemId);
-    if (direction === 'up' || direction === 'down') {
-      await save();
-      // Deliver after this outline releases its mutation lock.
-      setTimeout(() => window.dispatchEvent(new CustomEvent('still-navigate-bullet', { detail: { key: adjacent.dataset.outlineKey, id, end: backwards } })), 0);
-      return;
-    }
-    if (adjacent.dataset.outlineKey !== key || id === null) return;
+    if (id === null) return;
     const other = records.current.find(row => row.id === id);
     if (!other) return;
     const snapshot = current.current;
@@ -641,7 +625,10 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     $leaving={completing === draft.id && completing !== null}>
     <Row aria-busy={saving}>{renderMarker(draft.id, draft.content)}<RichTextEditor key={draft.clientId} ref={input} label={archived && draft.kind === 'tasks' && draft.parentId !== null && draft.mode === 'new' ? 'New completed subtask' : inputLabel} value={draft.content} tags={draft.tags.filter(tag => tag !== activeTag)} readOnly={false}
       onBoundary={boundary} onSelectDocument={selectDocument}
-      onChange={(content, tags) => persist({ ...current.current, content, tags: [...new Set([...tags, ...(current.current.hiddenTag && (content.trim() || tags.length) ? [current.current.hiddenTag] : [])])] })}
+      onChange={(content, tags) => {
+        const hiddenTag = current.current.hiddenTag ?? (activeTag && current.current.savedTags.includes(activeTag) ? activeTag : null);
+        persist({ ...current.current, content, tags: [...new Set([...tags, ...(hiddenTag && (content.trim() || tags.length) ? [hiddenTag] : [])])] });
+      }}
       onBlur={event => {
         const blurredClientId = draft.clientId;
         // Enter and nesting can remount the editor before its next-frame focus.
@@ -692,7 +679,10 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
           }
           void run(async () => {
             const split = input.current?.splitAtSelection();
-            if (split) persist({ ...current.current, content: split.before.content, tags: split.before.tags });
+            const hiddenTag = current.current.hiddenTag ?? (activeTag && current.current.savedTags.includes(activeTag) ? activeTag : null);
+            const keepHiddenTag = (content: string, tags: string[], value = hiddenTag) =>
+              [...new Set([...tags, ...(value && (content.trim() || tags.length) ? [value] : [])])];
+            if (split) persist({ ...current.current, content: split.before.content, tags: keepHiddenTag(split.before.content, split.before.tags) });
             const snapshot = current.current;
             let id = await save();
             // The editor stays responsive while a request is in flight. If the
@@ -706,7 +696,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
             const nextKind = parent ? entryKind(parent) : defaultKind;
             const next = id ? blank(records.current, true, snapshot.parentId, id, nextKind) : blank(records.current, composer);
             const splitDraft = split?.after.content || split?.after.tags.length
-              ? { ...next, content: split.after.content, tags: split.after.tags }
+              ? { ...next, content: split.after.content, tags: keepHiddenTag(split.after.content, split.after.tags, next.hiddenTag) }
               : next;
             if (split?.after.content || split?.after.tags.length) pendingSelection.current = { anchor: 0, head: 0 };
             // Make the next rendered row interactive immediately. Otherwise a
@@ -767,7 +757,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     const mod = event.metaKey || event.ctrlKey;
     if (mod && event.key.toLowerCase() === 'a') { event.preventDefault(); return; }
     if (mod && ['z', 'y'].includes(event.key.toLowerCase())) { event.preventDefault(); void documentUndo(event.shiftKey || event.key.toLowerCase() === 'y').catch(e => notify(errorMessage(e))); return; }
-    const format = mod ? ({ b: 'bold', i: 'italic', u: 'underline', c: event.shiftKey ? 'code' : '', x: event.shiftKey ? 'strike' : '' } as Record<string, string>)[event.key.toLowerCase()] : '';
+    const format = mod ? ({ b: 'bold', i: 'italic', u: 'underline', c: event.shiftKey ? 'code' : '' } as Record<string, string>)[event.key.toLowerCase()] : '';
     if (format) { event.preventDefault(); void run(async () => {
       await save();
       const changes = records.current.filter(item => archived || !item.completed_at).map(item => ({ kind: entryKind(item), id: item.id, content: formatMarkdown(item.content, format), tags: item.tags }));

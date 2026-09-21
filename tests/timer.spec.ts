@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 test('timer shows ticking seconds, running colors in both themes, and resets on stop', async ({ page }) => {
   await page.clock.install({ time: new Date('2026-09-16T10:02:03-07:00') });
