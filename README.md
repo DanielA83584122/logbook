@@ -26,7 +26,7 @@ npm start
 
 Then open **http://127.0.0.1:8000**. Start or restart FastAPI after building so it registers the static assets.
 
-For Render, `render.yaml` defines one Python web service, a persistent disk mounted at `/var/data`, and `STILL_DB_PATH=/var/data/still.sqlite3`. On the disk's first launch, `STILL_SEED_ON_FIRST_RUN=true` copies the bundled sample journal into that location; every later deploy leaves the runtime database untouched. Keep the service at one instance: SQLite lives on that service's persistent disk. Authentication is currently disabled with `STILL_AUTH_ENABLED=false`. To enable it later, set that variable to `true` and add a secret `STILL_AUTH_PASSWORD`; the username defaults to `still` and can be changed with `STILL_AUTH_USER`.
+For Render, `render.yaml` defines one Python web service, a persistent disk mounted at `/var/data`, and `STILL_DB_PATH=/var/data/still.sqlite3`. On the disk's first launch, `STILL_SEED_ON_FIRST_RUN=true` copies the bundled sample journal into that location; every later deploy leaves the runtime database untouched. Keep the service at one instance: SQLite lives on that service's persistent disk. Authentication is currently disabled with `STILL_AUTH_ENABLED=false`. To enable it later, set that variable to `true` and add a secret `STILL_AUTH_PASSWORD`.
 
 Vite uses the official `esbuild-wasm` package through an npm override. This avoids a native esbuild executable that is killed on this Mac. Application code still runs normally in the browser.
 
@@ -130,7 +130,7 @@ sqlite3 data/still.sqlite3 ".backup 'still-backup.sqlite3'"
 
 The download icon in focus statistics performs the same kind of consistent online backup through `GET /api/backup`. The response is a complete `.sqlite3` file that can be opened independently in SQLite, DB Browser, TablePlus, Datasette, Python, or R. Authentication protects this endpoint whenever `STILL_AUTH_ENABLED=true`.
 
-Authentication is available but disabled by default. While `STILL_AUTH_ENABLED=false`, an internet deployment is public: anyone with its URL can read and modify the journal. Render supplies HTTPS at the edge, but HTTPS alone does not restrict access.
+Authentication is available but disabled by default. With `STILL_AUTH_ENABLED=true`, the app opens behind a password gate and successful entry creates an HTTP-only session cookie; there is no username. Bearer authentication with the same password remains available for API clients. While authentication is disabled, an internet deployment is public: anyone with its URL can read and modify the journal. Render supplies HTTPS at the edge, but HTTPS alone does not restrict access.
 
 ## Agent API
 

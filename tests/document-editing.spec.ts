@@ -1,5 +1,15 @@
 import { expect, test } from './fixtures';
 
+test('new entries appear without entrance motion or blinking', async ({ page }) => {
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
+  await composer.fill('A steady arrival'); await composer.press('Enter');
+  const entry = page.getByRole('group', { name: 'A steady arrival', exact: true }).locator('xpath=ancestor::li[1]');
+  await expect(entry).toBeVisible();
+  await expect(entry).toHaveCSS('opacity', '1');
+  await expect(entry).toHaveCSS('animation-name', 'none');
+});
+
 test('midnight retires the previous day composer and leaves only today active', async ({ page }) => {
   await page.clock.install({ time: new Date('2026-09-20T23:59:59-07:00') });
   let today = '2026-09-20';

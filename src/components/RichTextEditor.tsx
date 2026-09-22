@@ -120,6 +120,15 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
     editorProps: {
       attributes: { role: 'textbox', 'aria-label': label, 'aria-multiline': 'true', spellcheck: 'true' },
       handleDOMEvents: {
+        mousedown(_view, event) {
+          if (event.button !== 0 || !(event.target instanceof Element)) return false;
+          const anchor = event.target.closest<HTMLAnchorElement>('a');
+          const href = anchor && safeHref(anchor.getAttribute('href') ?? '');
+          if (!href) return false;
+          event.preventDefault(); event.stopPropagation();
+          window.open(href, '_blank', 'noopener,noreferrer');
+          return true;
+        },
         input(view) {
           // ProseMirror normally reports this through onUpdate. Browser fake
           // clocks can defer its DOM observer, so propagate an explicit clear

@@ -1,0 +1,28 @@
+import { expect, test } from './fixtures';
+import AxeBuilder from '@axe-core/playwright';
+
+test('password-only gate blurs the journal and unlocks without a username', async ({ page }) => {
+  await page.route('**/api/auth/status', route => route.fulfill({ json: { enabled: true, authenticated: false } }));
+  await page.route('**/api/auth/login', async route => {
+    const body = route.request().postDataJSON() as { password: string };
+    await route.fulfill(body.password === 'correct horse' ? { status: 204, body: '' } : { status: 401, json: { detail: 'Wrong password.' } });
+  });
+  await page.goto('/');
+
+  const dialog = page.getByRole('dialog', { name: 'Password required', exact: true });
+  const password = dialog.getByLabel('Password', { exact: true });
+  await expect(dialog).toBeVisible();
+  await expect(password).toBeFocused();
+  await expect(page.getByTestId('auth-surface')).toHaveCSS('filter', 'blur(7px)');
+  await expect(dialog.getByText('password:', { exact: true })).toBeVisible();
+  await expect(dialog.getByText(/username/i)).toHaveCount(0);
+  expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+
+  await password.fill('wrong'); await password.press('Enter');
+  await expect(dialog.getByText('wrong password', { exact: true })).toBeVisible();
+  await password.fill('correct horse'); await password.press('Enter');
+
+  await expect(dialog).toBeHidden();
+  await expect(page.getByTestId('auth-surface')).toHaveCSS('filter', 'blur(0px)');
+  await expect(page.getByRole('textbox', { name: 'New journal bullet', exact: true })).toBeFocused();
+});

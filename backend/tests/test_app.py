@@ -58,12 +58,24 @@ def test_journal_starts_on_local_day_and_persists_notes(client):
 def test_authentication_flag_defaults_off_and_can_protect_the_api(client, monkeypatch):
     assert client.get('/api/export').status_code == 200
     assert client.delete('/api/test/reset').status_code == 404
+    assert client.get('/api/auth/status').json() == {'enabled': False, 'authenticated': True}
     monkeypatch.setenv('STILL_AUTH_ENABLED', 'true')
     monkeypatch.setenv('STILL_AUTH_PASSWORD', 'private-test-password')
     assert client.get('/api/health').status_code == 200
+    assert client.get('/api/auth/status').json() == {'enabled': True, 'authenticated': False}
     assert client.get('/api/export').status_code == 401
-    assert client.get('/api/export', auth=('still', 'wrong')).status_code == 401
-    assert client.get('/api/export', auth=('still', 'private-test-password')).status_code == 200
+    assert 'www-authenticate' not in client.get('/api/export').headers
+    assert client.post('/api/auth/login', json={'password': 'wrong'}).status_code == 401
+    response = client.post('/api/auth/login', json={'password': 'private-test-password'})
+    assert response.status_code == 204
+    assert response.headers['set-cookie'].startswith('still_session=')
+    assert 'HttpOnly' in response.headers['set-cookie']
+    assert 'SameSite=strict' in response.headers['set-cookie']
+    assert client.get('/api/auth/status').json() == {'enabled': True, 'authenticated': True}
+    assert client.get('/api/export').status_code == 200
+    assert client.post('/api/auth/logout').status_code == 204
+    assert client.get('/api/export').status_code == 401
+    assert client.get('/api/export', headers={'Authorization': 'Bearer private-test-password'}).status_code == 200
 
 
 def test_backup_download_is_a_complete_consistent_sqlite_file(client, tmp_path, monkeypatch):

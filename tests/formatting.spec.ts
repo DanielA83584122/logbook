@@ -139,6 +139,32 @@ test('link shortcut requires selected text and uses only a URL field', async ({ 
   expect((await rows(page, 'notes')).find(row => row.id === stored.id)!.content).toBe('**Updated project notes**');
 });
 
+test('clicking links opens them from saved text and the active editor', async ({ page, request }) => {
+  const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
+  await request.post('/api/notes', { data: { date: today, content: '[Open reference](https://example.com/reference)' } });
+  await page.goto('/');
+  const saved = page.getByRole('link', { name: 'Open reference', exact: true });
+  let popupPromise = page.waitForEvent('popup');
+  await saved.click();
+  let popup = await popupPromise;
+  expect(popup.url()).toContain('https://example.com/reference');
+  await popup.close();
+
+  const row = page.getByRole('group', { name: 'Open reference', exact: true });
+  await row.focus(); await row.press('Enter');
+  const editorLink = page.getByRole('textbox', { name: 'Edit note', exact: true }).getByRole('link', { name: 'Open reference', exact: true });
+  await page.evaluate(() => {
+    const target = window as typeof window & { __openedLink?: string };
+    target.__openedLink = '';
+    window.open = ((url?: string | URL) => {
+      (window as typeof window & { __openedLink?: string }).__openedLink = String(url ?? '');
+      return null;
+    }) as typeof window.open;
+  });
+  await editorLink.click();
+  await expect.poll(() => page.evaluate(() => (window as typeof window & { __openedLink?: string }).__openedLink)).toBe('https://example.com/reference');
+});
+
 test('link field prefills clipboard URLs and never overwrites typing', async ({ page }) => {
   await page.addInitScript(() => {
     let call = 0;

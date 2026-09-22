@@ -27,14 +27,12 @@ const Children = styled(List)<{ $task: boolean }>`
 `;
 const popOut = keyframes`0% { opacity: 1; transform: scale(1); } 40% { opacity: .8; transform: scale(1.012); } 100% { opacity: 0; transform: translateY(-3px) scale(.985); }`;
 const slideIn = keyframes`from { opacity: 0; transform: translateY(-7px); } to { opacity: 1; transform: translateY(0); }`;
-const settleIn = keyframes`from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); }`;
 const shiftIn = keyframes`from { opacity: .72; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); }`;
 const shiftOut = keyframes`from { opacity: .72; transform: translateX(10px); } to { opacity: 1; transform: translateX(0); }`;
-const Item = styled.li<{ $leaving?: boolean; $arriving?: boolean; $created?: boolean; $shifting?: 'in' | 'out' | null }>`
+const Item = styled.li<{ $leaving?: boolean; $arriving?: boolean; $shifting?: 'in' | 'out' | null }>`
   min-width: 0; transform-origin: left center;
   ${({ $leaving }) => $leaving && css`animation: ${popOut} 180ms ease-out both; pointer-events: none;`}
   ${({ $arriving }) => $arriving && css`animation: ${slideIn} 280ms cubic-bezier(.2,.7,.3,1) both;`}
-  ${({ $created }) => $created && css`animation: ${settleIn} 220ms ease-out both;`}
   ${({ $shifting }) => $shifting && css`animation: ${$shifting === 'in' ? shiftIn : shiftOut} 220ms cubic-bezier(.2, 0, 0, 1) both;`}
 `;
 const Row = styled.div`position: relative; display: flex; align-items: flex-start; min-height: var(--bullet-row-height); @media(pointer: coarse) { min-height: 44px; }`;
@@ -175,7 +173,6 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   const [collapsed, setCollapsed] = useState(new Set<number>());
   const [completing, setCompleting] = useState<number | null>(null);
   const [removed, setRemoved] = useState(new Set<number>());
-  const [created, setCreated] = useState(new Set<number>());
   const [suppressedPreviews, setSuppressedPreviews] = useState(new Set<number>());
   const previewSuppressedAt = useRef(new Map<number, number>());
   const [shifting, setShifting] = useState<'in' | 'out' | null>(null);
@@ -294,7 +291,6 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
         }], snapshot.clientId, snapshot.requestId);
         if (!result) throw new Error('The entry could not be saved.');
         if (snapshot.id === null) {
-          setCreated(previous => new Set([...previous, result.id]));
           setRemoved(previous => {
             if (!previous.has(result.id)) return previous;
             const next = new Set(previous); next.delete(result.id); return next;
@@ -746,8 +742,6 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     if (!group.length) return null;
     const content = group.map(item => item === null ? renderDraft(depth) : <Item key={item.id} data-outline-key={key} data-done={!!item.completed_at && !archived} data-kind={entryKind(item)} data-item-id={item.id} data-depth={depth} $leaving={completing === item.id}
       onPointerLeave={() => clearPreview(item.id)}
-      onAnimationEnd={() => { if (created.has(item.id)) setCreated(previous => { const next = new Set(previous); next.delete(item.id); return next; }); }}
-      $created={created.has(item.id)}
       $arriving={entryKind(item) === 'tasks' && (completed.has(item.id) || reopened.has(item.id))}>
       <Row>{renderMarker(item.id, item.content)}<Text $done={!!item.completed_at && !archived} $action={archived && entryKind(item) === 'tasks'} role="group" tabIndex={0} aria-label={markdownText(item.content) || (item.tags ?? []).filter(tag => tag !== activeTag).map(tag => '#' + tag).join(' ')}
         onClick={event => { if ((archived || !item.completed_at) && !(event.target as HTMLElement).closest('a')) select(item, event.currentTarget); }}

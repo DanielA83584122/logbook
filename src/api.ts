@@ -13,6 +13,7 @@ export async function api<T>(path: string, method = 'GET', body?: unknown): Prom
     throw new Error('Couldn’t connect. Your draft is safe on this device; try again in a moment.');
   }
   if (!response.ok) {
+    if (response.status === 401) window.dispatchEvent(new Event('still-auth-required'));
     const error = await response.json().catch(() => null);
     throw new Error(typeof error?.detail === 'string' ? error.detail : 'Couldn’t save that. Check the values and try again.');
   }

@@ -8,8 +8,10 @@ test.afterEach(({ page }) => { expect(errors.get(page)).toEqual([]); });
 for (const kind of ['notes', 'tasks'] as const) {
   test(`typed tags become removable inline atoms and metadata in ${kind}`, async ({ page, request }) => {
     await page.goto('/');
-    if (kind === 'tasks' && await page.getByRole('button', { name: 'Add to-do', exact: true }).count()) {
-      await page.getByRole('button', { name: 'Add to-do', exact: true }).click();
+    if (kind === 'tasks') {
+      const add = page.getByRole('button', { name: 'Add to-do', exact: true });
+      await expect(add).toBeVisible();
+      await add.click();
     }
     const composer = page.getByRole('textbox', { name: kind === 'notes' ? 'New journal bullet' : 'New to-do', exact: true });
     await composer.pressSequentially(`A tagged ${kind} #unique-${kind}`);

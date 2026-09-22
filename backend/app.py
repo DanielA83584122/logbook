@@ -1,7 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import date as CalendarDate, datetime, timedelta, timezone as dt_timezone
 from pathlib import Path
-import base64
 import hmac
 import json
 import os
@@ -52,24 +51,59 @@ def auth_enabled():
     return os.environ.get('STILL_AUTH_ENABLED', '').strip().lower() in ('1', 'true', 'yes', 'on')
 
 
+AUTH_COOKIE = 'still_session'
+PUBLIC_AUTH_PATHS = {'/api/health', '/api/auth/status', '/api/auth/login'}
+
+
+def auth_token(password):
+    return hmac.new(password.encode(), b'still-session-v1', 'sha256').hexdigest()
+
+
+def valid_auth(request, password):
+    cookie = request.cookies.get(AUTH_COOKIE, '')
+    if cookie and hmac.compare_digest(cookie, auth_token(password)):
+        return True
+    supplied = request.headers.get('authorization', '')
+    return supplied.startswith('Bearer ') and hmac.compare_digest(supplied[7:], password)
+
+
 @app.middleware('http')
 async def authenticate(request: Request, call_next):
-    if not auth_enabled() or request.url.path == '/api/health':
+    path = request.url.path
+    protected = path.startswith('/api/') or path == '/journal.md'
+    if not auth_enabled() or not protected or path in PUBLIC_AUTH_PATHS:
         return await call_next(request)
     password = os.environ.get('STILL_AUTH_PASSWORD', '')
-    supplied = request.headers.get('authorization', '')
-    valid = False
-    if supplied.startswith('Basic '):
-        try:
-            username, candidate = base64.b64decode(supplied[6:]).decode().split(':', 1)
-            valid = hmac.compare_digest(username, os.environ.get('STILL_AUTH_USER', 'still')) and hmac.compare_digest(candidate, password)
-        except (ValueError, UnicodeDecodeError):
-            pass
-    elif supplied.startswith('Bearer '):
-        valid = hmac.compare_digest(supplied[7:], password)
-    if not valid:
-        return Response(status_code=401, headers={'WWW-Authenticate': 'Basic realm="Still", charset="UTF-8"'})
+    if not valid_auth(request, password):
+        return JSONResponse({'detail': 'Password required.'}, status_code=401)
     return await call_next(request)
+
+
+class PasswordLogin(BaseModel):
+    password: str = Field(min_length=1, max_length=1000)
+
+
+@app.get('/api/auth/status')
+def authentication_status(request: Request):
+    enabled = auth_enabled()
+    return {'enabled': enabled, 'authenticated': not enabled or valid_auth(request, os.environ.get('STILL_AUTH_PASSWORD', ''))}
+
+
+@app.post('/api/auth/login', status_code=204)
+def authentication_login(body: PasswordLogin, request: Request):
+    password = os.environ.get('STILL_AUTH_PASSWORD', '')
+    if not auth_enabled() or not hmac.compare_digest(body.password, password):
+        raise HTTPException(401, 'Wrong password.')
+    response = Response(status_code=204)
+    response.set_cookie(AUTH_COOKIE, auth_token(password), httponly=True, secure=request.url.scheme == 'https', samesite='strict', path='/')
+    return response
+
+
+@app.post('/api/auth/logout', status_code=204)
+def authentication_logout():
+    response = Response(status_code=204)
+    response.delete_cookie(AUTH_COOKIE, path='/', samesite='strict')
+    return response
 
 
 class Content(BaseModel):

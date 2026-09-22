@@ -206,7 +206,7 @@ test('write, autosave, complete a to-do, use the timer, and edit sessions', asyn
   await expect(statsDialog.getByText(/1h 15m 00s total/)).toBeVisible();
   await statsDialog.getByRole('button', { name: '30 days', exact: true }).click();
   await expect(statsDialog.getByRole('button', { name: '30 days', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await statsDialog.getByText('days', { exact: true }).click();
+  await statsDialog.getByRole('button', { name: /total · \d+ sessions?$/ }).click();
   await expect(statsDialog.getByRole('list')).toBeVisible();
   await page.screenshot({ path: 'test-results/statistics-desktop.png' });
   await page.keyboard.press('Escape');

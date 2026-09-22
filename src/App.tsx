@@ -152,7 +152,7 @@ const QuietStatus = styled.div`
 `;
 const ConnectionState = styled.div`padding: 50px 0; display: grid; gap: 16px; justify-items: start; @media ${compactViewport} { display: none; }`;
 
-export default function App() {
+export default function App({ locked = false }: { locked?: boolean }) {
   const [data, setData] = useState<JournalData | null>(null);
   const [night, setNight] = useState(() => localStorage.getItem('still-theme') === 'night');
   useEffect(() => {
@@ -205,6 +205,7 @@ export default function App() {
   const logViewport = useRef<HTMLDivElement>(null);
   const notify = useCallback((text: string) => setMessage(text), []);
   useEffect(() => {
+    if (locked) return;
     const shortcut = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (event.metaKey || event.ctrlKey) {
@@ -214,7 +215,7 @@ export default function App() {
     };
     window.addEventListener('keydown', shortcut);
     return () => window.removeEventListener('keydown', shortcut);
-  }, []);
+  }, [locked]);
   useEffect(() => {
     const saveState = (event: Event) => {
       const value = (event as CustomEvent<string>).detail;
@@ -267,12 +268,13 @@ export default function App() {
   }, [refresh, notify]);
 
   useEffect(() => {
+    if (locked) return;
     void refresh(false).catch(e => setError(errorMessage(e)));
     const interval = setInterval(() => { void refresh(false).catch(e => setError(errorMessage(e))); }, 15000);
     const focus = () => { void refresh(false).catch(e => setError(errorMessage(e))); };
     window.addEventListener('focus', focus);
     return () => { clearInterval(interval); window.removeEventListener('focus', focus); };
-  }, [refresh, activeTag]);
+  }, [refresh, activeTag, locked]);
   useEffect(() => {
     if (!data?.active_session) return;
     setNow(Date.now());
@@ -280,13 +282,14 @@ export default function App() {
     return () => clearInterval(interval);
   }, [data?.active_session?.id]);
   useEffect(() => {
+    if (locked) return;
     let day = localDate();
     const interval = setInterval(() => {
       const next = localDate();
       if (next !== day) { day = next; setNow(Date.now()); void refresh(false).catch(e => setError(errorMessage(e))); }
     }, 1000);
     return () => clearInterval(interval);
-  }, [refresh]);
+  }, [refresh, locked]);
   useEffect(() => { if (!message) return; const id = setTimeout(() => setMessage(''), 6500); return () => clearTimeout(id); }, [message]);
   useEffect(() => {
     if (!data?.active_session) { sound.current.stop(); setAudible(false); }
