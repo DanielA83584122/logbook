@@ -22,11 +22,21 @@ def rebuild(output=DEFAULT_SEED_PATH):
         (2, "2026-09-20", "2026-09-20T16:00:00Z"),
     ]
     entries = [
-        # Open task trees: checked children demonstrate partial parent progress.
+        # Three open top-level tasks: one with 3 subtasks, one with 2, and one leaf.
+        # Subtasks are task rows too; parent_id is what nests them under a root task.
+        # Root 1: three subtasks (two complete, one open).
         (1, "task", None, "make the series b deck monica doesn't hate", [], None, 0, "2026-09-20T18:00:00Z", "2026-09-20T18:00:00Z", None),
         (3, "task", None, "delete slide about hooli being evil", [], 1, 0, "2026-09-20T18:03:00Z", "2026-09-20T18:33:00Z", "2026-09-20T18:33:00Z"),
-        (8, "task", None, "get laptop back from dinesh", [], 1, 1, "2026-09-20T19:03:00Z", "2026-09-20T19:33:00Z", "2026-09-20T19:33:00Z"),
-        (9, "task", None, "return erlich's smoke machine", [], 1, 2, "2026-09-20T20:00:00Z", "2026-09-20T20:00:00Z", None),
+        (4, "task", None, "fudge numbers for chart more realistically", [], 1, 1, "2026-09-20T18:34:00Z", "2026-09-20T18:48:00Z", "2026-09-20T18:48:00Z"),
+        (5, "task", None, "rehearse 'revenue a lagging indicator' speech", [], 1, 2, "2026-09-20T18:49:00Z", "2026-09-20T18:49:00Z", None),
+
+        # Root 2: two subtasks (one complete, one open).
+        (8, "task", None, "get laptop back from dinesh", [], None, 1, "2026-09-20T19:03:00Z", "2026-09-20T19:03:00Z", None),
+        (6, "task", None, "check browser history", [], 8, 0, "2026-09-20T19:05:00Z", "2026-09-20T19:18:00Z", "2026-09-20T19:18:00Z"),
+        (7, "task", None, "check for malware", [], 8, 1, "2026-09-20T19:19:00Z", "2026-09-20T19:19:00Z", None),
+
+        # Root 3: no subtasks.
+        (9, "task", None, "return erlich's smoke machine", [], None, 2, "2026-09-20T20:00:00Z", "2026-09-20T20:00:00Z", None),
 
         # September 19: notes and a completed task tree are deliberately interleaved.
         (13, "task", 1, "connect button", [], None, 1, "2026-09-19T16:11:00Z", "2026-09-19T16:44:00Z", "2026-09-19T16:44:00Z"),
