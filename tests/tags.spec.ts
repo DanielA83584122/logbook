@@ -85,7 +85,7 @@ test('arrow keys treat a freshly typed tag as one character without adding space
 });
 
 test('autocomplete cycles existing tags with arrows and keeps code literal', async ({ page, request }) => {
-  const { today } = await (await request.get('/api/journal')).json();
+  const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
   await request.post('/api/notes', { data: { date: today, content: 'Tag vocabulary', tags: ['alpha', 'alpine', 'alto', 'beta'] } });
   await page.goto('/');
   const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
@@ -158,12 +158,12 @@ test('hover tabs filter nested notes and tasks, hide the active tag, and preserv
   await page.getByRole('group', { name: 'Focus parent', exact: true }).click();
   const editor = page.getByRole('textbox', { name: 'Edit note', exact: true });
   await expect(editor.locator('[data-tag]')).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => {
-    const draft = JSON.parse(localStorage.getItem('still-draft-2026-09-21') ?? 'null');
+  await expect.poll(() => page.evaluate((date) => {
+    const draft = JSON.parse(localStorage.getItem(`still-draft-${date}`) ?? 'null');
     return draft && { hiddenTag: draft.hiddenTag, savedTags: draft.savedTags };
-  })).toEqual({ hiddenTag: 'focused', savedTags: ['focused'] });
+  }, today)).toEqual({ hiddenTag: 'focused', savedTags: ['focused'] });
   await editor.fill('Focus parent edited');
-  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('still-draft-2026-09-21') ?? 'null')?.tags)).toEqual(['focused']);
+  await expect.poll(() => page.evaluate((date) => JSON.parse(localStorage.getItem(`still-draft-${date}`) ?? 'null')?.tags, today)).toEqual(['focused']);
   await editor.press('Enter');
   await expect(page.getByRole('group', { name: 'Focus parent edited', exact: true })).toBeVisible();
   let data = await (await request.get('/api/export')).json();

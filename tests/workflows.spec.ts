@@ -18,7 +18,8 @@ test('parent progress retains completed children, finishes automatically, and ca
   await expect(page.getByRole('group', { name: 'Progress first', exact: true })).toHaveCount(1);
   await page.getByRole('button', { name: 'Complete Progress last', exact: true }).click();
   await expect(page.getByRole('group', { name: 'Progress project', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Reopen Progress project', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Reopen Progress project', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Collapse Progress project', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Undo task completion', exact: true }).click();
   await expect(page.getByRole('group', { name: 'Progress project', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Reopen Progress first', exact: true })).toBeVisible();
@@ -45,7 +46,7 @@ test('reopening a completed nested task returns its whole tree to to-dos', async
 test('a reopened root task animates into its saved position ahead of the composer', async ({ page, request }) => {
   await request.post('/api/tasks', { data: { content: 'Reopen anchor' } });
   const task = await (await request.post('/api/tasks', { data: { content: 'Reopen arrival' } })).json();
-  await request.post(`/api/tasks/${task.id}/complete`);
+  await request.post(`/api/tasks/${task.id}/complete?timezone=America/Los_Angeles`);
   await page.goto('/');
   await page.getByRole('button', { name: 'Reopen Reopen arrival', exact: true }).click();
 
@@ -84,10 +85,10 @@ test('a new subtask added in the logbook starts checked and can reopen its tree'
 });
 
 test('completed tasks share note ordering and normal logbook text editing', async ({ page, request }) => {
-  const { today } = await (await request.get('/api/journal')).json();
+  const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
   await request.post('/api/notes', { data: { date: today, content: 'Mixed before' } });
   const task = await (await request.post('/api/tasks', { data: { content: 'Mixed completed task' } })).json();
-  await request.post(`/api/tasks/${task.id}/complete`);
+  await request.post(`/api/tasks/${task.id}/complete?timezone=America/Los_Angeles`);
   await new Promise(resolve => setTimeout(resolve, 10));
   await request.post('/api/notes', { data: { date: today, content: 'Mixed after' } });
   await page.goto('/');
@@ -108,7 +109,7 @@ test('completed tasks share note ordering and normal logbook text editing', asyn
 });
 
 test('merging, grouped selection, and document undo cross bullet boundaries', async ({ page, request }) => {
-  const { today } = await (await request.get('/api/journal')).json();
+  const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
   const parent = await (await request.post('/api/notes', { data: { date: today, content: 'Navigation root' } })).json();
   await request.post('/api/notes', { data: { date: today, content: 'Alpha', parent_id: parent.id } });
   await request.post('/api/notes', { data: { date: today, content: 'Beta', parent_id: parent.id } });
@@ -181,7 +182,7 @@ test('search opens an unloaded historical match and its collapsed ancestors', as
 });
 
 test('medium layouts stay readable and selected tags stay in the hover sidebar', async ({ page, request }) => {
-  const { today } = await (await request.get('/api/journal')).json();
+  const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
   await request.post('/api/notes', { data: { date: today, content: 'Visible filter context', tags: ['visible-filter'] } });
   await page.setViewportSize({ width: 641, height: 900 }); await page.goto('/');
   expect((await page.getByRole('main').boundingBox())!.width).toBeGreaterThan(550);
@@ -232,9 +233,21 @@ test('zero days have no bars and statistics expose the averaging period', async 
   } }));
   await page.goto('/'); await page.getByRole('button', { name: 'Open focus statistics', exact: true }).click();
   const modal = page.getByRole('dialog', { name: 'Statistics', exact: true });
-  await expect(modal.getByText('30s', { exact: true }).first()).toBeVisible();
+  await expect(modal.getByText(/30s total/)).toBeVisible();
+  await expect(modal.getByText('1 of 7 days', { exact: true })).toHaveCount(0);
+  await expect(modal.getByText('days', { exact: true })).toHaveCount(0);
+  await expect(modal.getByText('sep 16', { exact: true })).toBeHidden();
+  const breakdown = modal.getByRole('button', { name: '30s total · 1 session', exact: true });
+  await breakdown.hover();
+  await expect(modal.getByText('sep 16', { exact: true })).toBeVisible();
+  await breakdown.click();
+  await page.mouse.move(5, 5);
+  await expect(modal.getByText('sep 16', { exact: true })).toBeVisible();
   const heights = await modal.getByRole('img').locator('div').evaluateAll(els => els.map(el => el.getBoundingClientRect().height));
   expect(heights.slice(0, 6)).toEqual([0, 0, 0, 0, 0, 0]); expect(heights[6]).toBeGreaterThan(100);
-  await modal.getByRole('combobox', { name: 'Average over', exact: true }).selectOption('active');
-  await expect(modal.getByText('Average daily focus', { exact: true }).locator('..').getByText('30s', { exact: true })).toBeVisible();
+  await modal.getByRole('button', { name: 'focus days', exact: true }).click();
+  await expect(modal.getByText('focused per day', { exact: true }).locator('..').getByText('30s', { exact: true })).toBeVisible();
+  const downloadPromise = page.waitForEvent('download');
+  await modal.getByRole('link', { name: 'Download SQLite backup', exact: true }).click();
+  expect((await downloadPromise).suggestedFilename()).toMatch(/^still-logbook-\d{4}-\d{2}-\d{2}\.sqlite3$/);
 });

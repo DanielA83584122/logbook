@@ -24,9 +24,9 @@ def rebuild(output=DEFAULT_SEED_PATH):
     entries = [
         # Open task trees: checked children demonstrate partial parent progress.
         (1, "task", None, "make the series b deck monica doesn't hate", [], None, 0, "2026-09-20T18:00:00Z", "2026-09-20T18:00:00Z", None),
-        (3, "task", None, "delete slide about hooli being evil", [], 1, 1, "2026-09-20T18:03:00Z", "2026-09-20T18:03:00Z", None),
-        (8, "task", None, "get laptop back from dinesh", [], None, 1, "2026-09-20T19:03:00Z", "2026-09-20T19:03:00Z", None),
-        (9, "task", None, "return erlich's smoke machine", [], None, 2, "2026-09-20T20:00:00Z", "2026-09-20T20:00:00Z", None),
+        (3, "task", None, "delete slide about hooli being evil", [], 1, 0, "2026-09-20T18:03:00Z", "2026-09-20T18:33:00Z", "2026-09-20T18:33:00Z"),
+        (8, "task", None, "get laptop back from dinesh", [], 1, 1, "2026-09-20T19:03:00Z", "2026-09-20T19:33:00Z", "2026-09-20T19:33:00Z"),
+        (9, "task", None, "return erlich's smoke machine", [], 1, 2, "2026-09-20T20:00:00Z", "2026-09-20T20:00:00Z", None),
 
         # September 19: notes and a completed task tree are deliberately interleaved.
         (13, "task", 1, "connect button", [], None, 1, "2026-09-19T16:11:00Z", "2026-09-19T16:44:00Z", "2026-09-19T16:44:00Z"),
@@ -37,6 +37,8 @@ def rebuild(output=DEFAULT_SEED_PATH):
 
         # September 20: more hierarchy, Markdown, tags, and another completed tree.
         (20, "task", 2, "get gilfoyle's satan ascii art out of `/health`", [], None, 1, "2026-09-20T17:02:00Z", "2026-09-20T17:49:00Z", "2026-09-20T17:49:00Z"),
+        (35, "task", 2, "find the endpoint that summoned it", [], 20, 0, "2026-09-20T17:08:00Z", "2026-09-20T17:21:00Z", "2026-09-20T17:21:00Z"),
+        (36, "task", 2, "replace it with a boring health response", [], 20, 1, "2026-09-20T17:22:00Z", "2026-09-20T17:48:00Z", "2026-09-20T17:48:00Z"),
         (27, "note", 2, "if we beat estimates by a lot, assume measurement bug. check headers, dict leakage, dup files", [], None, 3, "2026-09-20T18:22:00Z", "2026-09-20T18:22:00Z", None),
         (28, "note", 2, "compare [brotli](https://www.rfc-editor.org/rfc/rfc7932) and [zstd](https://www.rfc-editor.org/rfc/rfc8878)", [], 27, 0, "2026-09-20T18:24:00Z", "2026-09-20T18:24:00Z", None),
         (29, "note", 2, "dinesh logo sucks ass", [], 28, 0, "2026-09-20T18:25:00Z", "2026-09-20T18:25:00Z", None),

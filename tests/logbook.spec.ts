@@ -90,7 +90,7 @@ test('session times edit inline without exposing or changing the date', async ({
 
 for (const kind of ['notes', 'tasks'] as const) {
   test(`${kind} branches start collapsed and save an edit when folded`, async ({ page, request }) => {
-    const { today } = await (await request.get('/api/journal')).json();
+    const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
     const parent = await (await request.post(`/api/${kind}`, { data: { date: today, content: `Fold ${kind}` } })).json();
     const child = await (await request.post(`/api/${kind}`, { data: { date: today, content: `Folded child ${kind}`, parent_id: parent.id } })).json();
     await request.post(`/api/${kind}`, { data: { date: today, content: `Folded grandchild ${kind}`, parent_id: child.id } });
@@ -200,13 +200,14 @@ test('write, autosave, complete a to-do, use the timer, and edit sessions', asyn
   const start = new Date(`${day}T09:00:00-07:00`).toISOString();
   await request.post('/api/sessions', { data: { started_at: start, duration_seconds: 75 * 60 } });
   await page.getByRole('button', { name: 'Open focus statistics' }).click();
-  await expect(page.getByRole('dialog', { name: 'Statistics' })).toBeVisible();
+  const statsDialog = page.getByRole('dialog', { name: 'Statistics' });
+  await expect(statsDialog).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(1);
-  await expect(dialog.getByText('1h 15m 00s', { exact: true }).first()).toBeVisible();
-  await dialog.getByRole('button', { name: '30 days', exact: true }).click();
-  await expect(dialog.getByRole('button', { name: '30 days', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await dialog.getByText('Daily breakdown').click();
-  await expect(dialog.getByRole('table')).toBeVisible();
+  await expect(statsDialog.getByText(/1h 15m 00s total/)).toBeVisible();
+  await statsDialog.getByRole('button', { name: '30 days', exact: true }).click();
+  await expect(statsDialog.getByRole('button', { name: '30 days', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await statsDialog.getByText('days', { exact: true }).click();
+  await expect(statsDialog.getByRole('list')).toBeVisible();
   await page.screenshot({ path: 'test-results/statistics-desktop.png' });
   await page.keyboard.press('Escape');
   expect(errors).toEqual([]);
@@ -270,7 +271,7 @@ test('journal and statistics meet automated accessibility checks', async ({ page
   await page.getByRole('button', { name: 'Open focus statistics' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(1);
   await expect(page.getByRole('dialog', { name: 'Statistics' })).toBeVisible();
-  await expect(page.getByText('Average daily focus')).toBeVisible();
+  await expect(page.getByText('focused per day', { exact: true })).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCSS('opacity', '1');
   const modal = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
   expect(modal.violations).toEqual([]);

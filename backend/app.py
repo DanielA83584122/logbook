@@ -5,6 +5,8 @@ import base64
 import hmac
 import json
 import os
+import sqlite3
+import tempfile
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -12,6 +14,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
+from starlette.background import BackgroundTask
 
 from .db import connection, ensure_day, initialize
 from .tags import bullet_dict, list_tags, matching_ids, normalize_tag, normalize_tags
@@ -752,6 +755,28 @@ def export():
                 "notes": [row for row in entries if row['kind'] == 'note'],
                 "tasks": [row for row in entries if row['kind'] == 'task'],
                 "sessions": [dict(r) for r in db.execute('SELECT * FROM sessions ORDER BY id')]}
+
+
+@app.get("/api/backup", response_class=FileResponse)
+def backup_database():
+    temporary = tempfile.NamedTemporaryFile(prefix="still-backup-", suffix=".sqlite3", delete=False)
+    path = Path(temporary.name)
+    temporary.close()
+    try:
+        with connection() as source, sqlite3.connect(path) as destination:
+            source.backup(destination)
+            if destination.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise RuntimeError("SQLite could not verify the backup.")
+        return FileResponse(
+            path,
+            media_type="application/vnd.sqlite3",
+            filename=f"still-logbook-{utcnow().date().isoformat()}.sqlite3",
+            headers={"Cache-Control": "no-store"},
+            background=BackgroundTask(path.unlink, missing_ok=True),
+        )
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
 
 
 def agent_snapshot(query):

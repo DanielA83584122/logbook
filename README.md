@@ -128,6 +128,8 @@ Export a normalized snapshot with `GET /api/export`. For a complete SQLite backu
 sqlite3 data/still.sqlite3 ".backup 'still-backup.sqlite3'"
 ```
 
+The download icon in focus statistics performs the same kind of consistent online backup through `GET /api/backup`. The response is a complete `.sqlite3` file that can be opened independently in SQLite, DB Browser, TablePlus, Datasette, Python, or R. Authentication protects this endpoint whenever `STILL_AUTH_ENABLED=true`.
+
 Authentication is available but disabled by default. While `STILL_AUTH_ENABLED=false`, an internet deployment is public: anyone with its URL can read and modify the journal. Render supplies HTTPS at the edge, but HTTPS alone does not restrict access.
 
 ## Agent API
@@ -174,6 +176,7 @@ Interactive OpenAPI docs: **http://127.0.0.1:8000/docs**. Machine-readable schem
 | `GET /api/stats` | Summary metrics and daily records |
 | `GET /api/stats/daily` | Daily records suitable for joining to health data |
 | `GET /api/export` | All normalized records with schema version |
+| `GET /api/backup` | Download a consistent, complete SQLite database backup |
 
 Date-based reads and task completion accept `timezone`, defaulting to UTC. Stats accept inclusive `start` and `end` dates (up to 3,660 days). Missing bounds default to the last seven days. All durations in API responses are seconds; the interface formats them in hours, minutes, and seconds.
 

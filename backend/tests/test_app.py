@@ -66,6 +66,29 @@ def test_authentication_flag_defaults_off_and_can_protect_the_api(client, monkey
     assert client.get('/api/export', auth=('still', 'private-test-password')).status_code == 200
 
 
+def test_backup_download_is_a_complete_consistent_sqlite_file(client, tmp_path, monkeypatch):
+    note = client.post('/api/notes', json={'date': '2026-09-16', 'content': 'Back me up'}).json()
+    client.post('/api/sessions', json={'started_at': '2026-09-16T08:00:00Z', 'duration_seconds': 90})
+    response = client.get('/api/backup')
+    assert response.status_code == 200
+    assert response.headers['content-type'] == 'application/vnd.sqlite3'
+    assert response.headers['cache-control'] == 'no-store'
+    assert 'still-logbook-2026-09-16.sqlite3' in response.headers['content-disposition']
+    assert response.content.startswith(b'SQLite format 3\0')
+
+    downloaded = tmp_path / 'downloaded.sqlite3'
+    downloaded.write_bytes(response.content)
+    with sqlite3.connect(downloaded) as db:
+        assert db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 8
+        assert db.execute('SELECT content FROM entries WHERE id = ?', (note['id'],)).fetchone()[0] == 'Back me up'
+        assert db.execute('SELECT COUNT(*) FROM sessions').fetchone()[0] == 1
+
+    monkeypatch.setenv('STILL_AUTH_ENABLED', 'true')
+    monkeypatch.setenv('STILL_AUTH_PASSWORD', 'private-test-password')
+    assert client.get('/api/backup').status_code == 401
+
+
 def test_task_completion_is_atomic_and_idempotent(client):
     task = client.post("/api/tasks", json={"content": "overdue trainings"}).json()
     for _ in range(2):

@@ -172,6 +172,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     ({ ...fresh(rows, active, draftKind, parentId, afterId), hiddenTag: activeTag });
   const [expanded, setExpanded] = useState(new Set<number>());
   const [previewed, setPreviewed] = useState(new Set<number>());
+  const [collapsed, setCollapsed] = useState(new Set<number>());
   const [completing, setCompleting] = useState<number | null>(null);
   const [removed, setRemoved] = useState(new Set<number>());
   const [created, setCreated] = useState(new Set<number>());
@@ -182,6 +183,13 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   const selectionActive = useRef(false);
   const surface = useRef<HTMLDivElement>(null);
   const key = scope ? `still-outline-${kind}-${scope}` : kind === 'tasks' ? 'still-outline-tasks' : `still-draft-${day}`;
+  useEffect(() => {
+    const completedIds = new Set(items.filter(row => entryKind(row) === 'tasks' && !!row.completed_at).map(row => row.id));
+    setCollapsed(previous => {
+      const next = new Set([...previous].filter(id => completedIds.has(id)));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [items]);
   const [draft, setDraft] = useState<Draft>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(key) ?? 'null') as Partial<Draft> | null;
@@ -570,7 +578,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   };
   const isExpanded = (id: number) => {
     const row = items.find(item => item.id === id);
-    return (!!row && entryKind(row) === 'tasks' && !!row.completed_at) || expanded.has(id) || previewed.has(id) || draftInside(id);
+    return (!!row && entryKind(row) === 'tasks' && !!row.completed_at && !collapsed.has(id)) || expanded.has(id) || previewed.has(id) || draftInside(id);
   };
   const renderToggle = (id: number | null, content: string) => {
     const row = items.find(item => item.id === id);
@@ -579,10 +587,10 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     const rowKind = row ? entryKind(row) : draft.kind;
     if (id === null || !childCount && !(draft.active && draft.parentId === id && (draft.content.trim() || draft.tags.length))) return null;
     const open = isExpanded(id);
-    const pinned = expanded.has(id) || draftInside(id);
-    if (rowKind === 'tasks' && row?.completed_at) return null;
-    return <Disclosure type="button" data-focus-chrome $open={open} $task={rowKind === 'tasks'} $progress={childCount ? doneCount / childCount : 0} disabled={busy} aria-expanded={open}
-      aria-description={rowKind === 'tasks' ? `${doneCount} of ${childCount} children completed` : undefined}
+    const pinned = expanded.has(id) || draftInside(id) || (!!row?.completed_at && rowKind === 'tasks' && !collapsed.has(id));
+    const progressTask = rowKind === 'tasks' && !row?.completed_at;
+    return <Disclosure type="button" data-focus-chrome $open={open} $task={progressTask} $progress={childCount ? doneCount / childCount : 0} disabled={busy} aria-expanded={open}
+      aria-description={progressTask ? `${doneCount} of ${childCount} children completed` : undefined}
       aria-label={`${pinned ? 'Collapse' : 'Expand'} ${markdownText(content) || 'bullet'}`}
       onPointerEnter={event => {
         if (!pinned && event.pointerType !== 'touch') setPreviewed(previous => previous.has(id) ? previous : new Set([...previous, id]));
@@ -593,6 +601,13 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
           clearPreview(id);
         }
         setExpanded(previous => { const next = new Set(previous); if (pinned) next.delete(id); else next.add(id); return next; });
+        if (row?.completed_at && rowKind === 'tasks') {
+          setCollapsed(previous => {
+            const next = new Set(previous);
+            if (pinned) next.add(id); else next.delete(id);
+            return next;
+          });
+        }
       }, false)} />;
   };
 
