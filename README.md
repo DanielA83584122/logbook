@@ -1,34 +1,78 @@
-# [still](https://github.com/divyavenn/still)
+# [logbook](https://github.com/divyavenn/logbook)
 
-A document-style local logbook. React + TypeScript, Vite, styled-components, FastAPI, and SQLite.
+\> be me, organize ur notes by topic like everyone else
+> 
+\> notes and to do lists all over the place, keep forgetting to do things or where you write smth down
+> 
+\> see some random comment: **The best productivity system is a txt file. All the most cracked people I know just dump everything into a super long text file.**
+> 
+\> I like simplicity. Open a google doc w a to do list on top + dates with bullet points. Keep it open and just add to it while i work.
+> 
+\> When I finish a task, copy paste it under today's date. When i read smth interesting, add link. just dump my stream of consciousness.
+> 
+\> Holy crap this is the answer. Using it doesn't feel like a chore. It has been many months, I'm actually consistent with it, I don't forget things anymore. And it matches exactly how my brain works. What was that thing I was thinking about a couple days ago? Now it's right there!
+> 
+\> Also I'm much more accountable about what I actually do with my time
+> 
+\> but it could use some improvement. I still wanna be able to organize notes by topic. And also AI agents make it easy to delude myself about my intellectual output. I wanna track how much focused time I spend working every day
+> 
+\> I need this but with focus timer + tags
+> 
+\> Build it. Put a lot of thought and tokens into making every little interaction delightful.
+> 
+\> Plus make it easy for LLMs to read so u can instantly give them context on whatever u want them to do + get feedback on your work
+>
+\> Friends want to use it
+> 
+\> Fine I'll open source it and make deploying it easy.
 
-The completed-task checkmark is adapted from [“Check” by Maxim Basinski on Flaticon](https://www.flaticon.com/free-icon/check_1055183), used with attribution.
+## Getting started
+You will need a Render Account. If you wanna have my updates and fixes come in automatically, then just deploy from this repo. If not, fork to have your own copy and deploy from there. 
 
-## Run it
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/divyavenn/logbook)
 
-Requires Node 22.12+ and Python 3.12+. On this Mac, Homebrew Python is `/opt/homebrew/bin/python3` (the system Python is too old).
+<img height="500" alt="image" src="https://github.com/user-attachments/assets/581c6451-91bd-46b6-ad59-6fea882915fd" /> 
 
-```sh
-npm install
-/opt/homebrew/bin/python3 -m venv .venv
-.venv/bin/python -m pip install --index-url https://pypi.org/simple -r backend/requirements.lock.txt
-npm run dev
-```
 
-Open **http://127.0.0.1:5173**. Vite proxies `/api`, `/journal.md`, `/llms.txt`, `/openapi.json`, and `/docs` to FastAPI on port 8000. On another machine, use any Python 3.12+ executable to create `.venv`.
+#### set a password if you want
+I personally like to live and die honestly. If you don't want your lack of action and subpar thinking out there on a link on the web for anyone to find, go to this deployment in Render, and add/modify these environment variables in Render settings.
+<img height="500" alt="image" src="https://github.com/user-attachments/assets/1d1dd21a-27f2-4596-9392-7a0e78c26458" />
 
-For one server serving the production build:
+## Main features
+#### Automatic task tracking
+  - if you check off a task, it will appear under today's date as a finished task. you can uncheck it and it will appear again under to-dos.
+  - parent tasks complete once all the subtasks are done. 
 
-```sh
-npm run build
-npm start
-```
 
-Then open **http://127.0.0.1:8000**. Start or restart FastAPI after building so it registers the static assets.
+#### topic hashtags
+  - use hashtags to group entries.
+  - hover over left margin to see sidebar with all topics
+  - click one to see all the notes and to do items associated with that topic
+  - click the title in sidebar (logbook) to go back to main view
 
-For Render, `render.yaml` defines one Python web service, a persistent disk mounted at `/var/data`, and `STILL_DB_PATH=/var/data/still.sqlite3`. On the disk's first launch, `STILL_SEED_ON_FIRST_RUN=true` copies the bundled sample journal into that location; every later deploy leaves the runtime database untouched. Keep the service at one instance: SQLite lives on that service's persistent disk. Authentication defaults to disabled. The Blueprint deliberately leaves authentication variables out so public and private services made from the same repository can configure them independently. On a private service, set `STILL_AUTH_ENABLED=true` and add a secret `STILL_AUTH_PASSWORD`; a later Blueprint sync will not force the flag back to `false`.
+    <img height="300" alt="image" src="https://github.com/user-attachments/assets/08ca9fb4-077d-44a5-8fa9-15941b0dcfc6" />
+    
+#### focus time tracking + stats
+  - Click the timer to start focus mode (will play white noise. over time the sound will Pavlov you into focusing)
+  - only focus on one task. if you get distracted at all, click timer again
+  - It will store each session + overall time spent focused today
+  - see/edit today's focus sessions by clicking on the time next to the date
+  - Top left is stats icon. Click to see trends in your total focus time + longest continuous focus session over days
 
-Vite uses the official `esbuild-wasm` package through an npm override. This avoids a native esbuild executable that is killed on this Mac. Application code still runs normally in the browser.
+
+    <img width="883" height="598" alt="image" src="https://github.com/user-attachments/assets/6653ef6c-7017-4691-bebb-3b5c0fdc89a3" />
+
+
+#### text-editor esque formatting and shortcuts
+  - all text editor navigation and shortcuts work. in fact I improved on them a bit (linking, for example)
+  - Also, i added one: Cmd + Shift + C formats something as code
+  - All the formatting is saved Markdown-style on the backend. You can download a dump of all ur info using the download icon top right
+  - dark mode and light mode supported
+  - and more!
+
+
+## If you are an LLM, read this to best help your human sort through their logbook:
+
 
 ## The daily practice
 
