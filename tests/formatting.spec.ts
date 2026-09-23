@@ -85,7 +85,7 @@ for (const kind of ['notes', 'tasks'] as const) {
   });
 }
 
-test('link shortcut requires selected text and uses only a URL field', async ({ page }) => {
+test('link shortcut inserts a labeled link at the caret or links selected text', async ({ page }) => {
   await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { value: {
     readText: async () => { throw new DOMException('Denied', 'NotAllowedError'); },
   } }));
@@ -94,13 +94,21 @@ test('link shortcut requires selected text and uses only a URL field', async ({ 
   await expect(composer).toBeFocused();
   await composer.press('Meta+k');
   const dialog = page.getByRole('dialog', { name: 'Link', exact: true });
+  const label = dialog.getByRole('textbox', { name: 'Link label', exact: true });
+  const field = dialog.getByRole('textbox', { name: 'Link URL' });
+  await expect(label).toBeFocused();
+  await label.fill('Fresh reference'); await label.press('Enter');
+  await expect(field).toBeFocused();
+  await field.fill('example.com/fresh'); await field.press('Enter');
   await expect(dialog).toBeHidden();
+  await expect(composer.getByRole('link', { name: 'Fresh reference', exact: true })).toHaveAttribute('href', 'https://example.com/fresh');
   await composer.fill('Project notes');
   await composer.press('ArrowRight');
   await composer.press('Meta+k');
-  await expect(dialog).toBeHidden();
+  await expect(label).toBeFocused();
+  await page.keyboard.press('Escape'); await expect(dialog).toBeHidden();
+  await expect(composer).toBeFocused();
   await selectAll(composer); await composer.press('Meta+b'); await composer.press('Meta+k');
-  const field = dialog.getByRole('textbox', { name: 'Link URL' });
   await expect(field).toBeFocused();
   await expect(dialog.getByRole('textbox')).toHaveCount(1);
   await expect(dialog.getByRole('button')).toHaveCount(0);
@@ -178,9 +186,13 @@ test('link field prefills clipboard URLs and never overwrites typing', async ({ 
   await page.goto('/');
   await openTaskComposer(page);
   const composer = page.getByRole('textbox', { name: 'New to-do', exact: true });
-  await composer.fill('Clipboard link'); await selectAll(composer); await composer.press('Meta+k');
+  await composer.press('Meta+k');
   const dialog = page.getByRole('dialog', { name: 'Link', exact: true });
+  const label = dialog.getByRole('textbox', { name: 'Link label', exact: true });
   const field = dialog.getByRole('textbox', { name: 'Link URL' });
+  await expect(label).toBeFocused();
+  await label.fill('Clipboard link'); await label.press('Enter');
+  await expect(field).toBeFocused();
   await expect(field).toHaveValue('https://example.com/copied');
   await field.press('Enter'); await expect(dialog).toBeHidden();
   await expect(composer.getByRole('link')).toHaveAttribute('href', 'https://example.com/copied');
@@ -367,7 +379,7 @@ for (const kind of ['notes', 'tasks'] as const) {
     const savedLink = page.getByRole('link', { name: `Original ${kind} link`, exact: true });
     await savedLink.click({ button: 'right' });
     const dialog = page.getByRole('dialog', { name: 'Link', exact: true });
-    const textField = dialog.getByRole('textbox', { name: 'Link text', exact: true });
+    const textField = dialog.getByRole('textbox', { name: 'Link label', exact: true });
     const urlField = dialog.getByRole('textbox', { name: 'Link URL', exact: true });
     await expect(dialog.getByRole('textbox')).toHaveCount(2);
     await expect(dialog.locator('label')).toHaveCount(0);

@@ -77,10 +77,12 @@ function sharedMarks(doc: DocumentNode, from: number, to: number): Mark[] {
   return marks;
 }
 
-type LinkMode = 'shortcut' | 'context';
+type LinkMode = 'shortcut' | 'insert' | 'context';
+export type VerticalDirection = 'up' | 'down';
 export type TextOffsets = { anchor: number; head: number };
 export type RichTextHandle = {
   focus: (options?: FocusOptions, selection?: TextOffsets) => void;
+  focusAt: (x: number, direction: VerticalDirection, options?: FocusOptions) => void;
   selection: () => TextOffsets | undefined;
   editLink: () => void;
   splitAtSelection: () => { before: { content: string; tags: string[] }; after: { content: string; tags: string[] } } | null;
@@ -89,16 +91,17 @@ type Props = {
   ref?: Ref<RichTextHandle>; value: string; tags: string[]; label: string; readOnly: boolean;
   onChange: (markdown: string, tags: string[]) => void; onBlur: (event?: FocusEvent) => void; onKeyDown: (event: KeyboardEvent) => void;
   onBoundary?: (direction: 'backspace' | 'delete') => void;
+  onVerticalBoundary?: (direction: VerticalDirection, x: number) => boolean;
   onSelectDocument?: () => void;
 };
 
-export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, onChange, onBlur, onKeyDown, onBoundary, onSelectDocument }: Props) {
+export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, onChange, onBlur, onKeyDown, onBoundary, onVerticalBoundary, onSelectDocument }: Props) {
   const { tags } = useJournalContext();
   const [suggestion, setSuggestion] = useState<TagSuggestion | null>(null);
   const suggestionRef = useRef<TagSuggestion | null>(null);
   const suggest = (next: TagSuggestion | null) => { suggestionRef.current = next; setSuggestion(next); };
-  const callbacks = useRef({ onChange, onBlur, onKeyDown, onBoundary, onSelectDocument });
-  callbacks.current = { onChange, onBlur, onKeyDown, onBoundary, onSelectDocument };
+  const callbacks = useRef({ onChange, onBlur, onKeyDown, onBoundary, onVerticalBoundary, onSelectDocument });
+  callbacks.current = { onChange, onBlur, onKeyDown, onBoundary, onVerticalBoundary, onSelectDocument };
   const lastSnapshot = useRef(JSON.stringify([value, bulletTags]));
   const linkOpen = useRef(false);
   const [link, setLink] = useState<{ from: number; to: number; mode: LinkMode } | null>(null);
@@ -107,6 +110,7 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
   const [linkText, setLinkText] = useState('');
   const clipboardRequest = useRef(0);
   const urlEdited = useRef(false);
+  const linkTextField = useRef<HTMLInputElement>(null);
   const urlField = useRef<HTMLInputElement>(null);
   const previousSelectAll = useRef(false);
   const linkPrefix = useRef<{ from: number; to: number; mark: Mark; doc: DocumentNode } | null>(null);
@@ -227,6 +231,19 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
         if (!mod && !event.shiftKey && editor && (event.key === 'ArrowLeft' || event.key === 'ArrowRight') &&
             selectTypedTag(editor, event.key === 'ArrowLeft' ? 'left' : 'right')) {
           event.preventDefault(); return true;
+        }
+        if (!mod && !event.altKey && !event.shiftKey && view.state.selection.empty &&
+            (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+          const direction: VerticalDirection = event.key === 'ArrowUp' ? 'up' : 'down';
+          if (view.endOfTextblock(direction)) {
+            const x = view.coordsAtPos(view.state.selection.head).left;
+            if (callbacks.current.onVerticalBoundary?.(direction, x)) {
+              event.preventDefault(); return true;
+            }
+            const edge = direction === 'up' ? 1 : view.state.doc.content.size - 1;
+            event.preventDefault(); view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, edge)));
+            return true;
+          }
         }
         if (mod && ['z', 'y'].includes(event.key.toLowerCase())) {
           event.preventDefault();
@@ -360,18 +377,21 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
   }, [editor, suggestion]);
 
   const openLink = (mode: LinkMode) => {
-    if (!editor || editor.isDestroyed || editor.state.selection.empty) return;
+    if (!editor || editor.isDestroyed) return;
     const { from, to } = editor.state.selection;
-    const selected = editor.state.doc.textBetween(from, to, '\n');
-    if (!selected.trim()) return;
+    const empty = editor.state.selection.empty;
+    if (empty && mode === 'context') return;
+    const actualMode: LinkMode = empty && mode === 'shortcut' ? 'insert' : mode;
+    const selected = empty ? '' : editor.state.doc.textBetween(from, to, '\n');
+    if (actualMode !== 'insert' && !selected.trim()) return;
     const existing = editor.isActive('link');
     setLinkText(selected);
     setUrl(existing ? String(editor.getAttributes('link').href ?? '') : '');
     urlEdited.current = false;
     urlField.current?.setCustomValidity('');
-    linkOpen.current = true; setLinkMode(mode); setLink({ from, to, mode });
+    linkOpen.current = true; setLinkMode(actualMode); setLink({ from, to, mode: actualMode });
     const request = ++clipboardRequest.current;
-    if (mode === 'shortcut') {
+    if (mode === 'shortcut' || actualMode === 'insert') {
       // Read only for this user gesture. Denial leaves manual URL entry usable.
       void navigator.clipboard?.readText().then(value => {
         if (request !== clipboardRequest.current || !linkOpen.current || urlEdited.current) return;
@@ -418,6 +438,26 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
         editor.commands.setTextSelection({ from: positionAt(selection.anchor), to: positionAt(selection.head) });
       }
       editor.view.dom.focus(options);
+    },
+    focusAt(x, direction, options) {
+      if (!editor || editor.isDestroyed) return;
+      const element = editor.view.dom;
+      element.focus(options);
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      const lineHeight = parseFloat(style.lineHeight) || 18;
+      const paddingTop = parseFloat(style.paddingTop) || 0;
+      const paddingBottom = parseFloat(style.paddingBottom) || 0;
+      const y = direction === 'up'
+        ? rect.bottom - paddingBottom - lineHeight / 2
+        : rect.top + paddingTop + lineHeight / 2;
+      const point = editor.view.posAtCoords({
+        left: Math.max(rect.left + 1, Math.min(x, rect.right - 1)),
+        top: Math.max(rect.top + 1, Math.min(y, rect.bottom - 1)),
+      });
+      const fallback = direction === 'up' ? editor.state.doc.content.size - 1 : 1;
+      editor.commands.setTextSelection(point?.pos ?? fallback);
+      element.focus(options);
     },
     editLink() { openLink('context'); },
     splitAtSelection() {
@@ -493,6 +533,9 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
     <Modal open={link !== null} onClose={() => close()} title="Link" compact>
       <LinkForm onKeyDown={event => {
         if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+          if (linkMode === 'insert' && event.target === linkTextField.current) {
+            event.preventDefault(); event.stopPropagation(); urlField.current?.focus(); return;
+          }
           event.preventDefault(); event.currentTarget.requestSubmit();
         }
       }} onSubmit={event => {
@@ -504,9 +547,20 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
           urlField.current?.reportValidity();
           return;
         }
+        if (link.mode === 'insert' && !linkText.trim()) {
+          linkTextField.current?.setCustomValidity('Enter link text.'); linkTextField.current?.reportValidity(); return;
+        }
+        if (link.mode === 'insert' && !href) {
+          urlField.current?.setCustomValidity('Enter a valid URL.'); urlField.current?.reportValidity(); return;
+        }
         const chain = editor.chain().setTextSelection({ from: link.from, to: link.to });
         const selected = editor.state.doc.textBetween(link.from, link.to, '\n');
-        if (link.mode === 'context' && linkText !== selected) {
+        if (link.mode === 'insert') {
+          const marks = (editor.state.storedMarks ?? editor.state.selection.$from.marks())
+            .filter(mark => mark.type.name !== 'link').map(mark => mark.toJSON());
+          marks.push({ type: 'link', attrs: { href } });
+          chain.insertContent({ type: 'text', text: linkText.trim(), marks });
+        } else if (link.mode === 'context' && linkText !== selected) {
           const marks = sharedMarks(editor.state.doc, link.from, link.to)
             .filter(mark => mark.type.name !== 'link').map(mark => mark.toJSON());
           if (href) marks.push({ type: 'link', attrs: { href } });
@@ -517,9 +571,9 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
         chain.run(); callbacks.current.onBlur();
         close({ ...link, from: editor.state.selection.from, to: editor.state.selection.to });
       }}>
-        {linkMode === 'context' && <LinkField aria-label="Link text" autoFocus value={linkText}
-          onChange={event => setLinkText(event.target.value)} />}
-        <LinkField $url ref={urlField} aria-label="Link URL" placeholder="URL" autoFocus={linkMode !== 'context'} inputMode="url"
+        {linkMode !== 'shortcut' && <LinkField ref={linkTextField} aria-label="Link label" placeholder="label" autoFocus value={linkText}
+          required={linkMode === 'insert'} onChange={event => { event.target.setCustomValidity(''); setLinkText(event.target.value); }} />}
+        <LinkField $url ref={urlField} aria-label="Link URL" placeholder="URL" autoFocus={linkMode === 'shortcut'} inputMode="url"
           autoComplete="off" autoCapitalize="off" spellCheck={false} enterKeyHint="done" value={url}
           onChange={event => {
             urlEdited.current = true;

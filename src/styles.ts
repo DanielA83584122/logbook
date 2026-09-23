@@ -38,8 +38,7 @@ export const GlobalStyle = createGlobalStyle`
   button { -webkit-tap-highlight-color: transparent; }
   button:not(:disabled), summary { cursor: pointer; }
   button:disabled { cursor: wait; opacity: .5; }
-  button, input, textarea, select, a { outline-offset: 4px; }
-  :focus-visible { outline: 2px solid var(--focus); }
+  :focus, :focus-visible { outline: none; }
   ::selection { background: var(--selection); }
   h1, h2, h3, p { margin: 0; }
   h1, h2, h3 { text-wrap: balance; font-weight: 400; }

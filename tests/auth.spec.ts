@@ -14,8 +14,13 @@ test('password-only gate blurs the journal and unlocks without a username', asyn
   await expect(dialog).toBeVisible();
   await expect(password).toBeFocused();
   await expect(page.getByTestId('auth-surface')).toHaveCSS('filter', 'blur(7px)');
-  await expect(dialog.getByText('password:', { exact: true })).toBeVisible();
+  const label = dialog.getByText('password', { exact: true });
+  await expect(label).toBeVisible();
   await expect(dialog.getByText(/username/i)).toHaveCount(0);
+  const labelBox = (await label.boundingBox())!, inputBox = (await password.boundingBox())!;
+  expect(Math.abs(labelBox.y + labelBox.height - (inputBox.y + inputBox.height))).toBeLessThanOrEqual(1);
+  await expect(dialog.locator('form')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(dialog.locator('form')).toHaveCSS('box-shadow', 'none');
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
 
   await password.fill('wrong'); await password.press('Enter');

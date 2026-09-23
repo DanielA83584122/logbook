@@ -36,7 +36,7 @@ function Root() {
     setState('ready'); return true;
   }, []);
   const locked = state !== 'ready';
-  return <><AppSurface data-testid="auth-surface" $locked={locked} aria-hidden={locked || undefined}><App locked={locked} /></AppSurface>
+  return <><AppSurface data-testid="auth-surface" $locked={locked} aria-hidden={locked || undefined} inert={locked || undefined}><App locked={locked} /></AppSurface>
     {state === 'locked' && <PasswordGate authenticate={authenticate} />}</>;
 }
 

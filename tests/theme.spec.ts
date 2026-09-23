@@ -10,6 +10,17 @@ async function checkAccessibility(page: Page) {
   expect((await audit.analyze()).violations).toEqual([]);
 }
 
+test('keyboard focus does not draw browser outlines', async ({ page }) => {
+  await page.goto('/');
+  const timer = page.getByRole('button', { name: 'Start focus timer', exact: true });
+  await timer.focus();
+  await expect(timer).toHaveCSS('outline-style', 'none');
+  await page.keyboard.press('Meta+f');
+  const search = page.getByRole('dialog', { name: 'Search journal', exact: true }).getByRole('textbox');
+  await expect(search).toBeFocused();
+  await expect(search).toHaveCSS('outline-style', 'none');
+});
+
 test('reference typography, wider margins and persistent night mode', async ({ page }) => {
   await page.route('**/api/journal?*', route => route.fulfill({ json: {
     today: '2026-09-16', server_time: new Date().toISOString(), active_session: null, next_cursor: null,
@@ -83,7 +94,7 @@ test('reference typography, wider margins and persistent night mode', async ({ p
   const checkLinkEditor = async (textColor: string, urlColor: string) => {
     await page.getByRole('link', { name: 'project notes', exact: true }).click({ button: 'right' });
     const dialog = page.getByRole('dialog', { name: 'Link', exact: true });
-    const textField = dialog.getByRole('textbox', { name: 'Link text', exact: true });
+    const textField = dialog.getByRole('textbox', { name: 'Link label', exact: true });
     const urlField = dialog.getByRole('textbox', { name: 'Link URL', exact: true });
     await expect(textField).toHaveCSS('color', textColor);
     await expect(urlField).toHaveCSS('color', urlColor);

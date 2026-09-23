@@ -89,6 +89,18 @@ def test_batch_delete_undo_restores_parent_child_order(client):
     assert client.get('/api/export').json()['notes'] == []
 
 
+def test_batch_revisions_are_checked_before_structural_changes(client):
+    first = create(client, 'notes', 'First')
+    second = create(client, 'notes', 'Second')
+    create(client, 'notes', 'Keep')
+    result = batch(client, [
+        {'kind': 'notes', 'id': first['id'], 'delete': True, 'expected_revision': first['revision']},
+        {'kind': 'notes', 'id': second['id'], 'delete': True, 'expected_revision': second['revision']},
+    ])
+    assert result['items'] == [None, None]
+    assert [row['content'] for row in client.get('/api/export').json()['notes']] == ['Keep']
+
+
 def test_history_conflict_and_batch_failure_are_atomic(client):
     first = create(client, 'notes', 'First')
     result = batch(client, [{'kind': 'notes', 'id': first['id'], 'content': 'Edited'}])

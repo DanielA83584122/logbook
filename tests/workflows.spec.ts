@@ -19,7 +19,10 @@ test('parent progress retains completed children, finishes automatically, and ca
   await page.getByRole('button', { name: 'Complete Progress last', exact: true }).click();
   await expect(page.getByRole('group', { name: 'Progress project', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Reopen Progress project', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Collapse Progress project', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Expand Progress project', exact: true })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Progress first', exact: true })).toBeHidden();
+  await page.getByRole('button', { name: 'Expand Progress project', exact: true }).click();
+  await expect(page.getByRole('group', { name: 'Progress first', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Undo task completion', exact: true }).click();
   await expect(page.getByRole('group', { name: 'Progress project', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Reopen Progress first', exact: true })).toBeVisible();
@@ -35,6 +38,8 @@ test('reopening a completed nested task returns its whole tree to to-dos', async
   await request.post(`/api/tasks/${first.id}/complete`);
   await request.post(`/api/tasks/${second.id}/complete`);
   await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Expand Return project', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Expand Return project', exact: true }).click();
   await page.getByRole('button', { name: 'Reopen Return first', exact: true }).click();
   const todos = page.getByRole('region', { name: 'to do', exact: true });
   await expect(todos.getByRole('group', { name: 'Return project', exact: true })).toBeVisible();
@@ -153,6 +158,43 @@ test('merging, grouped selection, and document undo cross bullet boundaries', as
   await expect(page.getByRole('group', { name: 'Alpha', exact: true }).locator('strong')).toHaveText('Alpha');
   await expect(page.getByRole('group', { name: 'Beta', exact: true }).locator('strong')).toHaveText('Beta');
 });
+
+for (const key of ['Backspace', 'Delete'] as const) {
+  test(`${key} deletes entries spanned by a document selection`, async ({ page, request }) => {
+    const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
+    const first = await (await request.post('/api/notes', { data: { date: today, content: `${key} selected first` } })).json();
+    const second = await (await request.post('/api/notes', { data: { date: today, content: `${key} selected second` } })).json();
+    await request.post('/api/notes', { data: { date: today, content: `${key} stays` } });
+    await page.goto('/');
+    const firstRow = page.getByRole('group', { name: `${key} selected first`, exact: true });
+    const secondRow = page.getByRole('group', { name: `${key} selected second`, exact: true });
+    await secondRow.focus();
+    await page.evaluate(({ firstId, secondId }) => {
+      const first = document.querySelector(`[data-item-id="${firstId}"] [role="group"]`)!;
+      const second = document.querySelector(`[data-item-id="${secondId}"] [role="group"]`)!;
+      const range = document.createRange(); range.setStartBefore(first); range.setEndAfter(second);
+      const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+    }, { firstId: first.id, secondId: second.id });
+    expect(await page.evaluate(() => {
+      const selection = getSelection();
+      if (!selection?.rangeCount) return { collapsed: true, entries: [] };
+      const range = selection.getRangeAt(0);
+      return {
+        collapsed: selection.isCollapsed,
+        entries: [...document.querySelectorAll<HTMLElement>('[data-item-id]')]
+          .filter(item => {
+            const content = item.querySelector(':scope > div > [role="group"]');
+            return content && range.intersectsNode(content);
+          }).map(item => item.dataset.itemId),
+      };
+    })).toEqual({ collapsed: false, entries: [String(first.id), String(second.id)] });
+    await page.keyboard.press(key);
+    await expect(firstRow).toHaveCount(0); await expect(secondRow).toHaveCount(0);
+    await expect(page.getByRole('group', { name: `${key} stays`, exact: true })).toBeVisible();
+    const data = await (await request.get('/api/export')).json();
+    expect(data.notes.some((item: { id: number }) => item.id === first.id || item.id === second.id)).toBe(false);
+  });
+}
 
 test('an inline tag stays at its typed position without leaving a gap in the text', async ({ page, request }) => {
   await page.goto('/');

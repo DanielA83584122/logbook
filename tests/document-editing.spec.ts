@@ -61,6 +61,65 @@ test('retired entry-jump shortcuts leave the active editor in place', async ({ p
   await expect(editor).toHaveText('Stay in this entry');
 });
 
+test('vertical arrows keep their visual column across entries and stop at document edges', async ({ page, request }) => {
+  const { today } = await (await request.get('/api/journal')).json();
+  const first = await (await request.post('/api/notes', { data: { date: today, content: 'abcdefghij' } })).json();
+  const second = await (await request.post('/api/notes', { data: { date: today, content: 'abcdefghij', after_id: first.id } })).json();
+  const third = await (await request.post('/api/notes', { data: { date: today, content: 'abcdefghij', after_id: second.id } })).json();
+  await page.goto('/');
+  const saved = (id: number) => page.locator(`[data-kind="notes"][data-item-id="${id}"] [role="group"]`).first();
+  const editor = page.getByRole('textbox', { name: 'Edit note', exact: true });
+  const setCaret = async (offset: number) => {
+    await editor.evaluate((element, value) => {
+      const node = document.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode()!;
+      const range = document.createRange(); range.setStart(node, value); range.collapse(true);
+      const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    }, offset);
+    await page.waitForTimeout(20);
+  };
+  const caretOffset = () => editor.evaluate(element => {
+    const selection = getSelection()!;
+    const range = document.createRange(); range.selectNodeContents(element);
+    range.setEnd(selection.focusNode!, selection.focusOffset);
+    return range.toString().length;
+  });
+
+  const activeId = (id: number) => expect(editor.locator('xpath=ancestor::li[1]')).toHaveAttribute('data-item-id', String(id));
+  await saved(second.id).click(); await activeId(second.id); await setCaret(6); await editor.press('ArrowUp');
+  await activeId(first.id); await expect.poll(caretOffset).toBe(6);
+  await editor.press('ArrowDown'); await activeId(second.id); await expect.poll(caretOffset).toBe(6);
+
+  await saved(first.id).click(); await activeId(first.id); await setCaret(6); await editor.press('ArrowUp');
+  await expect.poll(caretOffset).toBe(0);
+  await saved(third.id).click(); await activeId(third.id); await setCaret(6); await editor.press('ArrowDown');
+  await expect.poll(caretOffset).toBe(10);
+});
+
+test('vertical arrows traverse wrapped lines before moving to a neighboring entry', async ({ page, request }) => {
+  await page.setViewportSize({ width: 620, height: 900 });
+  const { today } = await (await request.get('/api/journal')).json();
+  const content = 'one two three four five six seven eight nine ten '.repeat(5).trim();
+  const wrapped = await (await request.post('/api/notes', { data: { date: today, content } })).json();
+  await request.post('/api/notes', { data: { date: today, content: 'Neighbor below', after_id: wrapped.id } });
+  await page.goto('/');
+  await page.locator(`[data-kind="notes"][data-item-id="${wrapped.id}"] [role="group"]`).click();
+  const editor = page.getByRole('textbox', { name: 'Edit note', exact: true });
+  const active = editor.locator('xpath=ancestor::li[1]');
+  await expect(active).toHaveAttribute('data-item-id', String(wrapped.id));
+  expect((await editor.boundingBox())!.height).toBeGreaterThan(30);
+  await editor.press('Meta+ArrowUp'); await editor.press('ArrowDown');
+  await expect(active).toHaveAttribute('data-item-id', String(wrapped.id));
+  const offset = await editor.evaluate(element => {
+    const selection = getSelection()!;
+    const range = document.createRange(); range.selectNodeContents(element);
+    range.setEnd(selection.focusNode!, selection.focusOffset);
+    return range.toString().length;
+  });
+  expect(offset).toBeGreaterThan(0);
+  expect(offset).toBeLessThan(content.length);
+});
+
 for (const kind of ['notes', 'tasks'] as const) {
   test(`Enter splits ${kind} at the caret and carries formatted trailing text into the new entry`, async ({ page, request }) => {
     const { today } = await (await request.get('/api/journal')).json();
@@ -139,6 +198,13 @@ for (const kind of ['notes', 'tasks'] as const) {
     const composer = page.getByRole('textbox', { name: kind === 'notes' ? 'New journal bullet' : 'New to-do', exact: true });
     await expect(composer).toBeFocused(); await composer.press('Backspace');
     await expect(editor).toBeFocused();
+    await expect.poll(() => editor.evaluate(element => {
+      const selection = getSelection()!;
+      if (!selection.focusNode || !element.contains(selection.focusNode)) return -1;
+      const range = document.createRange(); range.selectNodeContents(element);
+      range.setEnd(selection.focusNode, selection.focusOffset);
+      return range.toString().length;
+    })).toBe(`First ${kind.slice(0, -1)}Second`.length);
     await editor.press('Backspace');
     await expect(editor).toHaveText(`First ${kind.slice(0, -1)}Secon`);
     await editor.press('Enter');

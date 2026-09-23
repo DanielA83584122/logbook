@@ -11,8 +11,6 @@ services:
         value: /var/data/still.sqlite3
       - key: STILL_SEED_ON_FIRST_RUN
         value: "true"
-      - key: STILL_AUTH_ENABLED
-        value: "false"
       - key: PYTHON_VERSION
         value: 3.14.7
       - key: NODE_VERSION

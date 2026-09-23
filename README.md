@@ -26,7 +26,7 @@ npm start
 
 Then open **http://127.0.0.1:8000**. Start or restart FastAPI after building so it registers the static assets.
 
-For Render, `render.yaml` defines one Python web service, a persistent disk mounted at `/var/data`, and `STILL_DB_PATH=/var/data/still.sqlite3`. On the disk's first launch, `STILL_SEED_ON_FIRST_RUN=true` copies the bundled sample journal into that location; every later deploy leaves the runtime database untouched. Keep the service at one instance: SQLite lives on that service's persistent disk. Authentication is currently disabled with `STILL_AUTH_ENABLED=false`. To enable it later, set that variable to `true` and add a secret `STILL_AUTH_PASSWORD`.
+For Render, `render.yaml` defines one Python web service, a persistent disk mounted at `/var/data`, and `STILL_DB_PATH=/var/data/still.sqlite3`. On the disk's first launch, `STILL_SEED_ON_FIRST_RUN=true` copies the bundled sample journal into that location; every later deploy leaves the runtime database untouched. Keep the service at one instance: SQLite lives on that service's persistent disk. Authentication defaults to disabled. The Blueprint deliberately leaves authentication variables out so public and private services made from the same repository can configure them independently. On a private service, set `STILL_AUTH_ENABLED=true` and add a secret `STILL_AUTH_PASSWORD`; a later Blueprint sync will not force the flag back to `false`.
 
 Vite uses the official `esbuild-wasm` package through an npm override. This avoids a native esbuild executable that is killed on this Mac. Application code still runs normally in the browser.
 

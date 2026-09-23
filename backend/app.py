@@ -320,10 +320,23 @@ def edit_document(body: DocumentBatch, timezone: str = "UTC"):
             receipt = db.execute('SELECT response FROM document_requests WHERE request_id = ?', (body.request_id,)).fetchone()
             if receipt:
                 return json.loads(receipt['response'])
+        # A document edit is one atomic operation. Validate every explicit
+        # revision against the document as it existed at the start of the
+        # batch: deleting or moving an earlier sibling can legitimately bump
+        # later siblings' revisions while the batch is being applied.
+        prevalidated = set()
+        for index, change in enumerate(body.changes):
+            if change.id is None or change.expected_revision is None:
+                continue
+            entry_kind = 'note' if change.kind == 'notes' else 'task'
+            original = db.execute('SELECT * FROM entries WHERE id = ? AND kind = ?', (change.id, entry_kind)).fetchone()
+            if original:
+                check_revision(bullet_dict(original), change.expected_revision)
+                prevalidated.add(index)
         before = snapshot(db)
         results = []
         promoted = []
-        for change in body.changes:
+        for index, change in enumerate(body.changes):
             table = change.kind
             entry_kind = 'note' if table == 'notes' else 'task'
             item_id = change.id
@@ -334,7 +347,8 @@ def edit_document(body: DocumentBatch, timezone: str = "UTC"):
             row = bullet_dict(found) if found and found['kind'] == entry_kind else None
             if change.delete:
                 if row:
-                    check_revision(row, change.expected_revision)
+                    if index not in prevalidated:
+                        check_revision(row, change.expected_revision)
                     promoted.extend(remove_preserving_children(db, table, item_id))
                 elif found:
                     raise HTTPException(409, 'That entry has a different kind.')
@@ -342,7 +356,7 @@ def edit_document(body: DocumentBatch, timezone: str = "UTC"):
                 continue
             if item_id and row is None:
                 raise HTTPException(404, 'That item no longer exists.')
-            if row:
+            if row and index not in prevalidated:
                 check_revision(row, change.expected_revision)
             if change.move and row:
                 table = move_entry(db, table, item_id, change.parent_id, change.after_id, now)
