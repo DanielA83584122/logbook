@@ -90,7 +90,9 @@ export function TagTabs({ tags, active, onSelect, controls }: {
       onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); } }}>
       <Panel data-testid="tag-panel" $open={open} aria-hidden={!open} inert={!open}>
         <Heading><Home type="button" onClick={() => select(null)}>logbook</Home></Heading>
-        <Collection>{tags.map(tag => <TagPill key={tag.name} type="button"
+        <Collection>
+          <TagPill type="button" aria-pressed={active === null} onClick={() => select(null)}><TagPillLabel>all</TagPillLabel></TagPill>
+          {tags.map(tag => <TagPill key={tag.name} type="button"
           aria-pressed={tag.name === active} onClick={() => select(tag.name)}><TagPillLabel>#{tag.name}</TagPillLabel></TagPill>)}</Collection>
         <RailActions>{controls}</RailActions>
       </Panel>

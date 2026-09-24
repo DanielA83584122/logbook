@@ -29,8 +29,10 @@ test('tag collection opens only in the outer half-margin, dims the page, and ret
   await expect(panel).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)');
   await expect(backdrop).toHaveCSS('opacity', '1');
   await expect(backdrop).toHaveCSS('backdrop-filter', 'blur(4px)');
+  const all = rail.getByRole('button', { name: 'all', exact: true });
   const work = rail.getByRole('button', { name: '#work', exact: true });
   const health = rail.getByRole('button', { name: '#health', exact: true });
+  await expect(all).toHaveAttribute('aria-pressed', 'true');
   await expect(work.locator('span')).toHaveCSS('translate', '0px -1px');
   const workBox = (await work.boundingBox())!, healthBox = (await health.boundingBox())!;
   expect(healthBox.y).toBe(workBox.y);
@@ -44,8 +46,9 @@ test('tag collection opens only in the outer half-margin, dims the page, and ret
   await page.mouse.move(1000, 500);
   await rail.hover();
   await expect(health).toHaveAttribute('aria-pressed', 'true');
+  await expect(all).toHaveAttribute('aria-pressed', 'false');
   await expect(health).toHaveCSS('background-color', background);
-  await home.click();
+  await all.click();
   await expect(page.getByRole('group', { name: 'Notes about work', exact: true })).toBeVisible();
   await page.mouse.move(1000, 500);
   await rail.focus(); await expect(home).toBeVisible();
