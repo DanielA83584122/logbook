@@ -196,9 +196,9 @@ test('task checkmarks preview completion and reopening on hover', async ({ page 
   expect(await unfinished.evaluate(el => getComputedStyle(el, '::after').opacity)).toBe('0');
   await unfinished.hover();
   await expect.poll(() => unfinished.evaluate(el => getComputedStyle(el, '::after').opacity)).toBe('1');
-  await expect.poll(() => unfinished.evaluate(el => getComputedStyle(el, '::before').borderColor)).toBe('rgb(33, 105, 176)');
+  await expect.poll(() => unfinished.evaluate(el => getComputedStyle(el, '::before').borderColor)).toBe('rgb(24, 113, 186)');
   expect(await unfinished.evaluate(el => getComputedStyle(el, '::before').backgroundColor)).toBe('rgba(0, 0, 0, 0)');
-  expect(await unfinished.evaluate(el => getComputedStyle(el, '::after').backgroundColor)).toBe('rgb(33, 105, 176)');
+  expect(await unfinished.evaluate(el => getComputedStyle(el, '::after').backgroundColor)).toBe('rgb(24, 113, 186)');
   await unfinished.click();
   await expect(unfinished).toHaveAttribute('data-preview-suppressed', 'true');
   await expect.poll(() => unfinished.evaluate(el => getComputedStyle(el, '::after').opacity)).toBe('0');

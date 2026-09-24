@@ -34,14 +34,14 @@ test('reference typography, wider margins and persistent night mode', async ({ p
   await page.evaluate(() => document.fonts.ready);
   await expect(page.locator('body')).toHaveCSS('font-family', /Sohne/);
   expect(await page.evaluate(() => document.fonts.check('300 18px Sohne'))).toBe(true);
-  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(228, 231, 233)');
-  await expect(page.getByTestId('page')).toHaveCSS('background-color', 'color(srgb 0.849412 0.860588 0.868039)');
-  await expect(page.getByRole('button', { name: 'Focus sessions for 2026-09-16', exact: true })).toHaveCSS('opacity', '0.78');
-  await expect(page.locator('time[datetime="2026-09-16"]')).toHaveCSS('background-color', 'rgb(196, 207, 215)');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(242, 241, 237)');
+  await expect(page.getByTestId('page')).toHaveCSS('background-color', 'rgb(242, 241, 237)');
+  await expect(page.getByRole('button', { name: 'Focus sessions for 2026-09-16', exact: true })).toHaveCSS('opacity', '0.76');
+  await expect(page.locator('time[datetime="2026-09-16"]')).toHaveCSS('background-color', 'rgb(223, 231, 237)');
   await page.getByRole('navigation', { name: 'Tags' }).hover();
   const shortcuts = page.getByRole('button', { name: 'Keyboard shortcuts', exact: true });
   await shortcuts.hover();
-  await expect(shortcuts).toHaveCSS('color', 'rgb(33, 105, 176)');
+  await expect(shortcuts).toHaveCSS('color', 'rgb(24, 113, 186)');
   await shortcuts.click();
   const shortcutDialog = page.getByRole('dialog', { name: 'Keyboard shortcuts', exact: true });
   await expect(shortcutDialog).toBeVisible();
@@ -75,12 +75,12 @@ test('reference typography, wider margins and persistent night mode', async ({ p
     const style = getComputedStyle(el, '::before'); return { border: style.borderWidth, radius: style.borderRadius, inset: style.top };
   });
   expect(ring).toEqual({ border: '1px', radius: '50%', inset: '-3px' });
-  await expect(page.getByRole('link', { name: 'project notes', exact: true })).toHaveCSS('color', 'rgb(33, 105, 176)');
+  await expect(page.getByRole('link', { name: 'project notes', exact: true })).toHaveCSS('color', 'rgb(24, 113, 186)');
   await expect(page.getByRole('link', { name: 'project notes', exact: true })).toHaveCSS('text-decoration-line', 'none');
   const taskBubble = page.getByRole('button', { name: 'Complete Review the draft', exact: true });
   const noteBullet = page.locator('[data-kind="notes"][data-item-id="102"] > div > [aria-hidden="true"]');
-  await expect(taskBubble).toHaveCSS('color', 'rgb(28, 28, 28)');
-  await expect(noteBullet).toHaveCSS('color', 'rgb(28, 28, 28)');
+  await expect(taskBubble).toHaveCSS('color', 'rgb(36, 36, 34)');
+  await expect(noteBullet).toHaveCSS('color', 'rgb(36, 36, 34)');
   expect(await taskBubble.evaluate(element => ({
     ring: getComputedStyle(element, '::before').translate,
     check: getComputedStyle(element, '::after').translate,
@@ -113,7 +113,7 @@ test('reference typography, wider margins and persistent night mode', async ({ p
     await expect(dialog).toBeHidden();
     await page.keyboard.press('Escape');
   };
-  await checkLinkEditor('rgb(33, 105, 176)', 'rgb(109, 85, 151)');
+  await checkLinkEditor('rgb(24, 113, 186)', 'rgb(112, 88, 143)');
   await page.screenshot({ path: 'test-results/day-mode.png' });
   await page.getByRole('navigation', { name: 'Tags' }).hover();
   await toggle.click();
@@ -144,7 +144,7 @@ test('reference typography, wider margins and persistent night mode', async ({ p
   await expect(page.getByRole('dialog')).toBeHidden();
   await page.getByRole('navigation', { name: 'Tags' }).hover();
   await toggle.click();
-  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(228, 231, 233)');
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(242, 241, 237)');
   await page.setViewportSize({ width: 440, height: 700 });
   const smallTimer = (await page.getByRole('button', { name: 'Start focus timer', exact: true }).boundingBox())!;
   const mobileToggle = page.getByRole('switch', { name: 'Night mode', exact: true });

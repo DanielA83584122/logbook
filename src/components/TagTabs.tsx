@@ -44,6 +44,7 @@ const Home = styled.button`
   @media(pointer: coarse) { min-height: 44px; }
 `;
 const Collection = styled.div`display: flex; flex-wrap: wrap; align-content: start; gap: 8px;`;
+const TagPillLabel = styled.span`display: block; translate: 0 -1px;`;
 const TagPill = styled.button`
   position: relative; max-width: 100%; min-height: 36px; padding: 6px 12px;
   border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--tag-ink);
@@ -90,7 +91,7 @@ export function TagTabs({ tags, active, onSelect, controls }: {
       <Panel data-testid="tag-panel" $open={open} aria-hidden={!open} inert={!open}>
         <Heading><Home type="button" onClick={() => select(null)}>logbook</Home></Heading>
         <Collection>{tags.map(tag => <TagPill key={tag.name} type="button"
-          aria-pressed={tag.name === active} onClick={() => select(tag.name)}>#{tag.name}</TagPill>)}</Collection>
+          aria-pressed={tag.name === active} onClick={() => select(tag.name)}><TagPillLabel>#{tag.name}</TagPillLabel></TagPill>)}</Collection>
         <RailActions>{controls}</RailActions>
       </Panel>
     </Rail>

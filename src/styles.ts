@@ -6,16 +6,16 @@ export const GlobalStyle = createGlobalStyle`
   @font-face { font-family: 'Sohne'; src: url('/fonts/sohne-italic.woff2') format('woff2'); font-weight: 400; font-style: italic; font-display: swap; }
   :root {
     color-scheme: light;
-    --paper: #e4e7e9; --ink: #1c1c1c; --muted: #596167; --line: #c6cbc8; --sage: #535d59; --soft: #dbe1e5;
-    --surface: #eef1f3; --field: #f6f8fa; --date-bg: #c4cfd7; --tag-bg: #d7deda; --tag-ink: #4e5b55; --tag-selected: #1b5b99;
-    --code-bg: #dce1dc; --code-ink: #52635f; --quote: #59635e; --selection: #cbd5dc; --focus: #788487;
-    --link: #2169b0; --url: #6d5597; --checkbox: #777b7e; --scrollbar: #b8c0bc;
-    --timer-ring: #9da8b0; --timer: #59636b; --timer-hover: #646f77; --timer-ink: #f5f5f3;
-    --timer-running: #2169b0; --timer-running-hover: #2b73ba; --timer-running-ring: #6f91b3;
-    --page-paper: color-mix(in srgb, var(--paper), #000 5%); --page-focus-paper: color-mix(in srgb, var(--paper), #000 18%);
-    --chrome-opacity: .78; --focus-chrome-opacity: .6;
-    --primary: #303b40; --primary-hover: #45535a; --primary-ink: #ffffff;
-    --danger: #934638; --backdrop: #31393033; --chart: #a1b599; --chart-today: #607b61; --chart-hover: #7e9774;
+    --paper: #f2f1ed; --ink: #242422; --muted: #626762; --line: #d4d2cb; --sage: #59605d; --soft: #e8e6df;
+    --surface: #faf9f6; --field: #fffefa; --date-bg: #dfe7ed; --tag-bg: #e8e6df; --tag-ink: #525a56; --tag-selected: #1871ba;
+    --code-bg: #e6e7e1; --code-ink: #4d615d; --quote: #5f645f; --selection: #ccdbe7; --focus: #6f7f88;
+    --link: #1871ba; --url: #70588f; --checkbox: #747773; --scrollbar: #c0beb7;
+    --timer-ring: #9ba6ad; --timer: #56626b; --timer-hover: #626f78; --timer-ink: #faf9f6;
+    --timer-running: #1871ba; --timer-running-hover: #267bc3; --timer-running-ring: #6f91b3;
+    --page-paper: var(--paper); --page-focus-paper: color-mix(in srgb, var(--paper), #000 16%);
+    --chrome-opacity: .76; --focus-chrome-opacity: .6;
+    --primary: #354047; --primary-hover: #49565d; --primary-ink: #ffffff;
+    --danger: #99493b; --backdrop: #2d343033; --chart: #a8b8c6; --chart-today: #557fa5; --chart-hover: #7395b4;
   }
   :root[data-theme='night'] {
     color-scheme: dark;

@@ -33,23 +33,27 @@ const Page = styled.div<{ $focusing: boolean }>`
   [data-focus-chrome] { opacity: ${({ $focusing }) => $focusing ? 'var(--focus-chrome-opacity)' : 'var(--chrome-opacity)'}; transition: opacity 180ms ease-out; }
   ${({ $focusing }) => $focusing && css`
     :root:not([data-theme='night']) & [data-focus-surface] {
-      --paper: color-mix(in srgb, #e4e7e9, #000 18%);
-      --ink: color-mix(in srgb, #1c1c1c, #000 18%);
-      --muted: color-mix(in srgb, #596167, #000 18%);
-      --line: color-mix(in srgb, #c6cbc8, #000 18%);
-      --sage: color-mix(in srgb, #535d59, #000 18%);
-      --soft: color-mix(in srgb, #dbe1e5, #000 18%);
-      --date-bg: color-mix(in srgb, #c4cfd7, #000 18%);
-      --tag-bg: color-mix(in srgb, #d7deda, #000 18%);
-      --tag-ink: color-mix(in srgb, #4e5b55, #000 18%);
-      --tag-selected: color-mix(in srgb, #1b5b99, #000 18%);
-      --code-bg: color-mix(in srgb, #dce1dc, #000 18%);
-      --code-ink: color-mix(in srgb, #52635f, #000 18%);
-      --quote: color-mix(in srgb, #59635e, #000 18%);
-      --link: color-mix(in srgb, #2169b0, #000 18%);
-      --url: color-mix(in srgb, #6d5597, #000 18%);
-      --checkbox: color-mix(in srgb, #777b7e, #000 18%);
-      --scrollbar: color-mix(in srgb, #b8c0bc, #000 18%);
+      --paper: color-mix(in srgb, #f2f1ed, #000 16%);
+      --ink: color-mix(in srgb, #242422, #000 16%);
+      --muted: color-mix(in srgb, #626762, #000 16%);
+      --line: color-mix(in srgb, #d4d2cb, #000 16%);
+      --sage: color-mix(in srgb, #59605d, #000 16%);
+      --soft: color-mix(in srgb, #e8e6df, #000 16%);
+      --surface: color-mix(in srgb, #faf9f6, #000 16%);
+      --field: color-mix(in srgb, #fffefa, #000 16%);
+      --date-bg: color-mix(in srgb, #dfe7ed, #000 16%);
+      --tag-bg: color-mix(in srgb, #e8e6df, #000 16%);
+      --tag-ink: color-mix(in srgb, #525a56, #000 16%);
+      --tag-selected: color-mix(in srgb, #1871ba, #000 16%);
+      --code-bg: color-mix(in srgb, #e6e7e1, #000 16%);
+      --code-ink: color-mix(in srgb, #4d615d, #000 16%);
+      --quote: color-mix(in srgb, #5f645f, #000 16%);
+      --selection: color-mix(in srgb, #ccdbe7, #000 16%);
+      --focus: color-mix(in srgb, #6f7f88, #000 16%);
+      --link: color-mix(in srgb, #1871ba, #000 16%);
+      --url: color-mix(in srgb, #70588f, #000 16%);
+      --checkbox: color-mix(in srgb, #747773, #000 16%);
+      --scrollbar: color-mix(in srgb, #c0beb7, #000 16%);
     }
   `}
   @media ${compactViewport} {
@@ -140,6 +144,7 @@ const MobileTags = styled.div`
 const MobileTagCollection = styled.div`
   display: flex; flex-wrap: wrap; align-content: start; gap: 4px;
 `;
+const MobileTagPillLabel = styled.span`display: block; translate: 0 -1px;`;
 const MobileTagPill = styled.button<{ $selected: boolean }>`
   ${press}; min-height: 38px; max-width: 100%; padding: 5px 10px;
   border: 1px solid ${({ $selected }) => $selected ? 'var(--tag-selected)' : 'var(--line)'}; border-radius: 999px; overflow-wrap: anywhere;
@@ -498,9 +503,9 @@ export default function App({ locked = false, load = !locked, onReady, onLoadErr
           <MobilePane id="mobile-panel-tags" role="tabpanel" aria-labelledby="mobile-tab-tags" aria-hidden={mobileView !== 'tags'} inert={mobileView !== 'tags'}>
             <MobileTags>
               <MobileTagCollection aria-label="Filter by tag">
-                <MobileTagPill type="button" $selected={activeTag === null} aria-pressed={activeTag === null} onClick={() => void selectTag(null)}>all</MobileTagPill>
+                <MobileTagPill type="button" $selected={activeTag === null} aria-pressed={activeTag === null} onClick={() => void selectTag(null)}><MobileTagPillLabel>all</MobileTagPillLabel></MobileTagPill>
                 {(data?.tags ?? []).map(tag => <MobileTagPill key={tag.name} type="button" $selected={activeTag === tag.name}
-                  aria-pressed={activeTag === tag.name} onClick={() => void selectTag(tag.name)}>#{tag.name}</MobileTagPill>)}
+                  aria-pressed={activeTag === tag.name} onClick={() => void selectTag(tag.name)}><MobileTagPillLabel>#{tag.name}</MobileTagPillLabel></MobileTagPill>)}
               </MobileTagCollection>
               <MobileTagControls>{sidebarControls}</MobileTagControls>
             </MobileTags>

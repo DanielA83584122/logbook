@@ -31,6 +31,7 @@ test('tag collection opens only in the outer half-margin, dims the page, and ret
   await expect(backdrop).toHaveCSS('backdrop-filter', 'blur(4px)');
   const work = rail.getByRole('button', { name: '#work', exact: true });
   const health = rail.getByRole('button', { name: '#health', exact: true });
+  await expect(work.locator('span')).toHaveCSS('translate', '0px -1px');
   const workBox = (await work.boundingBox())!, healthBox = (await health.boundingBox())!;
   expect(healthBox.y).toBe(workBox.y);
   expect(healthBox.x).toBeGreaterThan(workBox.x + workBox.width);

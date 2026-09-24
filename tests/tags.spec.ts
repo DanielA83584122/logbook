@@ -142,11 +142,12 @@ test('swipe tags page highlights the selected tag and filters to-dos and log ent
   await expect(tabs.getByRole('tab')).toHaveText(['to do', 'log', 'tags']);
   await tabs.getByRole('tab', { name: 'tags', exact: true }).click();
   const mobile = page.getByRole('button', { name: '#mobile', exact: true });
+  await expect(mobile.locator('span')).toHaveCSS('translate', '0px -1px');
   await mobile.click();
   await expect(mobile).toHaveAttribute('aria-pressed', 'true');
   await expect(mobile).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-  await expect(mobile).toHaveCSS('border-color', 'rgb(27, 91, 153)');
-  await expect(mobile).toHaveCSS('color', 'rgb(27, 91, 153)');
+  await expect(mobile).toHaveCSS('border-color', 'rgb(24, 113, 186)');
+  await expect(mobile).toHaveCSS('color', 'rgb(24, 113, 186)');
 
   await tabs.getByRole('tab', { name: 'to do', exact: true }).click();
   await expect(page.getByRole('group', { name: 'Mobile focused task', exact: true })).toBeVisible();
