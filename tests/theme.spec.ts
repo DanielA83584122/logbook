@@ -38,6 +38,7 @@ test('reference typography, wider margins and persistent night mode', async ({ p
   await expect(page.getByTestId('page')).toHaveCSS('background-color', 'color(srgb 0.849412 0.860588 0.868039)');
   await expect(page.getByRole('button', { name: 'Focus sessions for 2026-09-16', exact: true })).toHaveCSS('opacity', '0.78');
   await expect(page.locator('time[datetime="2026-09-16"]')).toHaveCSS('background-color', 'rgb(196, 207, 215)');
+  await page.getByRole('navigation', { name: 'Tags' }).hover();
   const shortcuts = page.getByRole('button', { name: 'Keyboard shortcuts', exact: true });
   await shortcuts.hover();
   await expect(shortcuts).toHaveCSS('color', 'rgb(33, 105, 176)');
@@ -67,12 +68,13 @@ test('reference typography, wider margins and persistent night mode', async ({ p
   const timer = (await page.getByRole('button', { name: 'Start focus timer', exact: true }).boundingBox())!;
   const task = (await page.getByRole('group', { name: 'Review the draft', exact: true }).boundingBox())!;
   expect(main.x).toBeGreaterThanOrEqual(300);
-  expect(timer.x - 8 - (task.x + task.width)).toBeCloseTo(38, 0);
-  expect(timer.x + timer.width + 8).toBeLessThanOrEqual(main.x + main.width - 12);
+  expect(timer.x + timer.width).toBe(1280 - 24);
+  expect(timer.y).toBe(20);
+  expect(task.y + task.height).toBeLessThan((await page.getByRole('button', { name: 'Focus sessions for 2026-09-16', exact: true }).boundingBox())!.y);
   const ring = await page.getByRole('button', { name: 'Start focus timer', exact: true }).evaluate(el => {
     const style = getComputedStyle(el, '::before'); return { border: style.borderWidth, radius: style.borderRadius, inset: style.top };
   });
-  expect(ring).toEqual({ border: '1px', radius: '50%', inset: '-8px' });
+  expect(ring).toEqual({ border: '1px', radius: '50%', inset: '-3px' });
   await expect(page.getByRole('link', { name: 'project notes', exact: true })).toHaveCSS('color', 'rgb(33, 105, 176)');
   await expect(page.getByRole('link', { name: 'project notes', exact: true })).toHaveCSS('text-decoration-line', 'none');
   const taskBubble = page.getByRole('button', { name: 'Complete Review the draft', exact: true });
@@ -84,11 +86,12 @@ test('reference typography, wider margins and persistent night mode', async ({ p
     check: getComputedStyle(element, '::after').translate,
   }))).toEqual({ ring: '0px 0.5px', check: '0px 0.5px' });
   expect(await noteBullet.evaluate(element => getComputedStyle(element, '::before').translate)).toBe('0px 0.5px');
+  await page.mouse.move(1000, 500);
+  await page.getByRole('navigation', { name: 'Tags' }).hover();
   const toggle = page.getByRole('switch', { name: 'Night mode', exact: true });
   const toggleBox = (await toggle.boundingBox())!;
-  expect(toggleBox.x).toBeGreaterThan(main.x + main.width);
-  expect(toggleBox.y).toBe(20);
-  expect(toggleBox.x + toggleBox.width).toBe(1280 - 24);
+  expect(toggleBox.x + toggleBox.width).toBeLessThan(main.x);
+  expect(toggleBox.y).toBeGreaterThan(70);
   await expect(toggle.locator('[data-icon="sun"]')).toHaveCSS('opacity', '1');
   await expect(toggle.locator('[data-icon="moon"]')).toHaveCSS('opacity', '0');
   const checkLinkEditor = async (textColor: string, urlColor: string) => {
@@ -112,6 +115,7 @@ test('reference typography, wider margins and persistent night mode', async ({ p
   };
   await checkLinkEditor('rgb(33, 105, 176)', 'rgb(109, 85, 151)');
   await page.screenshot({ path: 'test-results/day-mode.png' });
+  await page.getByRole('navigation', { name: 'Tags' }).hover();
   await toggle.click();
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
   await expect(toggle.locator('[data-icon="moon"]')).toHaveCSS('opacity', '1');
@@ -128,6 +132,8 @@ test('reference typography, wider margins and persistent night mode', async ({ p
   await checkAccessibility(page);
   await page.screenshot({ path: 'test-results/night-mode.png' });
   await page.reload();
+  await page.mouse.move(1000, 500);
+  await page.getByRole('navigation', { name: 'Tags' }).hover();
   await expect(toggle).toHaveAttribute('aria-checked', 'true');
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(1, 22, 39)');
   await page.getByRole('button', { name: 'Focus sessions for 2026-09-16', exact: true }).click();
@@ -136,11 +142,19 @@ test('reference typography, wider margins and persistent night mode', async ({ p
   await checkAccessibility(page);
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toBeHidden();
+  await page.getByRole('navigation', { name: 'Tags' }).hover();
   await toggle.click();
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(228, 231, 233)');
   await page.setViewportSize({ width: 440, height: 700 });
-  await expect(toggle).toBeHidden();
   const smallTimer = (await page.getByRole('button', { name: 'Start focus timer', exact: true }).boundingBox())!;
-  expect(smallTimer.x + smallTimer.width / 2).toBe(220);
-  expect(smallTimer.y - 8).toBe(24);
+  const mobileToggle = page.getByRole('switch', { name: 'Night mode', exact: true });
+  const compactTime = page.getByTestId('compact-timer-time');
+  const compactTimeBox = (await compactTime.boundingBox())!;
+  await expect(mobileToggle).toBeHidden();
+  await expect(compactTime).toHaveText('00:00:00');
+  expect(compactTimeBox.x + compactTimeBox.width).toBeLessThan(smallTimer.x);
+  expect(compactTimeBox.y + compactTimeBox.height / 2).toBeCloseTo(smallTimer.y + smallTimer.height / 2, 0);
+  await expect(page.getByRole('tablist', { name: 'Mobile views' })).toHaveCount(0);
+  await expect(page.getByRole('group', { name: 'Review the draft', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'project notes', exact: true })).toBeVisible();
 });

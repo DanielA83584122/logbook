@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import styled, { css, keyframes } from 'styled-components';
-import { ChartNoAxesColumn, Github, Moon, Sun } from 'lucide-react';
+import { ChartNoAxesColumn, Github, Moon, Sun, Timer as TimerIcon } from 'lucide-react';
 import { api, errorMessage, localDate, recoverEarlierDrafts, timerDuration } from './api';
 import { FocusSound } from './audio';
 import type { Day, JournalData, Session } from './types';
@@ -11,7 +11,7 @@ import { JournalContext, flushDrafts } from './JournalContext';
 import { Modal } from './components/Modal';
 import type { SearchHit } from './components/SearchModal';
 import { documentUndo, recordCompletion } from './documentHistory';
-import { compactViewport, timerOnlyViewport } from './layout';
+import { compactViewport, shortViewport } from './layout';
 
 const JOURNAL_PAGE_SIZE = 14;
 const REPOSITORY_URL = import.meta.env.VITE_REPOSITORY_URL || 'https://github.com/divyavenn/still';
@@ -20,6 +20,7 @@ const StatsModal = lazy(() => import('./components/StatsModal').then(module => (
 const SearchModal = lazy(() => import('./components/SearchModal').then(module => ({ default: module.SearchModal })));
 
 const Page = styled.div<{ $focusing: boolean }>`
+  --current-page-paper: ${({ $focusing }) => $focusing ? 'var(--page-focus-paper)' : 'var(--page-paper)'};
   --document-width: min(680px, calc(100vw - 64px));
   --left-margin: calc((100vw - var(--document-width)) * .54);
   --right-margin: calc(100vw - var(--document-width) - var(--left-margin));
@@ -27,46 +28,40 @@ const Page = styled.div<{ $focusing: boolean }>`
   --todo-heading-height: 44px;
   @media(pointer: coarse) { --todo-heading-height: 48px; }
   height: 100dvh; overflow-x: hidden; overflow-y: auto; display: flex; flex-direction: column;
-  background-color: ${({ $focusing }) => $focusing ? 'var(--page-focus-paper)' : 'var(--page-paper)'};
+  background-color: var(--current-page-paper);
   transition: background-color 180ms ease-out;
   [data-focus-chrome] { opacity: ${({ $focusing }) => $focusing ? 'var(--focus-chrome-opacity)' : 'var(--chrome-opacity)'}; transition: opacity 180ms ease-out; }
+  ${({ $focusing }) => $focusing && css`
+    :root:not([data-theme='night']) & [data-focus-surface] {
+      --paper: color-mix(in srgb, #e4e7e9, #000 18%);
+      --ink: color-mix(in srgb, #1c1c1c, #000 18%);
+      --muted: color-mix(in srgb, #596167, #000 18%);
+      --line: color-mix(in srgb, #c6cbc8, #000 18%);
+      --sage: color-mix(in srgb, #535d59, #000 18%);
+      --soft: color-mix(in srgb, #dbe1e5, #000 18%);
+      --date-bg: color-mix(in srgb, #c4cfd7, #000 18%);
+      --tag-bg: color-mix(in srgb, #d7deda, #000 18%);
+      --tag-ink: color-mix(in srgb, #4e5b55, #000 18%);
+      --tag-selected: color-mix(in srgb, #1b5b99, #000 18%);
+      --code-bg: color-mix(in srgb, #dce1dc, #000 18%);
+      --code-ink: color-mix(in srgb, #52635f, #000 18%);
+      --quote: color-mix(in srgb, #59635e, #000 18%);
+      --link: color-mix(in srgb, #2169b0, #000 18%);
+      --url: color-mix(in srgb, #6d5597, #000 18%);
+      --checkbox: color-mix(in srgb, #777b7e, #000 18%);
+      --scrollbar: color-mix(in srgb, #b8c0bc, #000 18%);
+    }
+  `}
   @media ${compactViewport} {
-    --document-width: min(680px, calc(100vw - 48px)); --page-top: 24px;
-    --left-margin: calc((100vw - var(--document-width)) / 2); --right-margin: var(--left-margin);
+    --document-width: min(680px, calc(100vw - max(24px, env(safe-area-inset-left)) - max(16px, env(safe-area-inset-right))));
+    --page-top: max(16px, env(safe-area-inset-top)); --todo-heading-height: 36px;
+    --left-margin: max(24px, env(safe-area-inset-left), calc((100vw - var(--document-width)) * .54));
+    --right-margin: calc(100vw - var(--document-width) - var(--left-margin));
   }
-`;
-const TopArea = styled.div`
-  display: grid; grid-template-columns: var(--todo-column, fit-content(calc(100% - 150px))) 124px; gap: 26px; align-items: start;
-  transition: grid-template-columns 220ms cubic-bezier(.2, 0, 0, 1);
-  flex-shrink: 0; padding-right: 12px; margin-bottom: 8px; min-height: calc(var(--todo-heading-height) + 124px);
-  @media ${compactViewport} { display: flex; justify-content: center; padding: 0; min-height: 88px; margin-bottom: 20px; }
-`;
-const Toolbar = styled.div`
-  display: flex; flex-direction: column; align-items: center; gap: 4px; width: 124px;
-  position: sticky; top: calc(var(--page-top) + var(--todo-heading-height)); margin-top: var(--todo-heading-height); z-index: 5;
-  @media ${compactViewport} { position: static; margin-top: 0; }
 `;
 const ringPulse = keyframes`
   from { scale: 1; opacity: .65; }
   to { scale: 1.14; opacity: 0; }
-`;
-const TimerButton = styled.button<{ $pulse: boolean; $running: boolean }>`
-  ${press}; height: 108px; width: 108px; flex-shrink: 0; border: 0; border-radius: 50%; background: var(--timer); color: var(--timer-ink);
-  display: flex; justify-content: center; align-items: center; padding: 0; position: relative; margin: 8px;
-  &::before { content: ''; position: absolute; inset: -8px; border: 1px solid var(--timer-ring); border-radius: 50%; pointer-events: none; transition: border-color 160ms ease-out; }
-  &::after { content: ''; position: absolute; inset: -8px; border: 1px solid ${({ $running }) => $running ? 'var(--timer-running-ring)' : 'var(--timer-ring)'}; border-radius: 50%; pointer-events: none; opacity: 0;
-    ${({ $pulse }) => $pulse && css`animation: ${ringPulse} 360ms ease-out;`} }
-  &:hover { background: var(--timer-hover); }
-  &[aria-pressed='true'] { background: var(--timer-running); }
-  &[aria-pressed='true'] { scale: 1.03; }
-  &[aria-pressed='true']:hover { background: var(--timer-running-hover); }
-  &[aria-pressed='true']::before { border-color: var(--timer-running-ring); }
-  font-size: 13px; font-variant-numeric: tabular-nums;
-`;
-const PageControls = styled.div`
-  position: fixed; top: 20px; right: 24px; z-index: 6;
-  display: flex; align-items: center; gap: 0;
-  @media ${compactViewport} { display: none; }
 `;
 const pageControl = css`
   ${press}; position: relative; display: grid; place-items: center;
@@ -92,6 +87,70 @@ const ThemeGlyph = styled.span<{ $shown: boolean }>`
   transition: opacity 150ms cubic-bezier(.2,0,0,1), scale 150ms cubic-bezier(.2,0,0,1), filter 150ms cubic-bezier(.2,0,0,1);
 `;
 const StatsToggle = styled.button`${pageControl}`;
+const SidebarControls = styled.div`display: flex; align-items: center;`;
+const TimerChrome = styled.div`
+  position: fixed; top: 20px; right: 24px; z-index: 43;
+  display: flex; align-items: center; gap: 10px;
+  @media ${compactViewport} { top: max(12px, env(safe-area-inset-top)); right: 12px; }
+`;
+const TimerTime = styled.span`
+  color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; letter-spacing: -.01em;
+`;
+const TimerButton = styled.button<{ $pulse: boolean; $running: boolean }>`
+  ${press}; position: relative; width: 44px; height: 44px; display: grid; place-items: center; flex-shrink: 0;
+  padding: 0; border: 0; border-radius: 50%; background: var(--timer); color: var(--timer-ink);
+  &::before { content: ''; position: absolute; inset: -3px; border: 1px solid var(--timer-ring); border-radius: 50%; pointer-events: none; transition: border-color 160ms ease-out; }
+  &::after { content: ''; position: absolute; inset: -3px; border: 1px solid ${({ $running }) => $running ? 'var(--timer-running-ring)' : 'var(--timer-ring)'}; border-radius: 50%; pointer-events: none; opacity: 0;
+    ${({ $pulse }) => $pulse && css`animation: ${ringPulse} 360ms ease-out;`} }
+  &:hover { background: var(--timer-hover); }
+  &[aria-pressed='true'] { background: var(--timer-running); scale: 1.03; }
+  &[aria-pressed='true']:hover { background: var(--timer-running-hover); }
+  &[aria-pressed='true']::before { border-color: var(--timer-running-ring); }
+`;
+const ShortHeader = styled.div`
+  height: 44px; flex-shrink: 0;
+`;
+const MobileTabs = styled.div`
+  position: fixed; top: max(12px, env(safe-area-inset-top)); left: 12px; z-index: 43;
+  height: 44px; display: flex; align-items: center;
+`;
+const MobileTab = styled.button<{ $active: boolean }>`
+  position: relative; width: 44px; height: 44px; padding: 0; border: 0; background: transparent;
+  color: ${({ $active }) => $active ? 'var(--link)' : 'var(--muted)'};
+  font-size: 0;
+  &::before { content: ''; position: absolute; left: 50%; top: 50%; width: ${({ $active }) => $active ? '7px' : '5px'}; height: ${({ $active }) => $active ? '7px' : '5px'};
+    border-radius: 50%; background: currentColor; opacity: ${({ $active }) => $active ? 1 : .48}; translate: -50% -50%;
+    transition: width 120ms ease-out, height 120ms ease-out, color 120ms ease-out, opacity 120ms ease-out; }
+  &:first-child::before { translate: calc(-50% + 16px) -50%; }
+  &:last-child::before { translate: calc(-50% - 16px) -50%; }
+`;
+const MobilePager = styled.div`
+  display: flex; flex: 1; min-height: 0; width: 100%; overflow-x: auto; overflow-y: hidden;
+  scroll-snap-type: x mandatory; overscroll-behavior-x: contain; scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+`;
+const MobilePane = styled.section`
+  flex: 0 0 100%; min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;
+  scroll-snap-align: start; scroll-snap-stop: always;
+  padding: 0;
+`;
+const MobileTags = styled.div`
+  padding: 0 2px max(12px, env(safe-area-inset-bottom));
+`;
+const MobileTagCollection = styled.div`
+  display: flex; flex-wrap: wrap; align-content: start; gap: 4px;
+`;
+const MobileTagPill = styled.button<{ $selected: boolean }>`
+  ${press}; min-height: 38px; max-width: 100%; padding: 5px 10px;
+  border: 1px solid ${({ $selected }) => $selected ? 'var(--tag-selected)' : 'var(--line)'}; border-radius: 999px; overflow-wrap: anywhere;
+  background: transparent; color: ${({ $selected }) => $selected ? 'var(--tag-selected)' : 'var(--tag-ink)'};
+  font-size: 14px; line-height: 20px;
+  transition: border-color 140ms ease-out, color 140ms ease-out, scale 150ms ease-out;
+`;
+const MobileTagControls = styled.div`
+  margin-top: 10px;
+  button, a { width: 36px; height: 36px; }
+`;
 const SoundMenu = styled.div`display: grid; gap: 8px; padding: 4px; button { justify-content: center; } input { width: 100%; min-height: 40px; accent-color: var(--link); }`;
 const ShortcutPanel = styled.div`
   padding: 4px 12px 8px;
@@ -116,43 +175,43 @@ const Main = styled.main`
 `;
 const LogFrame = styled.div`
   position: relative; flex: 1; min-height: min(240px, max(64px, calc(100dvh - 160px))); display: flex;
-  @media ${compactViewport} { min-height: 0; }
-  @media ${timerOnlyViewport} { display: none; }
+  @media ${compactViewport} { min-height: 0; padding: 0 0 max(12px, env(safe-area-inset-bottom)); }
 `;
 const LogViewport = styled.div`
   flex: 1; min-height: min(240px, max(64px, calc(100dvh - 160px))); overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain;
   padding: 4px 12px 24px 8px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent;
-  @media ${compactViewport} { min-height: 0; }
-  @media ${timerOnlyViewport} { display: none; }
+  @media ${compactViewport} { min-height: 0; padding: 0 2px 10px 0; }
 `;
 const LogEdgeWash = styled.div<{ $shown: boolean }>`
   position: absolute; z-index: 7; top: -2px; left: -24px; right: -24px; height: 30px; pointer-events: none;
   opacity: ${({ $shown }) => $shown ? 1 : 0};
-  background: linear-gradient(to bottom, var(--page-paper) 0%, color-mix(in srgb, var(--page-paper) 72%, transparent) 34%, transparent 82%);
+  background: linear-gradient(to bottom, var(--current-page-paper) 0%, color-mix(in srgb, var(--current-page-paper) 72%, transparent) 34%, transparent 82%);
   transition: opacity 140ms ease-out;
   &::after {
     content: ''; position: absolute; inset: 0;
     background-image:
-      radial-gradient(ellipse 22% 105% at 7% -8%, var(--page-paper) 0 48%, transparent 82%),
-      radial-gradient(ellipse 30% 92% at 31% -10%, var(--page-paper) 0 44%, transparent 80%),
-      radial-gradient(ellipse 24% 112% at 56% -18%, var(--page-paper) 0 50%, transparent 84%),
-      radial-gradient(ellipse 32% 96% at 82% -9%, var(--page-paper) 0 42%, transparent 79%),
-      radial-gradient(ellipse 18% 108% at 101% -16%, var(--page-paper) 0 49%, transparent 83%);
+      radial-gradient(ellipse 22% 105% at 7% -8%, var(--current-page-paper) 0 48%, transparent 82%),
+      radial-gradient(ellipse 30% 92% at 31% -10%, var(--current-page-paper) 0 44%, transparent 80%),
+      radial-gradient(ellipse 24% 112% at 56% -18%, var(--current-page-paper) 0 50%, transparent 84%),
+      radial-gradient(ellipse 32% 96% at 82% -9%, var(--current-page-paper) 0 42%, transparent 79%),
+      radial-gradient(ellipse 18% 108% at 101% -16%, var(--current-page-paper) 0 49%, transparent 83%);
     mask-image: linear-gradient(to bottom, #000 0%, #000d 40%, transparent 100%);
     -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000d 40%, transparent 100%);
     opacity: .88;
   }
 `;
-const Toast = styled.div`position: fixed; bottom: 25px; left: 50%; transform: translateX(-50%); z-index: 30; max-width: min(540px, calc(100% - 32px)); display: flex; align-items: center; gap: 12px; padding: 7px 8px 7px 19px; background: var(--surface); border-radius: 12px; box-shadow: 0 0 0 1px #00000007, 0 4px 24px #31392b19; font-size: 12px;`;
+const Toast = styled.div`position: fixed; bottom: max(25px, calc(env(safe-area-inset-bottom) + 12px)); left: 50%; transform: translateX(-50%); z-index: 30; max-width: min(540px, calc(100% - 32px)); display: flex; align-items: center; gap: 12px; padding: 7px 8px 7px 19px; background: var(--surface); border-radius: 12px; box-shadow: 0 0 0 1px #00000007, 0 4px 24px #31392b19; font-size: 12px;`;
 const QuietStatus = styled.div`
   position: fixed; right: 24px; bottom: 18px; z-index: 20; pointer-events: none;
   color: var(--muted); font-size: 11px; opacity: 0; transform: translateY(2px);
   transition: opacity 140ms ease-out, transform 140ms ease-out;
   &[data-show='true'] { opacity: .82; transform: translateY(0); }
 `;
-const ConnectionState = styled.div`padding: 50px 0; display: grid; gap: 16px; justify-items: start; @media ${compactViewport} { display: none; }`;
+const ConnectionState = styled.div`padding: 50px 0; display: grid; gap: 16px; justify-items: start; @media ${shortViewport} { display: none; }`;
 
-export default function App({ locked = false }: { locked?: boolean }) {
+export default function App({ locked = false, load = !locked, onReady, onLoadError }: {
+  locked?: boolean; load?: boolean; onReady?: () => void; onLoadError?: () => void;
+}) {
   const [data, setData] = useState<JournalData | null>(null);
   const [night, setNight] = useState(() => localStorage.getItem('still-theme') === 'night');
   useEffect(() => {
@@ -189,6 +248,9 @@ export default function App({ locked = false }: { locked?: boolean }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [soundOpen, setSoundOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [short, setShort] = useState(() => window.matchMedia(shortViewport).matches);
+  const [mobileView, setMobileView] = useState<'todos' | 'log' | 'tags'>('log');
+  const mobilePager = useRef<HTMLDivElement>(null);
   const quietStatus = useRef<HTMLDivElement>(null);
   const quietStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [logScrolled, setLogScrolled] = useState(false);
@@ -204,6 +266,22 @@ export default function App({ locked = false }: { locked?: boolean }) {
   const loadedThrough = useRef<string | null>(null);
   const logViewport = useRef<HTMLDivElement>(null);
   const notify = useCallback((text: string) => setMessage(text), []);
+  useEffect(() => {
+    const media = window.matchMedia(shortViewport);
+    const resize = () => setShort(media.matches);
+    media.addEventListener('change', resize);
+    return () => media.removeEventListener('change', resize);
+  }, []);
+  useEffect(() => {
+    if (!short) return;
+    const align = () => {
+      const pager = mobilePager.current;
+      if (pager) pager.scrollTo({ left: ({ todos: 0, log: 1, tags: 2 } as const)[mobileView] * pager.clientWidth });
+    };
+    const frame = requestAnimationFrame(align);
+    window.addEventListener('resize', align);
+    return () => { cancelAnimationFrame(frame); window.removeEventListener('resize', align); };
+  }, [short, mobileView]);
   useEffect(() => {
     if (locked) return;
     const shortcut = (event: KeyboardEvent) => {
@@ -250,7 +328,7 @@ export default function App({ locked = false }: { locked?: boolean }) {
     }
     clockOffset.current = new Date(response.server_time).getTime() - Date.now();
     setData(previous => {
-      if (includeHistory || !previous) return response;
+      if (includeHistory || !previous || previous.tag !== response.tag) return response;
       const oldest = response.days.at(-1)?.date ?? response.today;
       const cachedDays = previous.days.filter(day => day.date < oldest);
       return { ...response, days: [...response.days, ...cachedDays], next_cursor: cachedDays.length ? previous.next_cursor : response.next_cursor };
@@ -268,13 +346,17 @@ export default function App({ locked = false }: { locked?: boolean }) {
   }, [refresh, notify]);
 
   useEffect(() => {
-    if (locked) return;
-    void refresh(false).catch(e => setError(errorMessage(e)));
+    if (!load) { setData(null); return; }
+    void refresh(false).catch(e => { setError(errorMessage(e)); onLoadError?.(); });
+  }, [refresh, activeTag, load, onLoadError]);
+  useEffect(() => {
+    if (locked || !load) return;
     const interval = setInterval(() => { void refresh(false).catch(e => setError(errorMessage(e))); }, 15000);
     const focus = () => { void refresh(false).catch(e => setError(errorMessage(e))); };
     window.addEventListener('focus', focus);
     return () => { clearInterval(interval); window.removeEventListener('focus', focus); };
-  }, [refresh, activeTag, locked]);
+  }, [refresh, locked, load]);
+  useEffect(() => { if (data && load) onReady?.(); }, [data, load, onReady]);
   useEffect(() => {
     if (!data?.active_session) return;
     setNow(Date.now());
@@ -347,6 +429,16 @@ export default function App({ locked = false }: { locked?: boolean }) {
     } catch (error) { notify(errorMessage(error)); }
   };
 
+  const loadMore = useCallback(async () => {
+    const cursor = data?.next_cursor;
+    if (!cursor) return;
+    const filter = tagRef.current;
+    const more = await api<JournalData>(`/journal?before=${cursor}&limit=${JOURNAL_PAGE_SIZE}${filter ? '&tag=' + encodeURIComponent(filter) : ''}`);
+    if (filter !== tagRef.current) return;
+    loadedThrough.current = more.days.at(-1)?.date ?? loadedThrough.current;
+    setData(current => current ? { ...current, days: [...current.days, ...more.days.filter(day => !current.days.some(existing => existing.date === day.date))], next_cursor: more.next_cursor } : current);
+  }, [data?.next_cursor]);
+
   const jumpTo = async (hit: SearchHit) => {
     try {
       await flushDrafts();
@@ -361,8 +453,7 @@ export default function App({ locked = false }: { locked?: boolean }) {
     } catch (e) { notify(errorMessage(e)); }
   };
 
-  return <JournalContext.Provider value={{ tags: data?.tags ?? [], activeTag: data?.tag ?? null, completed, onComplete, reopened, onReopen, target }}><Page $focusing={!!active} data-testid="page" data-focus-running={active ? 'true' : undefined}>
-    <PageControls role="group" aria-label="Page controls" data-focus-chrome>
+  const sidebarControls = <SidebarControls role="group" aria-label="Page controls" data-focus-chrome>
     {REPOSITORY_URL && <RepositoryLink href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer" aria-label="GitHub repository" title="GitHub"><Github size={15} aria-hidden="true" /></RepositoryLink>}
     <StatsToggle aria-label="Open focus statistics" title="Statistics" onClick={() => setStatsOpen(true)}><ChartNoAxesColumn size={15} aria-hidden="true" /></StatsToggle>
     <ShortcutToggle aria-label="Keyboard shortcuts" title="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)}><ShortcutGlyph data-shortcut-icon aria-hidden="true" /></ShortcutToggle>
@@ -371,31 +462,64 @@ export default function App({ locked = false }: { locked?: boolean }) {
       <ThemeGlyph $shown={!night} data-icon="sun" aria-hidden="true"><Sun size={15} /></ThemeGlyph>
       <ThemeGlyph $shown={night} data-icon="moon" aria-hidden="true"><Moon size={15} /></ThemeGlyph>
     </ThemeToggle>
-    </PageControls>
-    <TagTabs tags={data?.tags ?? []} active={activeTag} onSelect={tag => { void selectTag(tag); }} />
-    <Main>
-      <TopArea>
+  </SidebarControls>;
+
+  return <JournalContext.Provider value={{ tags: data?.tags ?? [], activeTag: data?.tag ?? null, completed, onComplete, reopened, onReopen, target }}><Page $focusing={!!active} data-testid="page" data-focus-running={active ? 'true' : undefined}>
+    <TimerChrome>
+      <TimerTime data-testid="compact-timer-time" aria-hidden="true">{timerDuration(elapsed)}</TimerTime>
+      <TimerButton $pulse={timerPulse} $running={!!active} type="button" disabled={timerBusy || !data}
+        aria-label={active ? 'Stop focus timer' : 'Start focus timer'} aria-pressed={!!active}
+        title="Click to start/stop · right-click for sound"
+        onContextMenu={event => { event.preventDefault(); setSoundOpen(true); }}
+        onKeyDown={event => { if (event.key === 'ContextMenu' || event.shiftKey && event.key === 'F10') { event.preventDefault(); setSoundOpen(true); } }}
+        onClick={() => void toggleTimer()}><TimerIcon size={16} aria-hidden="true" /></TimerButton>
+    </TimerChrome>
+    {!short && <TagTabs tags={data?.tags ?? []} active={activeTag} onSelect={tag => { void selectTag(tag); }} controls={sidebarControls} />}
+    <Main data-focus-surface>
+      {short ? <>
+        <ShortHeader>
+          <MobileTabs role="tablist" aria-label="Mobile views">
+            <MobileTab id="mobile-tab-todos" type="button" role="tab" aria-controls="mobile-panel-todos" aria-selected={mobileView === 'todos'} $active={mobileView === 'todos'} onClick={() => setMobileView('todos')}>to do</MobileTab>
+            <MobileTab id="mobile-tab-log" type="button" role="tab" aria-controls="mobile-panel-log" aria-selected={mobileView === 'log'} $active={mobileView === 'log'} onClick={() => setMobileView('log')}>log</MobileTab>
+            <MobileTab id="mobile-tab-tags" type="button" role="tab" aria-controls="mobile-panel-tags" aria-selected={mobileView === 'tags'} $active={mobileView === 'tags'} onClick={() => setMobileView('tags')}>tags</MobileTab>
+          </MobileTabs>
+        </ShortHeader>
+        <MobilePager ref={mobilePager} data-testid="mobile-pager" onScroll={event => {
+          const pager = event.currentTarget;
+          const next = (['todos', 'log', 'tags'] as const)[Math.max(0, Math.min(2, Math.round(pager.scrollLeft / pager.clientWidth)))];
+          setMobileView(previous => previous === next ? previous : next);
+        }}>
+          <MobilePane id="mobile-panel-todos" role="tabpanel" aria-labelledby="mobile-tab-todos" aria-hidden={mobileView !== 'todos'} inert={mobileView !== 'todos'}>{data ? <Todos key={data.tag ?? 'all'} tasks={data.tasks} refresh={refresh} notify={notify} /> : null}</MobilePane>
+          <MobilePane id="mobile-panel-log" role="tabpanel" aria-labelledby="mobile-tab-log" aria-hidden={mobileView !== 'log'} inert={mobileView !== 'log'}>{data && <LogFrame><LogViewport ref={logViewport} data-testid="log-scroll" data-top-fade={logScrolled || undefined}
+            onScroll={event => { const clipped = event.currentTarget.scrollTop > 12; setLogScrolled(previous => previous === clipped ? previous : clipped); }}>
+            <Journal key={data.tag ?? 'all'} scrollRoot={logViewport} days={data.days} today={data.today} refresh={refresh} notify={notify} openSessions={setSessionsDate}
+              sessionsEnabled={false} showHistory secondsForDay={secondsForDay} hasMore={!!data.next_cursor} loadMore={loadMore} />
+          </LogViewport><LogEdgeWash data-testid="log-top-ink-wash" $shown={logScrolled} aria-hidden="true" /></LogFrame>}</MobilePane>
+          <MobilePane id="mobile-panel-tags" role="tabpanel" aria-labelledby="mobile-tab-tags" aria-hidden={mobileView !== 'tags'} inert={mobileView !== 'tags'}>
+            <MobileTags>
+              <MobileTagCollection aria-label="Filter by tag">
+                <MobileTagPill type="button" $selected={activeTag === null} aria-pressed={activeTag === null} onClick={() => void selectTag(null)}>all</MobileTagPill>
+                {(data?.tags ?? []).map(tag => <MobileTagPill key={tag.name} type="button" $selected={activeTag === tag.name}
+                  aria-pressed={activeTag === tag.name} onClick={() => void selectTag(tag.name)}>#{tag.name}</MobileTagPill>)}
+              </MobileTagCollection>
+              <MobileTagControls>{sidebarControls}</MobileTagControls>
+            </MobileTags>
+          </MobilePane>
+        </MobilePager>
+      </> : <>
         {!data ? <ConnectionState><Muted>{error || 'Loading…'}</Muted>{error && <Button onClick={() => { setError(''); void refresh().catch(e => setError(errorMessage(e))); }}>Retry</Button>}</ConnectionState> :
-          <Todos key={data.tag ?? "all"} tasks={data.tasks} refresh={refresh} notify={notify} />}
-    <Toolbar><TimerButton $pulse={timerPulse} $running={!!active} disabled={timerBusy || !data} aria-label={active ? 'Stop focus timer' : 'Start focus timer'} aria-pressed={!!active} title="Click to start/stop · right-click for sound" onContextMenu={e => { e.preventDefault(); setSoundOpen(true); }} onKeyDown={e => { if (e.key === 'ContextMenu' || e.shiftKey && e.key === 'F10') { e.preventDefault(); setSoundOpen(true); } }} onClick={() => void toggleTimer()}>{timerDuration(elapsed)}</TimerButton></Toolbar>
-      </TopArea>
+          <Todos key={data.tag ?? 'all'} tasks={data.tasks} refresh={refresh} notify={notify} />}
       {data &&
         <LogFrame><LogViewport ref={logViewport} data-testid="log-scroll" data-top-fade={logScrolled || undefined}
           onScroll={event => {
             const clipped = event.currentTarget.scrollTop > 12;
             setLogScrolled(previous => previous === clipped ? previous : clipped);
           }}>
-        <Journal key={data.tag ?? "all"} scrollRoot={logViewport} days={data.days} today={data.today} refresh={refresh} notify={notify} openSessions={setSessionsDate} secondsForDay={secondsForDay} hasMore={!!data.next_cursor} loadMore={async () => {
-          if (!data.next_cursor) return;
-          const filter = tagRef.current;
-          const more = await api<JournalData>(`/journal?before=${data.next_cursor}&limit=${JOURNAL_PAGE_SIZE}${filter ? '&tag=' + encodeURIComponent(filter) : ''}`);
-          if (filter !== tagRef.current) return;
-          loadedThrough.current = more.days.at(-1)?.date ?? loadedThrough.current;
-          setData(current => current ? { ...current, days: [...current.days, ...more.days.filter(d => !current.days.some(existing => existing.date === d.date))], next_cursor: more.next_cursor } : current);
-        }} />
+        <Journal key={data.tag ?? 'all'} scrollRoot={logViewport} days={data.days} today={data.today} refresh={refresh} notify={notify} openSessions={setSessionsDate} secondsForDay={secondsForDay} hasMore={!!data.next_cursor} loadMore={loadMore} />
         {error && <TextButton onClick={() => void refresh().catch(e => notify(errorMessage(e)))}>Connection lost · retry</TextButton>}
         </LogViewport><LogEdgeWash data-testid="log-top-ink-wash" $shown={logScrolled} aria-hidden="true" /></LogFrame>
       }
+      </>}
     </Main>
     <Suspense fallback={null}>
       {sessionsDate && <SessionsModal date={sessionsDate} onClose={() => setSessionsDate(null)} onChange={refresh} />}

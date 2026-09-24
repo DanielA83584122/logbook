@@ -9,7 +9,10 @@ const Sheet = styled.dialog<{ $visible: boolean; $wide: boolean; $compact: boole
   opacity: ${({ $visible }) => $visible ? 1 : 0}; transform: translateY(${({ $visible }) => $visible ? '0' : '8px'});
   transition: opacity 160ms ease-out, transform 160ms ease-out;
   &::backdrop { background: var(--backdrop); backdrop-filter: blur(3px); }
-  @media (max-width: 500px) { padding: ${({ $compact }) => $compact ? '12px' : '22px 18px'}; }
+  @media (max-width: 500px) {
+    width: calc(100vw - 16px); max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)));
+    padding: ${({ $compact }) => $compact ? '12px' : '22px 18px'}; border-radius: 18px;
+  }
 `;
 
 export function Modal({ open, onClose, title, children, wide = false, compact = false }: {

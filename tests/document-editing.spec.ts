@@ -47,7 +47,7 @@ test('outdenting keeps the returned revision so the next edit saves normally', a
 });
 
 test('retired entry-jump shortcuts leave the active editor in place', async ({ page, request }) => {
-  const { today } = await (await request.get('/api/journal')).json();
+  const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
   const first = await (await request.post('/api/notes', { data: { date: today, content: 'Stay in this entry' } })).json();
   await request.post('/api/notes', { data: { date: today, content: 'Do not jump here', after_id: first.id } });
   await page.goto('/');
@@ -62,7 +62,7 @@ test('retired entry-jump shortcuts leave the active editor in place', async ({ p
 });
 
 test('vertical arrows keep their visual column across entries and stop at document edges', async ({ page, request }) => {
-  const { today } = await (await request.get('/api/journal')).json();
+  const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
   const first = await (await request.post('/api/notes', { data: { date: today, content: 'abcdefghij' } })).json();
   const second = await (await request.post('/api/notes', { data: { date: today, content: 'abcdefghij', after_id: first.id } })).json();
   const third = await (await request.post('/api/notes', { data: { date: today, content: 'abcdefghij', after_id: second.id } })).json();
@@ -98,7 +98,7 @@ test('vertical arrows keep their visual column across entries and stop at docume
 
 test('vertical arrows traverse wrapped lines before moving to a neighboring entry', async ({ page, request }) => {
   await page.setViewportSize({ width: 620, height: 900 });
-  const { today } = await (await request.get('/api/journal')).json();
+  const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
   const content = 'one two three four five six seven eight nine ten '.repeat(5).trim();
   const wrapped = await (await request.post('/api/notes', { data: { date: today, content } })).json();
   await request.post('/api/notes', { data: { date: today, content: 'Neighbor below', after_id: wrapped.id } });
@@ -122,11 +122,12 @@ test('vertical arrows traverse wrapped lines before moving to a neighboring entr
 
 for (const kind of ['notes', 'tasks'] as const) {
   test(`Enter splits ${kind} at the caret and carries formatted trailing text into the new entry`, async ({ page, request }) => {
-    const { today } = await (await request.get('/api/journal')).json();
+    const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
     const row = await (await request.post(`/api/${kind}`, { data: { date: today, content: 'Alpha **Omega**' } })).json();
     await page.goto('/');
     await page.locator(`[data-kind="${kind}"][data-item-id="${row.id}"] [role="group"]`).click();
     const editor = page.getByRole('textbox', { name: kind === 'notes' ? 'Edit note' : 'Edit to-do', exact: true });
+    await expect(editor).toBeFocused();
     await editor.evaluate(element => {
       const node = document.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode()!;
       const range = document.createRange(); range.setStart(node, node.textContent!.length); range.collapse(true);
@@ -146,7 +147,7 @@ for (const kind of ['notes', 'tasks'] as const) {
   });
 
   test(`Enter keeps new ${kind} siblings focused and in order at root and nested levels`, async ({ page, request }) => {
-    const { today } = await (await request.get('/api/journal')).json();
+    const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
     for (const nested of [false, true]) {
       const parent = nested ? await (await request.post(`/api/${kind}`, { data: { date: today, content: `Enter parent ${kind}` } })).json() : null;
       const data = { date: today, parent_id: parent?.id ?? null };
@@ -180,7 +181,7 @@ for (const kind of ['notes', 'tasks'] as const) {
   });
 
   test(`Backspace joins ${kind} and continues into the preceding bullet from an empty draft`, async ({ page, request }) => {
-    const { today } = await (await request.get('/api/journal')).json();
+    const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
     const first = await (await request.post(`/api/${kind}`, { data: { date: today, content: `First ${kind}` } })).json();
     const second = await (await request.post(`/api/${kind}`, { data: { date: today, content: 'Second', after_id: first.id } })).json();
     await page.goto('/');
@@ -215,8 +216,28 @@ for (const kind of ['notes', 'tasks'] as const) {
   });
 }
 
+for (const kind of ['notes', 'tasks'] as const) {
+  test(`Tab indents an empty new ${kind} entry under the previous entry`, async ({ page, request }) => {
+    const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
+    const parent = await (await request.post(`/api/${kind}`, { data: { date: today, content: `Empty Tab parent ${kind}` } })).json();
+    await page.goto('/');
+    const composer = page.getByRole('textbox', { name: kind === 'notes' ? 'New journal bullet' : 'New to-do', exact: true });
+
+    await composer.press('Tab');
+
+    await expect(composer).toBeFocused();
+    await expect(composer.locator('xpath=ancestor::li[1]')).toHaveAttribute('data-depth', '1');
+    await composer.pressSequentially(`Empty Tab child ${kind}`);
+    await composer.press('Enter');
+    await expect.poll(async () => {
+      const rows = (await (await request.get('/api/export')).json())[kind] as Array<{ content: string; parent_id: number | null }>;
+      return rows.find(row => row.content === `Empty Tab child ${kind}`)?.parent_id;
+    }).toBe(parent.id);
+  });
+}
+
 test('inline tags keep their caret position and move with the trailing half of an Enter split', async ({ page, request }) => {
-  const { today } = await (await request.get('/api/journal')).json();
+  const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
   const row = await (await request.post('/api/notes', { data: { date: today, content: 'Before #move after', tags: ['move'] } })).json();
   await page.goto('/');
   const saved = page.locator(`[data-kind="notes"][data-item-id="${row.id}"] [role="group"]`);
@@ -292,6 +313,30 @@ test('typing while Enter waits for the server is acknowledged before the editor 
     const notes = (await (await request.get('/api/export')).json()).notes;
     return notes.some((row: { content: string }) => row.content === 'Before response plus late typing');
   }).toBe(true);
+});
+
+test('editing a saved entry after inserting before it uses its latest revision', async ({ page, request }) => {
+  const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
+  const first = await (await request.post('/api/notes', { data: { date: today, content: 'Before target' } })).json();
+  const target = await (await request.post('/api/notes', { data: { date: today, content: 'Move all of this text', after_id: first.id } })).json();
+  await page.goto('/');
+
+  const saved = (id: number) => page.locator(`[data-kind="notes"][data-item-id="${id}"] [role="group"]`).first();
+  await saved(first.id).click();
+  const editor = page.getByRole('textbox', { name: 'Edit note', exact: true });
+  await editor.press('Meta+ArrowDown'); await editor.press('Enter');
+  const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
+  await composer.fill('Inserted before target');
+
+  // Selecting the target saves the draft first. That insertion changes the
+  // target's stored position and revision before its editor opens.
+  await saved(target.id).click();
+  await expect(editor).toBeFocused();
+  await editor.press('Meta+ArrowUp'); await editor.press('Enter');
+
+  await expect(page.getByRole('button', { name: 'Retry saving' })).toHaveCount(0);
+  await expect(composer).toBeFocused();
+  await expect(composer).toHaveText('Move all of this text');
 });
 
 test('Backspace merges a completed task into the preceding note', async ({ page, request }) => {

@@ -1,7 +1,7 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import styled from 'styled-components';
 import type { Tag } from '../JournalContext';
-import { compactViewport } from '../layout';
+import { narrowViewport } from '../layout';
 
 const Backdrop = styled.div<{ $open: boolean }>`
   position: fixed; inset: 0; z-index: 40;
@@ -11,7 +11,7 @@ const Backdrop = styled.div<{ $open: boolean }>`
   pointer-events: none;
   transition: opacity 140ms ease-out, visibility 140ms;
   body:has(dialog[open]) & { display: none; }
-  @media ${compactViewport} { display: none; }
+  @media ${narrowViewport} { display: none; }
 `;
 const Rail = styled.nav<{ $open: boolean }>`
   --sidebar-width: max(var(--left-margin), min(280px, calc(100vw - 48px)));
@@ -19,7 +19,7 @@ const Rail = styled.nav<{ $open: boolean }>`
   width: ${({ $open }) => $open ? 'var(--sidebar-width)' : 'calc(var(--left-margin) / 2)'};
   outline: none;
   body:has(dialog[open]) & { display: none; }
-  @media ${compactViewport} { display: none; }
+  @media ${narrowViewport} { display: none; }
 `;
 const Panel = styled.div<{ $open: boolean }>`
   position: absolute; inset: 0 auto 0 0; width: var(--sidebar-width);
@@ -34,6 +34,9 @@ const Panel = styled.div<{ $open: boolean }>`
   transition-timing-function: ease-out, cubic-bezier(.2, 0, 0, 1), linear;
   transition-delay: ${({ $open }) => $open ? '0s' : '0s, 0s, 220ms'};
 `;
+const RailActions = styled.div`
+  display: flex; align-items: center; margin-top: 24px;
+`;
 const Heading = styled.h2`margin: 0 0 18px; font-size: 22px; font-weight: 400; letter-spacing: -.02em;`;
 const Home = styled.button`
   min-height: 40px; padding: 0; border: 0; background: transparent; color: var(--ink);
@@ -43,13 +46,17 @@ const Home = styled.button`
 const Collection = styled.div`display: flex; flex-wrap: wrap; align-content: start; gap: 8px;`;
 const TagPill = styled.button`
   position: relative; max-width: 100%; min-height: 36px; padding: 6px 12px;
-  border: 0; border-radius: 999px; background: var(--tag-bg); color: var(--tag-ink);
+  border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--tag-ink);
   font-size: 14px; line-height: 20px; overflow-wrap: anywhere;
+  &[aria-pressed='true'] { border-color: var(--tag-selected); color: var(--tag-selected); }
+  transition: border-color 140ms ease-out, color 140ms ease-out;
   &::before { content: ''; position: absolute; inset: -2px; }
   @media(pointer: coarse) { min-height: 44px; &::before { inset: 0; } }
 `;
 
-export function TagTabs({ tags, active, onSelect }: { tags: Tag[]; active: string | null; onSelect: (tag: string | null) => void }) {
+export function TagTabs({ tags, active, onSelect, controls }: {
+  tags: Tag[]; active: string | null; onSelect: (tag: string | null) => void; controls?: ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   const rail = useRef<HTMLElement>(null);
   const previousFocus = useRef<HTMLElement | null>(null);
@@ -69,7 +76,7 @@ export function TagTabs({ tags, active, onSelect }: { tags: Tag[]; active: strin
 
   return <>
     <Backdrop $open={open} aria-hidden="true" data-testid="tag-backdrop" />
-    <Rail ref={rail} $open={open} aria-label="Tags" tabIndex={0} data-open={open}
+    <Rail ref={rail} $open={open} aria-label="Tags" tabIndex={0} data-open={open} data-focus-surface
       onPointerEnter={show}
       onPointerLeave={() => {
         if (!rail.current?.matches(':focus-visible') && !rail.current?.querySelector(':focus-visible')) close();
@@ -84,6 +91,7 @@ export function TagTabs({ tags, active, onSelect }: { tags: Tag[]; active: strin
         <Heading><Home type="button" onClick={() => select(null)}>logbook</Home></Heading>
         <Collection>{tags.map(tag => <TagPill key={tag.name} type="button"
           aria-pressed={tag.name === active} onClick={() => select(tag.name)}>#{tag.name}</TagPill>)}</Collection>
+        <RailActions>{controls}</RailActions>
       </Panel>
     </Rail>
   </>;

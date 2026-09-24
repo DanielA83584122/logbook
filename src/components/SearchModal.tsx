@@ -8,7 +8,7 @@ import { InlineError, TextButton } from '../styles';
 
 export type SearchHit = OutlineItem & { kind: 'notes' | 'tasks'; date: string | null };
 type Results = { results: SearchHit[]; next_offset: number | null };
-const Input = styled.input`width: 100%; min-height: 44px; padding: 8px 12px; border: 0; background: transparent; color: var(--ink); outline: none;`;
+const Input = styled.input`width: 100%; min-height: 44px; padding: 8px 12px; border: 0; background: transparent; color: var(--ink); outline: none; font-size: 16px;`;
 const ResultsList = styled.div`max-height: 50dvh; overflow-y: auto;`;
 const Result = styled.button<{ $selected: boolean }>`display: block; width: 100%; min-height: 44px; padding: 10px 12px; border: 0; background: ${({ $selected }) => $selected ? 'var(--soft)' : 'transparent'}; border-radius: 6px; text-align: left; font-size: 14px; color: var(--ink); span { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; }`;
 const Empty = styled.p`padding: 12px; color: var(--muted); font-size: 13px;`;

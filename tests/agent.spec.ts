@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures';
 
 test('a reader without JavaScript can discover and query the complete saved document', async ({ browser, baseURL, request }) => {
-  const { today } = await (await request.get('/api/journal')).json();
+  const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
   const parent = await (await request.post('/api/notes', { data: { date: today, content: 'Agent-readable parent', tags: ['agent-reading'] } })).json();
   const child = await (await request.post('/api/notes', { data: { date: today, content: 'Read the [reference](https://example.com/reference)', parent_id: parent.id } })).json();
   const context = await browser.newContext({ javaScriptEnabled: false, baseURL });

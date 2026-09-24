@@ -2,6 +2,7 @@ import { expect, test } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
 
 test('password-only gate blurs the journal and unlocks without a username', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('still-theme', 'night'));
   await page.route('**/api/auth/status', route => route.fulfill({ json: { enabled: true, authenticated: false } }));
   await page.route('**/api/auth/login', async route => {
     const body = route.request().postDataJSON() as { password: string };
@@ -14,6 +15,9 @@ test('password-only gate blurs the journal and unlocks without a username', asyn
   await expect(dialog).toBeVisible();
   await expect(password).toBeFocused();
   await expect(page.getByTestId('auth-surface')).toHaveCSS('filter', 'blur(7px)');
+  await expect(page.getByTestId('auth-surface')).toHaveCSS('transition-duration', '0.26s');
+  await expect(page.getByTestId('locked-document-preview')).toHaveCount(0);
+  await expect(page.getByTestId('locked-log-preview')).toHaveCount(0);
   const label = dialog.getByText('password', { exact: true });
   await expect(label).toBeVisible();
   await expect(dialog.getByText(/username/i)).toHaveCount(0);
@@ -29,5 +33,7 @@ test('password-only gate blurs the journal and unlocks without a username', asyn
 
   await expect(dialog).toBeHidden();
   await expect(page.getByTestId('auth-surface')).toHaveCSS('filter', 'blur(0px)');
-  await expect(page.getByRole('textbox', { name: 'New journal bullet', exact: true })).toBeFocused();
+  await expect(page.getByTestId('auth-surface')).not.toHaveAttribute('inert');
+  await expect(page.getByTestId('auth-surface')).not.toHaveAttribute('aria-hidden');
+  await expect(page.getByRole('textbox', { name: 'New journal bullet', exact: true })).toBeVisible();
 });

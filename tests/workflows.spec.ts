@@ -124,9 +124,15 @@ test('merging, grouped selection, and document undo cross bullet boundaries', as
   let editor = page.getByRole('textbox', { name: 'Edit note', exact: true });
   await expect(editor).toHaveText('Beta');
   await editor.evaluate(element => {
-    const range = document.createRange(); range.selectNodeContents(element); range.collapse(true);
+    const text = document.createTreeWalker(element, NodeFilter.SHOW_TEXT).nextNode();
+    if (!text) throw new Error('Expected editor text');
+    const range = document.createRange(); range.setStart(text, 0); range.collapse(true);
     const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range);
   });
+  await expect.poll(() => editor.evaluate(element => {
+    const selection = getSelection()!; const range = document.createRange(); range.selectNodeContents(element);
+    range.setEnd(selection.focusNode!, selection.focusOffset); return range.toString().length;
+  })).toBe(0);
   await editor.press('Backspace');
   await expect(editor).toHaveText('AlphaBeta');
   await editor.press('Meta+ArrowDown');
@@ -273,7 +279,9 @@ test('zero days have no bars and statistics expose the averaging period', async 
     start: '2026-09-10', end: '2026-09-16', day_count: 7, active_days: 1, total_focused_seconds: 30, session_count: 1,
     daily: Array.from({ length: 7 }, (_, i) => ({ date: `2026-09-${10 + i}`, focused_seconds: i === 6 ? 30 : 0, longest_session_seconds: i === 6 ? 30 : 0, completed_task_count: 0 })),
   } }));
-  await page.goto('/'); await page.getByRole('button', { name: 'Open focus statistics', exact: true }).click();
+  await page.goto('/');
+  await page.getByRole('navigation', { name: 'Tags' }).hover();
+  await page.getByRole('button', { name: 'Open focus statistics', exact: true }).click();
   const modal = page.getByRole('dialog', { name: 'Statistics', exact: true });
   await expect(modal.getByText(/30s total/)).toBeVisible();
   await expect(modal.getByText('1 of 7 days', { exact: true })).toHaveCount(0);

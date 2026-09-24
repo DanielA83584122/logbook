@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures';
+import AxeBuilder from '@axe-core/playwright';
 
 const today = '2026-09-17';
 test.beforeEach(async ({ page }) => {
@@ -12,42 +13,35 @@ test.beforeEach(async ({ page }) => {
   } }));
 });
 
-test('timer aligns to the first task and journal text without overlapping page controls', async ({ page }) => {
+test('global timer stays fixed at the top right while to-dos stack above the log', async ({ page }) => {
   await page.goto('/');
   const timer = page.getByRole('button', { name: 'Start focus timer', exact: true });
+  const readout = page.getByTestId('compact-timer-time');
   const task = page.getByRole('group', { name: 'First to-do', exact: true });
   const note = page.getByRole('group', { name: 'Current note 0', exact: true });
   for (const width of [1440, 1280, 1024, 900, 760, 641]) {
     await page.setViewportSize({ width, height: 900 });
-    await page.waitForTimeout(350);
-    await expect.poll(async () => {
-      const settled = (await timer.boundingBox())!;
-      return settled.x + settled.width / 2;
-    }).toBeGreaterThanOrEqual(width / 2 - 4);
-    const [button, first, text, controls] = await Promise.all([
-      timer.boundingBox(), task.boundingBox(), note.boundingBox(), page.getByRole('group', { name: 'Page controls' }).boundingBox(),
+    await page.getByTestId('log-scroll').evaluate(element => { element.scrollTop = 0; });
+    await expect(page.getByRole('tablist', { name: 'Mobile views' })).toHaveCount(0);
+    const [button, time, first, text] = await Promise.all([
+      timer.boundingBox(), readout.boundingBox(), task.boundingBox(), note.boundingBox(),
     ]);
-    // The concentric ring extends eight pixels beyond the button.
-    expect(button!.y - 8).toBeCloseTo(first!.y, 0);
-    expect(button!.x - 8 - (first!.x + first!.width)).toBeGreaterThanOrEqual(37);
-    expect(button!.x + button!.width / 2).toBeGreaterThanOrEqual(width / 2 - 4);
-    expect(button!.x + button!.width + 8).toBeLessThanOrEqual(text!.x + text!.width);
-    expect(controls!.y + controls!.height).toBeLessThan(button!.y - 8);
+    expect(button!.width).toBe(44);
+    expect(button!.height).toBe(44);
+    expect(button!.x + button!.width).toBe(width - 24);
+    expect(button!.y).toBe(20);
+    expect(time!.x + time!.width).toBeLessThan(button!.x);
+    expect(first!.y + first!.height).toBeLessThan(text!.y);
+    await expect(page.getByRole('group', { name: 'Page controls' })).toBeHidden();
     await page.getByTestId('log-scroll').evaluate(el => { el.scrollTop = el.scrollHeight; });
     const scrolledTimer = (await timer.boundingBox())!;
-    expect(Math.abs(scrolledTimer.x - button!.x)).toBeLessThan(4);
-    expect(scrolledTimer.y).toBe(button!.y);
-    const scrolledTask = (await task.boundingBox())!;
-    expect(scrolledTask.x).toBeCloseTo(first!.x, 0);
-    expect(scrolledTask.y).toBeCloseTo(first!.y, 0);
-    expect(Math.abs(scrolledTask.width - first!.width)).toBeLessThan(2);
-    expect(scrolledTask.height).toBeCloseTo(first!.height, 0);
+    expect(scrolledTimer).toEqual(button);
     await page.getByTestId('log-scroll').evaluate(el => { el.scrollTop = 0; });
   }
   await page.screenshot({ path: '/tmp/still-layout-desktop.png' });
 });
 
-test('timer follows task content, long tasks wrap at its outer limit, and the empty area starts a focused task', async ({ page }) => {
+test('stacked to-dos keep a generous creation area and wrap within the document', async ({ page }) => {
   await page.unroute('**/api/journal?*');
   let tasks: Array<{ id: number; content: string; tags: string[]; parent_id: null; position: number }> = [];
   await page.route('**/api/journal?*', route => route.fulfill({ json: {
@@ -64,61 +58,116 @@ test('timer follows task content, long tasks wrap at its outer limit, and the em
 
   tasks = [{ id: 9301, content: 'A deliberately very long to-do entry that keeps going until it has to wrap before reaching the timer at the established outer edge of the document', tags: [], parent_id: null, position: 0 }];
   await page.reload();
-  const note = (await page.getByRole('group', { name: 'Width reference', exact: true }).boundingBox())!;
-  await expect.poll(async () => {
-    const box = (await page.getByRole('button', { name: 'Start focus timer', exact: true }).boundingBox())!;
-    return note.x + note.width - (box.x + box.width + 8);
-  }).toBeLessThan(24);
-  const timer = (await page.getByRole('button', { name: 'Start focus timer', exact: true }).boundingBox())!;
   const task = (await page.getByRole('group', { name: tasks[0].content, exact: true }).boundingBox())!;
+  const main = (await page.getByRole('main').boundingBox())!;
   expect(task.height).toBeGreaterThan(28);
-  expect(task.x + task.width).toBeLessThan(timer.x - 8);
+  expect(task.x).toBeGreaterThanOrEqual(main.x);
+  expect(task.x + task.width).toBeLessThanOrEqual(main.x + main.width);
 
   tasks = [{ id: 9302, content: 'A reasonably long introductory phrase pneumonoultramicroscopicsilicovolcanoconiosisextended', tags: [], parent_id: null, position: 0 }];
   await page.reload();
   const wordTask = (await page.getByRole('group', { name: tasks[0].content, exact: true }).boundingBox())!;
-  const wordNote = (await page.getByRole('group', { name: 'Width reference', exact: true }).boundingBox())!;
   expect(wordTask.height).toBeGreaterThan(28);
-  await expect.poll(async () => {
-    const box = (await page.getByRole('button', { name: 'Start focus timer', exact: true }).boundingBox())!;
-    return wordNote.x + wordNote.width - (box.x + box.width + 8);
-  }).toBeGreaterThan(40);
+  expect(wordTask.x + wordTask.width).toBeLessThanOrEqual(main.x + main.width);
 });
 
-test('compact view centers the timer above today and gives remaining height to notes', async ({ page }) => {
+test('height chooses stacked or swipe mode while width only controls sidebar chrome', async ({ page }) => {
   await page.goto('/');
-  for (const size of [{ width: 640, height: 800 }, { width: 440, height: 700 }, { width: 260, height: 700 }, { width: 1000, height: 400 }]) {
+  const timer = page.getByRole('button', { name: 'Start focus timer', exact: true });
+  const timerReadout = page.getByTestId('compact-timer-time');
+  for (const size of [{ width: 640, height: 800 }, { width: 440, height: 700 }, { width: 260, height: 700 }]) {
     await page.setViewportSize(size);
-    await page.getByTestId('log-scroll').evaluate(el => { el.scrollTop = 0; });
+    await page.getByTestId('log-scroll').evaluate(element => { element.scrollTop = 0; });
+    await expect(page.getByRole('tablist', { name: 'Mobile views' })).toHaveCount(0);
     await expect(page.getByRole('group', { name: 'Page controls' })).toBeHidden();
-    await expect(page.getByRole('region', { name: 'to do', exact: true })).toBeHidden();
     await expect(page.getByRole('navigation', { name: 'Tags' })).toBeHidden();
     await expect(page.getByRole('group', { name: 'Older note', exact: true })).toBeHidden();
-    const timer = (await page.getByRole('button', { name: 'Start focus timer', exact: true }).boundingBox())!;
-    const log = (await page.getByTestId('log-scroll').boundingBox())!;
+    await expect(page.getByRole('group', { name: 'First to-do', exact: true })).toBeVisible();
+    await expect(page.getByRole('group', { name: 'Current note 0', exact: true })).toBeVisible();
+    const todo = (await page.getByRole('region', { name: 'to do', exact: true }).boundingBox())!;
+    const main = (await page.getByRole('main').boundingBox())!;
     const date = (await page.getByRole('button', { name: `Focus sessions for ${today}`, exact: true }).boundingBox())!;
-    expect(timer.x + timer.width / 2).toBeCloseTo(size.width / 2, 0);
-    expect(timer.y - 8).toBe(24);
-    expect(log.y).toBeGreaterThan(timer.y + timer.height + 8);
-    expect(date.y).toBeGreaterThanOrEqual(log.y);
-    expect(log.y + log.height).toBeCloseTo(size.height, 0);
+    const datePill = (await page.locator(`time[datetime="${today}"]`).boundingBox())!;
+    await expect(timerReadout).toHaveText('00:00:00');
+    await expect(page.getByRole('switch', { name: 'Night mode', exact: true })).toBeHidden();
+    expect(todo.y + todo.height).toBeLessThanOrEqual(date.y);
+    expect(main.x).toBe(24);
+    expect(size.width - main.x - main.width).toBe(16);
+    expect(datePill.x).toBeGreaterThanOrEqual(main.x);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(size.width);
-    expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeLessThanOrEqual(size.height);
-    await page.getByTestId('log-scroll').evaluate(el => { el.scrollTop = el.scrollHeight; });
-    expect(await page.getByRole('button', { name: 'Start focus timer', exact: true }).boundingBox()).toEqual(timer);
-    await page.getByTestId('log-scroll').evaluate(el => { el.scrollTop = 0; });
+    if (size.width === 440) await page.screenshot({ path: '/tmp/still-layout-tall-thin.png' });
+  }
+  for (const size of [{ width: 440, height: 400 }, { width: 260, height: 180 }, { width: 1000, height: 400 }]) {
+    await page.setViewportSize(size);
+    const tabs = page.getByRole('tablist', { name: 'Mobile views' });
+    await expect(tabs).toBeVisible();
+    await expect(tabs.getByRole('tab')).toHaveText(['to do', 'log', 'tags']);
+    await expect(page.getByRole('tab', { name: 'log', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(timer).toBeInViewport();
+    await expect(timerReadout).toHaveText('00:00:00');
+    const [activeDot, timerBox] = await Promise.all([
+      page.getByRole('tab', { name: 'log', exact: true }).boundingBox(), timer.boundingBox(),
+    ]);
+    expect(activeDot!.y + activeDot!.height / 2).toBeCloseTo(timerBox!.y + timerBox!.height / 2, 0);
+    await expect(page.getByRole('tab', { name: 'log', exact: true })).toHaveCSS('font-size', '0px');
+    await expect(page.getByRole('navigation', { name: 'Tags' })).toHaveCount(0);
+    await expect(page.getByRole('group', { name: 'Page controls' })).toBeHidden();
+    if (size.width <= 640) {
+      const main = (await page.getByRole('main').boundingBox())!;
+      expect(main.x).toBe(24);
+      expect(size.width - main.x - main.width).toBe(16);
+    }
+    await page.getByRole('tab', { name: 'tags', exact: true }).click();
+    await expect(page.getByRole('tab', { name: 'tags', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('group', { name: 'Page controls' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'all', exact: true })).toBeVisible();
+    await page.getByRole('tab', { name: 'to do', exact: true }).click();
+    await expect(page.getByRole('tab', { name: 'to do', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('group', { name: 'First to-do', exact: true })).toBeInViewport();
+    expect((await page.getByRole('group', { name: 'First to-do', exact: true }).boundingBox())!.height).toBeLessThanOrEqual(40);
+    await page.getByRole('tab', { name: 'log', exact: true }).click();
+    await page.getByTestId('log-scroll').evaluate(element => { element.scrollTop = 0; });
+    await expect(page.getByRole('group', { name: 'Current note 0', exact: true })).toBeInViewport();
+    await expect(page.getByRole('group', { name: 'Older note', exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(size.width);
+    if (size.width === 440) await page.screenshot({ path: '/tmp/still-layout-short-thin.png' });
   }
   await page.setViewportSize({ width: 440, height: 700 });
-  await page.screenshot({ path: '/tmp/still-layout-compact.png' });
-  await page.setViewportSize({ width: 260, height: 180 });
-  await expect(page.getByTestId('log-scroll')).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Start focus timer', exact: true })).toBeInViewport();
+  expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
+});
+
+test('swipe log loads earlier dates infinitely and preserves its active tag filter', async ({ page }) => {
+  await page.unroute('**/api/journal?*');
+  const requests: URL[] = [];
+  await page.route('**/api/journal?*', route => {
+    const url = new URL(route.request().url()); requests.push(url);
+    const tag = url.searchParams.get('tag');
+    const before = url.searchParams.get('before');
+    return route.fulfill({ json: {
+      today, server_time: new Date().toISOString(), active_session: null,
+      tags: [{ name: 'work', note_count: 26, task_count: 0 }], tag, tasks: [],
+      next_cursor: before ? null : '2026-09-16',
+      days: before
+        ? [{ date: '2026-09-01', focused_seconds: 0, notes: [{ id: 9800, content: 'Infinitely older work note', tags: ['work'], parent_id: null, position: 0 }] }]
+        : [{ date: today, focused_seconds: 0, notes: Array.from({ length: 25 }, (_, index) => ({ id: 9700 + index, content: `Recent work note ${index}`, tags: ['work'], parent_id: null, position: index })) }],
+    } });
+  });
+  await page.setViewportSize({ width: 440, height: 400 });
+  await page.goto('/');
+  await page.getByRole('tab', { name: 'tags', exact: true }).click();
+  await page.getByRole('button', { name: '#work', exact: true }).click();
+  await expect(page.getByRole('button', { name: '#work', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('tab', { name: 'log', exact: true }).click();
+  await page.getByTestId('log-scroll').evaluate(element => { element.scrollTop = element.scrollHeight; });
+  await expect(page.getByRole('group', { name: 'Infinitely older work note', exact: true })).toBeVisible();
+  expect(requests.some(url => url.searchParams.has('before') && url.searchParams.get('tag') === 'work')).toBe(true);
 });
 
 test('journal ink wash appears only after content is clipped', async ({ page }) => {
   await page.goto('/');
   const journal = page.getByTestId('log-scroll');
   const wash = page.getByTestId('log-top-ink-wash');
+  await journal.evaluate(element => { element.scrollTop = 0; });
   await expect(journal).not.toHaveAttribute('data-top-fade', 'true');
   await expect(wash).toHaveCSS('opacity', '0');
   await journal.evaluate(el => { el.scrollTop = 80; });

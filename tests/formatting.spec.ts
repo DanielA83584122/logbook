@@ -22,7 +22,7 @@ async function rows(page: Page, kind: 'notes' | 'tasks') {
 
 for (const kind of ['notes', 'tasks'] as const) {
   test(`link boundaries follow words while interior spaces stay linked in ${kind}`, async ({ page, request }) => {
-    const { today } = await (await request.get('/api/journal')).json();
+    const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
     const url = 'https://example.com/guide';
     const cases = [
       { label: 'guide', caret: 5, text: ' next word', linked: 'guide', visible: 'guide next word', markdown: `[guide](${url}) next word` },
@@ -331,7 +331,7 @@ test('Ctrl shortcuts work on Windows and block formatting saves valid Markdown',
 
 for (const kind of ['notes', 'tasks'] as const) {
   test(`Command Shift C formats a mouse selection in saved ${kind}`, async ({ page, request }) => {
-    const journal = await (await request.get('/api/journal')).json();
+    const journal = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
     const content = `Select ${kind === 'tasks' ? '**this**' : 'this'} code with the mouse ${kind}`;
     await request.post(`/api/${kind}`, { data: { date: journal.today, content } });
     await page.goto('/');
@@ -371,7 +371,7 @@ for (const kind of ['notes', 'tasks'] as const) {
     await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { value: {
       readText: async () => { throw new Error('Context editing must not read the clipboard'); },
     } }));
-    const journal = await (await request.get('/api/journal')).json();
+    const journal = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
     const created = await (await request.post(`/api/${kind}`, { data: {
       date: journal.today, content: `Before [**Original ${kind} link**](https://example.com/original) after`,
     } })).json();

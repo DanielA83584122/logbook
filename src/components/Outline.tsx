@@ -8,6 +8,7 @@ import { TextButton, VisuallyHidden } from '../styles';
 import { MarkdownContent, markdownText, richTextStyles, mergeMarkdown, formatMarkdown, pastedBullet } from '../markdown';
 import { RichTextEditor, type RichTextHandle, type TextOffsets, type VerticalDirection } from './RichTextEditor';
 import { documentUndo, editDocument, recordEdit } from '../documentHistory';
+import { compactViewport } from '../layout';
 
 const MAX_LEVELS = 8;
 const OutlineSurface = styled.div`
@@ -18,12 +19,15 @@ const OutlineSurface = styled.div`
   --bullet-line-height: 1.2;
   --bullet-paragraph-gap: .2em;
   --bullet-marker-offset: .5px;
+  @media(pointer: coarse) { --bullet-size: 16px; --bullet-line-height: 1.35; }
+  @media ${compactViewport} { --bullet-row-height: 36px; --bullet-padding: 6px 0; --bullet-line-height: 1.3; --bullet-paragraph-gap: .1em; }
 `;
 const List = styled.ul`list-style: none; padding: 0; margin: 0;`;
 const Children = styled(List)<{ $task: boolean }>`
   padding-left: ${({ $task }) => $task ? '28px' : '32px'};
   @media(max-width: 900px) { padding-left: ${({ $task }) => $task ? '20px' : '24px'}; }
-  @media(max-width: 440px) { padding-left: 16px; }
+  @media(max-width: 440px) { padding-left: 12px; }
+  @media ${compactViewport} { padding-left: 9px; }
 `;
 const popOut = keyframes`0% { opacity: 1; transform: scale(1); } 40% { opacity: .8; transform: scale(1.012); } 100% { opacity: 0; transform: translateY(-3px) scale(.985); }`;
 const slideIn = keyframes`from { opacity: 0; transform: translateY(-7px); } to { opacity: 1; transform: translateY(0); }`;
@@ -35,7 +39,7 @@ const Item = styled.li<{ $leaving?: boolean; $arriving?: boolean; $shifting?: 'i
   ${({ $arriving }) => $arriving && css`animation: ${slideIn} 280ms cubic-bezier(.2,.7,.3,1) both;`}
   ${({ $shifting }) => $shifting && css`animation: ${$shifting === 'in' ? shiftIn : shiftOut} 220ms cubic-bezier(.2, 0, 0, 1) both;`}
 `;
-const Row = styled.div`position: relative; display: flex; align-items: flex-start; min-height: var(--bullet-row-height); @media(pointer: coarse) { min-height: 44px; }`;
+const Row = styled.div`position: relative; display: flex; align-items: flex-start; min-height: var(--bullet-row-height); @media(pointer: coarse) { min-height: 44px; } @media ${compactViewport} { min-height: 36px; }`;
 const Branch = styled.div<{ $open: boolean }>`
   display: grid; min-height: 0;
   grid-template-rows: ${({ $open }) => $open ? '1fr' : '0fr'};
@@ -72,12 +76,14 @@ const ComposerTarget = styled.button<{ $floating: boolean }>`
   display: block; width: 100%; min-height: var(--bullet-row-height); padding: 0; border: 0; background: transparent;
   ${({ $floating }) => $floating && 'position: absolute; top: 100%; height: 20px; min-height: 20px;'}
   @media(pointer: coarse) { min-height: 44px; }
+  @media ${compactViewport} { min-height: 36px; }
 `;
 const Marker = styled.span<{ $task: boolean }>`
   display: flex; width: 40px; min-width: 40px; height: var(--bullet-row-height); align-items: center; justify-content: center; color: var(--ink);
   &::before { content: ${({ $task }) => $task ? "''" : "'–'"}; font-size: 14px; translate: 0 var(--bullet-marker-offset);
     ${({ $task }) => $task ? 'width: 12px; height: 12px; border: 1.25px solid currentColor; border-radius: 50%;' : ''} }
   @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px; }
+  @media ${compactViewport} { width: 36px; min-width: 36px; height: 36px; }
 `;
 const DraftItem = styled(Item)<{ $emptyTask: boolean }>`
   ${({ $emptyTask }) => $emptyTask && css`
@@ -104,6 +110,7 @@ const Checkbox = styled.button<{ $checked?: boolean; $suppressPreview?: boolean 
     `}
   }
   @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px; }
+  @media ${compactViewport} { width: 36px; min-width: 36px; height: 36px; }
 `;
 const Disclosure = styled.button<{ $open: boolean; $task: boolean; $progress: number }>`
   width: 40px; min-width: 40px; height: var(--bullet-row-height); padding: 0; border: 0;
@@ -113,6 +120,7 @@ const Disclosure = styled.button<{ $open: boolean; $task: boolean; $progress: nu
   ${({ $task, $progress }) => $task && css`&::before { --task-progress: ${$progress * 360}deg; width: 12px; height: 12px; border: 1px solid currentColor; border-radius: 50%; transform: none; background: conic-gradient(currentColor var(--task-progress), transparent 0); transition: --task-progress 240ms ease-out; }`}
   @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px;
   }
+  @media ${compactViewport} { width: 36px; min-width: 36px; height: 36px; }
 `;
 const Text = styled.div<{ $done?: boolean; $action?: boolean }>`
   ${richTextStyles}; cursor: text;
@@ -121,6 +129,7 @@ const Text = styled.div<{ $done?: boolean; $action?: boolean }>`
   text-align: left; line-height: var(--bullet-line-height); font-size: var(--bullet-size); white-space: pre-wrap; overflow-wrap: anywhere;
   &:focus-visible { outline: none; }
   @media(pointer: coarse) { min-height: 44px; padding: 10px 0; }
+  @media ${compactViewport} { min-height: 36px; padding: 6px 0; }
 `;
 type Draft = {
   active: boolean; mode: 'new' | 'edit'; id: number | null; content: string; saved: string;
@@ -398,14 +407,21 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     const selection = offsets ?? selectedTextOffsets(element, contextLink);
     void run(async () => {
       await save();
-      const group = siblings(records.current, row.parent_id);
-      const index = group.findIndex(item => item.id === row.id);
-      const content = row.content;
-      flushSync(() => persist({ ...blank(records.current, true), mode: 'edit', id: row.id, content, saved: content,
-        kind: entryKind(row),
-        revision: row.revision,
-        tags: row.tags ?? [], savedTags: row.tags ?? [], hiddenTag: activeTag && row.tags?.includes(activeTag) ? activeTag : null,
-        parentId: row.parent_id, afterId: group[index - 1]?.id ?? null }));
+      // Saving the previous draft can insert before this row and advance its
+      // revision. Let the refresh commit, then resolve the row again instead
+      // of opening the pre-save snapshot; otherwise the first edit is
+      // guaranteed to conflict and cannot retry.
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      const latest = records.current.find(item => item.id === row.id);
+      if (!latest) return;
+      const group = siblings(records.current, latest.parent_id);
+      const index = group.findIndex(item => item.id === latest.id);
+      const content = latest.content;
+      flushSync(() => persist({ ...blank(records.current, true), mode: 'edit', id: latest.id, content, saved: content,
+        kind: entryKind(latest),
+        revision: latest.revision,
+        tags: latest.tags ?? [], savedTags: latest.tags ?? [], hiddenTag: activeTag && latest.tags?.includes(activeTag) ? activeTag : null,
+        parentId: latest.parent_id, afterId: group[index - 1]?.id ?? null }));
       if (vertical) input.current?.focusAt(vertical.x, vertical.direction, { preventScroll: false });
       else input.current?.focus({ preventScroll: false }, selection);
       if (contextLink) input.current?.editLink();
@@ -754,6 +770,14 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
         // `run()` owns the actual mutation lock, so letting the key reach the
         // handlers prevents a restored editor from swallowing the first key.
         if (event.isComposing) return;
+        // If the user reaches the remounted editor before the scheduled caret
+        // restoration, their key is the newer intent. Do not overwrite the
+        // resulting selection on the next animation frame.
+        if (restoringFocus.current && event.currentTarget === document.activeElement) {
+          pendingSelection.current = undefined;
+          pendingVertical.current = undefined;
+          restoringFocus.current = false;
+        }
         if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') verticalX.current = null;
         if (event.key === 'Enter' && !(event.currentTarget as HTMLElement).textContent?.trim() && current.current.id !== null) {
           persist({ ...current.current, content: '', tags: [] });
@@ -768,12 +792,23 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
           // take the async mutation lock because Enter commonly follows Tab in
           // the same typing cadence.
           if (current.current.id === null) {
+            // Moving the draft remounts its editor. Protect an empty draft
+            // from being mistaken for an abandoned one during that blur.
+            restoringFocus.current = true;
+            const emptyDraft = !current.current.content.trim() && !current.current.tags.length;
             void move(event.shiftKey);
-            // A note autosave may already be in flight and reconcile this row
-            // after the immediate local move. Restore once more after that
-            // refresh so it cannot reset the caret to the start.
-            (document.activeElement as HTMLElement | null)?.blur();
-            void queue.current.finally(() => { pendingSelection.current = indentSelection; focus(); });
+            if (emptyDraft) {
+              // There is no save to reconcile. Restore the remounted editor on
+              // the next frame without an extra blur that could discard it.
+              pendingSelection.current = indentSelection;
+              focus();
+            } else {
+              // A note autosave may already be in flight and reconcile this row
+              // after the immediate local move. Restore once more after that
+              // refresh so it cannot reset the caret to the start.
+              (document.activeElement as HTMLElement | null)?.blur();
+              void queue.current.finally(() => { pendingSelection.current = indentSelection; focus(); });
+            }
           } else {
             void run(async () => { await move(event.shiftKey); pendingSelection.current = indentSelection; });
             // Do not expose the remounted editor as focused until run() can

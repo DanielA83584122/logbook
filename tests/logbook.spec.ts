@@ -169,7 +169,7 @@ test('write, autosave, complete a to-do, use the timer, and edit sessions', asyn
   await expect(page.getByRole('group', { name: 'overdue trainings', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: 'Start focus timer' }).click();
-  await expect(page.getByRole('button', { name: 'Stop focus timer' })).toContainText('00:00');
+  await expect(page.getByTestId('compact-timer-time')).toContainText('00:00');
   await page.getByRole('button', { name: 'Stop focus timer' }).click({ button: 'right' });
   await page.getByRole('button', { name: 'Mute focus sound' }).click();
   await page.getByRole('button', { name: 'Play focus sound' }).click();
@@ -199,6 +199,7 @@ test('write, autosave, complete a to-do, use the timer, and edit sessions', asyn
   const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(yesterday);
   const start = new Date(`${day}T09:00:00-07:00`).toISOString();
   await request.post('/api/sessions', { data: { started_at: start, duration_seconds: 75 * 60 } });
+  await page.getByRole('navigation', { name: 'Tags' }).hover();
   await page.getByRole('button', { name: 'Open focus statistics' }).click();
   const statsDialog = page.getByRole('dialog', { name: 'Statistics' });
   await expect(statsDialog).toBeVisible();
@@ -229,18 +230,21 @@ test('recovers a failed autosave without losing the draft', async ({ page }) => 
   await expect(page.getByRole('group', { name: 'This thought stays safe through a connection failure.', exact: true })).toBeVisible();
 });
 
-test('narrows to current notes and then just the timer', async ({ page }) => {
+test('tall narrow screens stack to-dos over notes and short screens switch to tabs', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('textbox', { name: 'New journal bullet' })).toBeFocused();
   await page.screenshot({ path: 'test-results/journal-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 440, height: 700 });
   await expect(page.getByRole('region', { name: /^Today,/ })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'New journal bullet' })).toBeVisible();
-  await expect(page.getByRole('textbox', { name: 'New to-do' })).toBeHidden();
+  await expect(page.getByRole('region', { name: 'to do', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add to-do', exact: true })).toBeVisible();
+  await expect(page.getByRole('tablist', { name: 'Mobile views' })).toHaveCount(0);
   await expect(page.getByRole('region', { name: /^Yesterday,/ })).toBeHidden();
   await page.screenshot({ path: 'test-results/compact-notes.png' });
   await page.setViewportSize({ width: 260, height: 180 });
-  await expect(page.getByRole('textbox', { name: 'New journal bullet' })).toBeHidden();
+  await expect(page.getByRole('tablist', { name: 'Mobile views' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'New journal bullet' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start focus timer' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Open focus statistics' })).toBeHidden();
   expect(await page.locator('body').evaluate(el => el.scrollWidth)).toBeLessThanOrEqual(260);
@@ -266,8 +270,10 @@ test('creates a fresh day at midnight and focuses its new bullet', async ({ page
 test('journal and statistics meet automated accessibility checks', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('textbox', { name: 'New journal bullet' })).toBeFocused();
+  await page.waitForTimeout(160); // Let initial hover/color transitions reach their contrast-stable state.
   const journal = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
   expect(journal.violations).toEqual([]);
+  await page.getByRole('navigation', { name: 'Tags' }).hover();
   await page.getByRole('button', { name: 'Open focus statistics' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(1);
   await expect(page.getByRole('dialog', { name: 'Statistics' })).toBeVisible();
@@ -314,7 +320,9 @@ test('loads older days automatically and saves edits to historical notes', async
   expect(main!.x).toBeGreaterThanOrEqual(240);
   expect(main!.x).toBeGreaterThan(1280 - main!.x - main!.width);
   expect(Math.abs(main!.x + main!.width / 2 - 640)).toBeLessThan(40);
-  expect(timerBefore!.x + timerBefore!.width + 8).toBeLessThanOrEqual(main!.x + main!.width);
+  expect(timerBefore!.x + timerBefore!.width).toBe(1280 - 24);
+  expect(timerBefore!.y).toBe(20);
+  expect(todoBefore!.y + todoBefore!.height).toBeLessThanOrEqual((await page.getByRole('button', { name: /Focus sessions for/ }).first().boundingBox())!.y);
   expect(timerBefore!.height).toBe(timerBefore!.width);
   await expect(timer).toHaveCSS('border-radius', '50%');
   await expect(page.getByRole('group', { name: 'History entry 1', exact: true })).toHaveCount(0);

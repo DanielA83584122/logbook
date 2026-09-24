@@ -7,15 +7,15 @@ import { PasswordGate } from './components/PasswordGate';
 
 document.documentElement.dataset.theme = localStorage.getItem('still-theme') === 'night' ? 'night' : 'day';
 
-const AppSurface = styled.div<{ $locked: boolean }>`
-  min-height: 100dvh; filter: blur(${({ $locked }) => $locked ? '7px' : '0'});
-  opacity: ${({ $locked }) => $locked ? .72 : 1}; pointer-events: ${({ $locked }) => $locked ? 'none' : 'auto'};
-  user-select: ${({ $locked }) => $locked ? 'none' : 'auto'};
-  transition: filter 180ms ease-out, opacity 180ms ease-out;
+const AppSurface = styled.div<{ $blurred: boolean; $blocked: boolean }>`
+  min-height: 100dvh; filter: blur(${({ $blurred }) => $blurred ? '7px' : '0'});
+  opacity: ${({ $blurred }) => $blurred ? .72 : 1}; pointer-events: ${({ $blocked }) => $blocked ? 'none' : 'auto'};
+  user-select: ${({ $blocked }) => $blocked ? 'none' : 'auto'};
+  transition-property: filter, opacity; transition-duration: 260ms; transition-timing-function: cubic-bezier(.2, 0, 0, 1);
 `;
 
 function Root() {
-  const [state, setState] = useState<'checking' | 'locked' | 'ready'>('checking');
+  const [state, setState] = useState<'checking' | 'locked' | 'unlocking' | 'revealing' | 'ready'>('checking');
   useEffect(() => {
     let cancelled = false;
     fetch('/api/auth/status').then(async response => {
@@ -33,11 +33,23 @@ function Root() {
     });
     if (response.status === 401) return false;
     if (!response.ok) throw new Error();
-    setState('ready'); return true;
+    setState('unlocking'); return true;
   }, []);
-  const locked = state !== 'ready';
-  return <><AppSurface data-testid="auth-surface" $locked={locked} aria-hidden={locked || undefined} inert={locked || undefined}><App locked={locked} /></AppSurface>
-    {state === 'locked' && <PasswordGate authenticate={authenticate} />}</>;
+  useEffect(() => {
+    if (state !== 'revealing') return;
+    const timer = setTimeout(() => setState('ready'), 280);
+    return () => clearTimeout(timer);
+  }, [state]);
+  const contentReady = useCallback(() => setState(current => current === 'unlocking' ? 'revealing' : current), []);
+  const loadFailed = useCallback(() => setState(current => current === 'unlocking' ? 'locked' : current), []);
+  const blocked = state !== 'ready';
+  const blurred = state !== 'revealing' && state !== 'ready';
+  const load = state === 'unlocking' || state === 'revealing' || state === 'ready';
+  const gatePhase = state === 'locked' ? 'locked' : state === 'unlocking' ? 'unlocking' : state === 'revealing' ? 'revealing' : null;
+  return <><AppSurface data-testid="auth-surface" $blurred={blurred} $blocked={blocked} aria-hidden={blocked || undefined} inert={blocked || undefined}>
+    <App locked={blocked} load={load} onReady={contentReady} onLoadError={loadFailed} />
+  </AppSurface>
+    {gatePhase && <PasswordGate authenticate={authenticate} phase={gatePhase} />}</>;
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

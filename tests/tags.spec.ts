@@ -129,8 +129,40 @@ test('autocomplete cycles existing tags with arrows and keeps code literal', asy
   expect(a11y.violations).toEqual([]);
 });
 
+test('swipe tags page highlights the selected tag and filters to-dos and log entries', async ({ page, request }) => {
+  const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
+  await request.post('/api/notes', { data: { date: today, content: 'Mobile focused note', tags: ['mobile'] } });
+  await request.post('/api/notes', { data: { date: today, content: 'Other mobile note', tags: ['other'] } });
+  await request.post('/api/tasks', { data: { content: 'Mobile focused task', tags: ['mobile'] } });
+  await request.post('/api/tasks', { data: { content: 'Other mobile task', tags: ['other'] } });
+  await page.setViewportSize({ width: 440, height: 400 });
+  await page.goto('/');
+
+  const tabs = page.getByRole('tablist', { name: 'Mobile views' });
+  await expect(tabs.getByRole('tab')).toHaveText(['to do', 'log', 'tags']);
+  await tabs.getByRole('tab', { name: 'tags', exact: true }).click();
+  const mobile = page.getByRole('button', { name: '#mobile', exact: true });
+  await mobile.click();
+  await expect(mobile).toHaveAttribute('aria-pressed', 'true');
+  await expect(mobile).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(mobile).toHaveCSS('border-color', 'rgb(27, 91, 153)');
+  await expect(mobile).toHaveCSS('color', 'rgb(27, 91, 153)');
+
+  await tabs.getByRole('tab', { name: 'to do', exact: true }).click();
+  await expect(page.getByRole('group', { name: 'Mobile focused task', exact: true })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Other mobile task', exact: true })).toHaveCount(0);
+  await tabs.getByRole('tab', { name: 'log', exact: true }).click();
+  await expect(page.getByRole('group', { name: 'Mobile focused note', exact: true })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Other mobile note', exact: true })).toHaveCount(0);
+
+  await tabs.getByRole('tab', { name: 'tags', exact: true }).click();
+  await page.getByRole('button', { name: 'all', exact: true }).click();
+  await tabs.getByRole('tab', { name: 'log', exact: true }).click();
+  await expect(page.getByRole('group', { name: 'Other mobile note', exact: true })).toBeVisible();
+});
+
 test('hover tabs filter nested notes and tasks, hide the active tag, and preserve it during edits', async ({ page, request }) => {
-  const { today } = await (await request.get('/api/journal')).json();
+  const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
   const createNote = async (content: string, tags: string[] = [], parent_id: number | null = null) =>
     (await request.post('/api/notes', { data: { date: today, content, tags, parent_id } })).json();
   const parent = await createNote('Focus parent', ['focused']);
