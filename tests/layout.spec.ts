@@ -136,6 +136,30 @@ test('height chooses stacked or swipe mode while width only controls sidebar chr
   expect((await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()).violations).toEqual([]);
 });
 
+test('a mobile keyboard height change keeps the active editor mounted and stable', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({ baseURL: baseURL!, viewport: { width: 440, height: 700 }, hasTouch: true });
+  const mobile = await context.newPage();
+  try {
+    await mobile.goto('/');
+    expect(await mobile.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+    const composer = mobile.getByRole('textbox', { name: 'New journal bullet', exact: true });
+    await expect(composer).toBeFocused();
+    await composer.fill('Mobile typing');
+
+    await mobile.setViewportSize({ width: 440, height: 360 });
+    await expect(mobile.getByRole('tablist', { name: 'Mobile views' })).toHaveCount(0);
+    await expect(composer).toBeFocused();
+    await composer.pressSequentially(' stays put');
+    await expect(composer).toHaveText('Mobile typing stays put');
+
+    await mobile.setViewportSize({ width: 440, height: 700 });
+    await composer.press('Enter');
+    await expect(mobile.getByRole('group', { name: 'Mobile typing stays put', exact: true })).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
+
 test('swipe log loads earlier dates infinitely and preserves its active tag filter', async ({ page }) => {
   await page.unroute('**/api/journal?*');
   const requests: URL[] = [];

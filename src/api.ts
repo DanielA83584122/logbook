@@ -1,5 +1,12 @@
 export const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 export async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const url = new URL(`/api${path}`, window.location.origin);
   url.searchParams.set('timezone', timezone);
@@ -15,7 +22,7 @@ export async function api<T>(path: string, method = 'GET', body?: unknown): Prom
   if (!response.ok) {
     if (response.status === 401) window.dispatchEvent(new Event('still-auth-required'));
     const error = await response.json().catch(() => null);
-    throw new Error(typeof error?.detail === 'string' ? error.detail : 'Couldn’t save that. Check the values and try again.');
+    throw new ApiError(typeof error?.detail === 'string' ? error.detail : 'Couldn’t save that. Check the values and try again.', response.status);
   }
   return response.status === 204 ? undefined as T : response.json();
 }

@@ -339,6 +339,23 @@ test('editing a saved entry after inserting before it uses its latest revision',
   await expect(composer).toHaveText('Move all of this text');
 });
 
+test('a stale saved-entry draft refreshes its revision and retries without getting stuck', async ({ page, request }) => {
+  const { today } = await (await request.get('/api/journal?timezone=America/Los_Angeles')).json();
+  const note = await (await request.post('/api/notes', { data: { date: today, content: 'dv-notes before editing' } })).json();
+  await page.goto('/');
+
+  await page.locator(`[data-kind="notes"][data-item-id="${note.id}"] [role="group"]`).click();
+  const editor = page.getByRole('textbox', { name: 'Edit note', exact: true });
+  await editor.fill('dv-notes local draft survives');
+  await request.patch(`/api/notes/${note.id}`, { data: { content: 'dv-notes changed in another window' } });
+  await editor.press('Enter');
+
+  await expect(page.getByRole('button', { name: 'Retry saving' })).toHaveCount(0);
+  await expect(page.getByRole('group', { name: 'dv-notes local draft survives', exact: true })).toBeVisible();
+  const exported = await (await request.get('/api/export')).json();
+  expect(exported.notes.find((item: { id: number }) => item.id === note.id).content).toBe('dv-notes local draft survives');
+});
+
 test('Backspace merges a completed task into the preceding note', async ({ page, request }) => {
   const { today } = await (await request.get('/api/journal')).json();
   await request.post('/api/notes', { data: { date: today, content: 'Mixed note ' } });

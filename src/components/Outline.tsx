@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { flushSync } from 'react-dom';
 import styled, { keyframes, css } from 'styled-components';
 import { useJournalContext, registerDraftFlush } from '../JournalContext';
-import { api, errorMessage } from '../api';
+import { api, ApiError, errorMessage } from '../api';
 import type { EntryKind, OutlineItem } from '../types';
 import { TextButton, VisuallyHidden } from '../styles';
 import { MarkdownContent, markdownText, richTextStyles, mergeMarkdown, formatMarkdown, pastedBullet } from '../markdown';
@@ -296,7 +296,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
 
   const save = useCallback(() => {
     const operation = queue.current.catch(() => null).then(async () => {
-      const snapshot = current.current;
+      let snapshot = current.current;
       if (!snapshot.active || snapshot.content === snapshot.saved && JSON.stringify(snapshot.tags) === JSON.stringify(snapshot.savedTags)) return snapshot.id;
       let announced = false;
       const feedback = setTimeout(() => {
@@ -305,9 +305,34 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       }, 450);
       setSaving(true);
       try {
+        const edit = async (changes: (value: Draft) => Record<string, unknown>[]) => {
+          try {
+            return await editDocument(changes(snapshot), snapshot.clientId, snapshot.requestId);
+          } catch (error) {
+            if (!(error instanceof ApiError) || error.status !== 409 || snapshot.id === null) throw error;
+            await refresh();
+            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+            const latest = records.current.find(item => item.id === snapshot.id);
+            if (!latest || current.current.clientId !== snapshot.clientId) throw error;
+            const group = siblings(records.current, latest.parent_id);
+            const index = group.findIndex(item => item.id === latest.id);
+            snapshot = {
+              ...current.current,
+              kind: entryKind(latest),
+              revision: latest.revision,
+              saved: latest.content,
+              savedTags: latest.tags ?? [],
+              parentId: latest.parent_id,
+              afterId: group[index - 1]?.id ?? null,
+              requestId: crypto.randomUUID(),
+            };
+            persist(snapshot);
+            return editDocument(changes(snapshot), snapshot.clientId, snapshot.requestId);
+          }
+        };
         if (!snapshot.content.trim() && !snapshot.tags.length) {
           if (snapshot.id) {
-            await editDocument([{ kind: snapshot.kind, id: snapshot.id, delete: true, expected_revision: snapshot.revision }], snapshot.clientId, snapshot.requestId);
+            await edit(value => [{ kind: value.kind, id: value.id, delete: true, expected_revision: value.revision }]);
             setRemoved(previous => new Set([...previous, snapshot.id!]));
             if (current.current.clientId === snapshot.clientId) persist({ ...current.current, id: null, revision: null, requestId: crypto.randomUUID(), saved: '', savedTags: [] });
             await refresh();
@@ -316,10 +341,10 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
           if (announced) window.dispatchEvent(new CustomEvent('still-save-state', { detail: 'saved' }));
           return null;
         }
-        const [result] = await editDocument([{
-          kind: snapshot.kind, id: snapshot.id, content: snapshot.content, tags: snapshot.tags, date: day, client_id: snapshot.clientId, parent_id: snapshot.parentId, after_id: snapshot.afterId,
-          expected_revision: snapshot.revision,
-        }], snapshot.clientId, snapshot.requestId);
+        const [result] = await edit(value => [{
+          kind: value.kind, id: value.id, content: value.content, tags: value.tags, date: day, client_id: value.clientId, parent_id: value.parentId, after_id: value.afterId,
+          expected_revision: value.revision,
+        }]);
         if (!result) throw new Error('The entry could not be saved.');
         if (snapshot.id === null) {
           setRemoved(previous => {

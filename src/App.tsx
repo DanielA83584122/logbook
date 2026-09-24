@@ -254,6 +254,7 @@ export default function App({ locked = false, load = !locked, onReady, onLoadErr
   const [soundOpen, setSoundOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [short, setShort] = useState(() => window.matchMedia(shortViewport).matches);
+  const viewportWidth = useRef(window.innerWidth);
   const [mobileView, setMobileView] = useState<'todos' | 'log' | 'tags'>('log');
   const mobilePager = useRef<HTMLDivElement>(null);
   const quietStatus = useRef<HTMLDivElement>(null);
@@ -273,9 +274,17 @@ export default function App({ locked = false, load = !locked, onReady, onLoadErr
   const notify = useCallback((text: string) => setMessage(text), []);
   useEffect(() => {
     const media = window.matchMedia(shortViewport);
-    const resize = () => setShort(media.matches);
+    const coarse = window.matchMedia('(pointer: coarse)');
+    const resize = () => {
+      const widthChanged = Math.abs(window.innerWidth - viewportWidth.current) > 80;
+      viewportWidth.current = window.innerWidth;
+      const active = document.activeElement;
+      const editing = active instanceof HTMLElement && (active.isContentEditable || active.matches('input, textarea'));
+      setShort(previous => coarse.matches && editing && !widthChanged && media.matches !== previous ? previous : media.matches);
+    };
     media.addEventListener('change', resize);
-    return () => media.removeEventListener('change', resize);
+    window.addEventListener('resize', resize);
+    return () => { media.removeEventListener('change', resize); window.removeEventListener('resize', resize); };
   }, []);
   useEffect(() => {
     if (!short) return;
