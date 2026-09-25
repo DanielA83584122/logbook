@@ -59,15 +59,15 @@ export function recoverEarlierDrafts(today: string): Promise<boolean> {
       try {
         const raw = localStorage.getItem(key);
         if (!raw) continue;
-        const draft = JSON.parse(raw) as { id: number | null; kind?: 'notes' | 'tasks'; revision?: number | null; requestId?: string; content: string; saved: string; tags?: string[]; savedTags?: string[]; clientId?: string; parentId?: number | null; afterId?: number | null };
+        const draft = JSON.parse(raw) as { id: number | null; kind?: 'notes' | 'tasks'; revision?: number | null; requestId?: string; content: string; saved: string; tags?: string[]; savedTags?: string[]; role?: string; savedRole?: string; clientId?: string; parentId?: number | null; afterId?: number | null };
         if (typeof draft.content !== 'string' || typeof draft.saved !== 'string') continue;
-        if (draft.content !== draft.saved || JSON.stringify(draft.tags ?? []) !== JSON.stringify(draft.savedTags ?? [])) {
+        if (draft.content !== draft.saved || JSON.stringify(draft.tags ?? []) !== JSON.stringify(draft.savedTags ?? []) || (draft.role ?? '') !== (draft.savedRole ?? '')) {
           if (!draft.clientId) draft.clientId = crypto.randomUUID();
           if (!draft.requestId) draft.requestId = crypto.randomUUID();
           localStorage.setItem(key, JSON.stringify(draft));
           const kind = draft.kind === 'tasks' ? 'tasks' : 'notes';
           const change = draft.content.trim() || draft.tags?.length ? {
-            kind, id: draft.id, content: draft.content, tags: draft.tags, date: key.slice('still-draft-'.length), client_id: draft.clientId,
+            kind, id: draft.id, content: draft.content, tags: draft.tags, role: draft.role ?? '', date: key.slice('still-draft-'.length), client_id: draft.clientId,
             parent_id: draft.parentId ?? null, after_id: draft.afterId ?? null, expected_revision: draft.revision ?? null,
           } : { kind, id: draft.id, delete: true, expected_revision: draft.revision ?? null };
           await api('/document/edit', 'POST', { changes: [change], request_id: draft.requestId });

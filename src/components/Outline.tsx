@@ -245,7 +245,7 @@ const Ghost = styled.span`
 `;
 type Draft = {
   active: boolean; mode: 'new' | 'edit'; id: number | null; content: string; saved: string;
-  kind: EntryKind; role: Role;
+  kind: EntryKind; role: Role; savedRole: Role;
   clientId: ReturnType<typeof crypto.randomUUID>; requestId: ReturnType<typeof crypto.randomUUID>; revision: number | null;
   parentId: number | null; afterId: number | null; hiddenTag: string | null; tags: string[]; savedTags: string[];
 };
@@ -283,7 +283,7 @@ function scratchGroupOf(items: OutlineItem[], row: OutlineItem) {
   return String(group[index]?.id ?? row.id);
 }
 const fresh = (items: OutlineItem[], active: boolean, kind: EntryKind, parentId: number | null = null, afterId?: number | null): Draft => ({
-  tags: [], savedTags: [], hiddenTag: null, active, mode: 'new', id: null, content: '', saved: '', role: '',
+  tags: [], savedTags: [], hiddenTag: null, active, mode: 'new', id: null, content: '', saved: '', role: '', savedRole: '',
   clientId: crypto.randomUUID(), requestId: crypto.randomUUID(), revision: null, parentId,
   kind,
   afterId: afterId === undefined ? siblings(items, parentId).at(-1)?.id ?? null : afterId,
@@ -340,7 +340,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   const [draft, setDraft] = useState<Draft>(() => {
     try {
       const stored = JSON.parse(localStorage.getItem(key) ?? 'null') as Partial<Draft> | null;
-      if (stored && (stored.content !== stored.saved || JSON.stringify(stored.tags ?? []) !== JSON.stringify(stored.savedTags ?? [])) && typeof stored.content === 'string') {
+      if (stored && (stored.content !== stored.saved || JSON.stringify(stored.tags ?? []) !== JSON.stringify(stored.savedTags ?? []) || (stored.role ?? '') !== (stored.savedRole ?? '')) && typeof stored.content === 'string') {
         const row = items.find(item => item.id === stored.id);
         return { ...blank(items, true), ...stored, requestId: stored.requestId ?? crypto.randomUUID(), revision: stored.revision ?? row?.revision ?? null,
           kind: stored.kind ?? (row ? entryKind(row) : defaultKind), active: true, parentId: stored.parentId ?? row?.parent_id ?? null };
@@ -348,7 +348,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       for (const row of items) {
         const rowKind = entryKind(row);
         const edit = localStorage.getItem(`still-edit-${rowKind}-${row.id}`);
-        if (edit !== null) return { ...blank(items, true), kind: rowKind, role: row.role ?? '', mode: 'edit', id: row.id, revision: row.revision, content: edit, saved: row.content, parentId: row.parent_id };
+        if (edit !== null) return { ...blank(items, true), kind: rowKind, role: row.role ?? '', savedRole: row.role ?? '', mode: 'edit', id: row.id, revision: row.revision, content: edit, saved: row.content, parentId: row.parent_id };
       }
       const oldTask = kind === 'tasks' ? localStorage.getItem('still-task-draft') : null;
       if (oldTask) return { ...blank(items, true), content: oldTask };
@@ -429,7 +429,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   const save = useCallback(() => {
     const operation = queue.current.catch(() => null).then(async () => {
       let snapshot = current.current;
-      if (!snapshot.active || snapshot.content === snapshot.saved && JSON.stringify(snapshot.tags) === JSON.stringify(snapshot.savedTags)) return snapshot.id;
+      if (!snapshot.active || snapshot.content === snapshot.saved && JSON.stringify(snapshot.tags) === JSON.stringify(snapshot.savedTags) && snapshot.role === snapshot.savedRole) return snapshot.id;
       let announced = false;
       const feedback = setTimeout(() => {
         announced = true;
@@ -450,7 +450,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
             const index = group.findIndex(item => item.id === latest.id);
             snapshot = {
               ...current.current,
-              kind: entryKind(latest), role: latest.role ?? '',
+              kind: entryKind(latest), role: latest.role ?? '', savedRole: latest.role ?? '',
               revision: latest.revision,
               saved: latest.content,
               savedTags: latest.tags ?? [],
@@ -484,7 +484,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
             const next = new Set(previous); next.delete(result.id); return next;
           });
         }
-        if (current.current.clientId === snapshot.clientId) persist({ ...current.current, id: result.id, revision: result.revision, requestId: crypto.randomUUID(), saved: snapshot.content, savedTags: snapshot.tags });
+        if (current.current.clientId === snapshot.clientId) persist({ ...current.current, id: result.id, revision: result.revision, requestId: crypto.randomUUID(), saved: snapshot.content, savedTags: snapshot.tags, savedRole: snapshot.role });
         if (snapshot.kind === 'tasks') localStorage.removeItem('still-task-draft');
         if (snapshot.id) localStorage.removeItem(`still-edit-${snapshot.kind}-${snapshot.id}`);
         setFailed(false);
@@ -510,7 +510,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     if (draft.kind !== 'notes' || !draft.active || draft.mode === 'edit') return;
     const timeout = setTimeout(() => { void save().catch(() => {}); }, 700);
     return () => clearTimeout(timeout);
-  }, [draft.content, draft.tags, draft.active, draft.mode, draft.kind, save]);
+  }, [draft.content, draft.tags, draft.role, draft.active, draft.mode, draft.kind, save]);
   useEffect(() => {
     if (!composer) {
       const value = current.current;
@@ -575,7 +575,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       const index = group.findIndex(item => item.id === latest.id);
       const content = latest.content;
       flushSync(() => persist({ ...blank(records.current, true), mode: 'edit', id: latest.id, content, saved: content,
-        kind: entryKind(latest), role: latest.role ?? '',
+        kind: entryKind(latest), role: latest.role ?? '', savedRole: latest.role ?? '',
         revision: latest.revision,
         tags: latest.tags ?? [], savedTags: latest.tags ?? [], hiddenTag: activeTag && latest.tags?.includes(activeTag) ? activeTag : null,
         parentId: latest.parent_id, afterId: group[index - 1]?.id ?? null }));
@@ -743,7 +743,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       // its end caret. Otherwise a very fast Backspace can land at position 0
       // and be mistaken for another cross-entry merge.
       (document.activeElement as HTMLElement | null)?.blur();
-      flushSync(() => persist({ ...blank([], true), kind: entryKind(other), role: other.role ?? '', mode: 'edit', id: other.id, content: other.content, saved: other.content,
+      flushSync(() => persist({ ...blank([], true), kind: entryKind(other), role: other.role ?? '', savedRole: other.role ?? '', mode: 'edit', id: other.id, content: other.content, saved: other.content,
         tags: other.tags ?? [], savedTags: other.tags ?? [], parentId: other.parent_id }));
       return;
     }
@@ -756,7 +756,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       { kind: entryKind(second), id: second.id, delete: true, expected_revision: second.revision },
     ]);
     if (!result) return;
-    persist({ ...blank([], true), kind: entryKind(first), role: first.role ?? '', mode: 'edit', id: result.id, content, saved: content, tags, savedTags: tags, parentId: result.parent_id });
+    persist({ ...blank([], true), kind: entryKind(first), role: first.role ?? '', savedRole: first.role ?? '', mode: 'edit', id: result.id, content, saved: content, tags, savedTags: tags, parentId: result.parent_id });
     pendingSelection.current = { anchor: markdownText(first.content).length, head: markdownText(first.content).length };
     await refresh();
   }, direction === 'backspace' || direction === 'delete');
@@ -1072,7 +1072,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
             // user typed more, acknowledge that newer revision before Enter
             // advances to the next row; never clear unacknowledged text.
             if (current.current.clientId === snapshot.clientId &&
-                (current.current.content !== current.current.saved || JSON.stringify(current.current.tags) !== JSON.stringify(current.current.savedTags))) {
+                (current.current.content !== current.current.saved || JSON.stringify(current.current.tags) !== JSON.stringify(current.current.savedTags) || current.current.role !== current.current.savedRole)) {
               id = await save();
             }
             const parent = snapshot.parentId === null ? null : records.current.find(item => item.id === snapshot.parentId);

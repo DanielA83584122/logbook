@@ -39,6 +39,18 @@ test('two slashes fold a journal bullet into a scratch strip that opens on hover
   await strip.click();
   await page.mouse.move(640, 950);
   await expect(strip).toHaveAttribute('aria-expanded', 'false');
+
+  // The shortcut alone, on a saved row, is a change worth saving.
+  await page.getByRole('group', { name: 'call Mira at 3', exact: true }).click();
+  const editor = page.getByRole('textbox', { name: 'Edit note', exact: true });
+  await editor.press('Meta+Shift+Period');
+  await editor.press('Enter');
+  await expect.poll(async () => (await exported(request)).find(row => row.content === 'call Mira at 3')!.role).toBe('scratch');
+  // Enter continued with another scratch note; leaving it empty drops it. The toggled row follows the two
+  // earlier scratch notes, so all three now fold under one strip.
+  await page.getByRole('textbox', { name: 'New journal bullet', exact: true }).evaluate(element => (element as HTMLElement).blur());
+  await expect(page.getByRole('button', { name: '3 scratch notes', exact: true })).toBeVisible();
+  await expect(strip).toHaveCount(0);
 });
 
 test('a to-do can say what it waits on, stays dotted until that settles, and takes a follow-up step', async ({ page, request }) => {
