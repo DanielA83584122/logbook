@@ -12,11 +12,11 @@ CREATE TABLE IF NOT EXISTS document_changes (
  entity TEXT NOT NULL CHECK(entity IN ('notes','tasks')), row_id INTEGER NOT NULL,
  phase TEXT NOT NULL CHECK(phase IN ('before','after')), present INTEGER NOT NULL,
  kind TEXT, content TEXT, tags TEXT, day_id INTEGER, parent_id INTEGER, position INTEGER,
-    created_at TEXT, updated_at TEXT, completed_at TEXT, client_id TEXT, revision INTEGER,
+    created_at TEXT, updated_at TEXT, completed_at TEXT, client_id TEXT, revision INTEGER, role TEXT,
  PRIMARY KEY(operation_id, entity, row_id, phase)
 );
 '''
-FIELDS = ['kind', 'content', 'tags', 'day_id', 'parent_id', 'position', 'created_at', 'updated_at', 'completed_at', 'client_id', 'revision']
+FIELDS = ['kind', 'content', 'tags', 'day_id', 'parent_id', 'position', 'created_at', 'updated_at', 'completed_at', 'client_id', 'revision', 'role']
 
 
 def snapshot(db):
@@ -52,8 +52,9 @@ def restore(db, operation, redo=False):
     columns = [row['name'] for row in db.execute('PRAGMA table_info(entries)')]
     phases = {}
     for phase in (expected_phase, desired_phase):
+        # History recorded before roles existed holds NULL there; those rows were plain bullets.
         phases[phase] = {(row['entity'], row['row_id']): (
-            {'id': row['row_id'], **{key: row[key] for key in columns if key != 'id'}} if row['present'] else None
+            {'id': row['row_id'], **{key: (row[key] or '') if key == 'role' else row[key] for key in columns if key != 'id'}} if row['present'] else None
         ) for row in db.execute('SELECT * FROM document_changes WHERE operation_id = ? AND phase = ?', (operation, phase))}
     expected, desired = phases[expected_phase], phases[desired_phase]
     current = snapshot(db)

@@ -124,9 +124,21 @@ def authentication_logout():
     return response
 
 
+Role = Literal['', 'scratch', 'wait']
+
+
+def check_role(role, kind, parent_id):
+    """Scratch is a quiet note kept folded away; wait is what a to-do waits on, nested under it."""
+    if role == 'scratch' and kind != 'note':
+        raise HTTPException(422, 'Only journal bullets can be scratch rows.')
+    if role == 'wait' and (kind != 'task' or parent_id is None):
+        raise HTTPException(422, 'A waiting row belongs under a to-do.')
+
+
 class Content(BaseModel):
     content: str = Field(max_length=10000, description="Markdown text only. Tags are separate metadata, not hashtags embedded in content.")
     tags: list[str] | None = Field(default=None, max_length=50, description="Optional list of tag names. Omit when editing to preserve existing tags; use [] to clear them.")
+    role: Role | None = Field(default=None, description="'' for a plain bullet, 'scratch' for a folded scratch note, 'wait' for something a to-do waits on. Omit when editing to keep the current role.")
     expected_revision: int | None = Field(default=None, ge=1, exclude=True)
 
     @field_validator("tags")
@@ -214,8 +226,9 @@ def move_entry(db, table, item_id, parent_id, after_id, now):
                            (position, sibling['id'], position))
         for entry, _ in tree:
             completed_at = now if target_kind == 'task' and entry['day_id'] is not None else None
-            db.execute('UPDATE entries SET kind = ?, completed_at = ?, updated_at = ?, revision = revision + 1 WHERE id = ?',
-                       (target_kind, completed_at, now, entry['id']))
+            role = entry['role'] if entry['role'] == ('scratch' if target_kind == 'note' else 'wait') else ''
+            db.execute('UPDATE entries SET kind = ?, completed_at = ?, role = ?, updated_at = ?, revision = revision + 1 WHERE id = ?',
+                       (target_kind, completed_at, role, now, entry['id']))
     elif target_kind == 'task' and parent and parent['completed_at']:
         # A checked group cannot contain unchecked descendants. Moving a branch
         # into it has the same semantics as creating a new checked subtask.
@@ -405,6 +418,7 @@ class DocumentChange(BaseModel):
     after_id: int | None = None
     client_id: str | None = None
     move: bool = False
+    role: Role | None = None
     expected_revision: int | None = Field(default=None, ge=1)
 
 
@@ -471,22 +485,26 @@ def edit_document(body: DocumentBatch, timezone: str = "UTC"):
                     raise HTTPException(422, str(error))
                 encoded = json.dumps(value.tags or [])
                 if row:
-                    if row['content'] != value.content or row['tags'] != (value.tags or []):
-                        db.execute('UPDATE entries SET content = ?, tags = ?, updated_at = ?, revision = revision + 1 WHERE id = ?', (value.content, encoded, now, item_id))
+                    role = change.role if change.role is not None else row['role']
+                    check_role(role, entry_kind, row['parent_id'])
+                    if row['content'] != value.content or row['tags'] != (value.tags or []) or row['role'] != role:
+                        db.execute('UPDATE entries SET content = ?, tags = ?, role = ?, updated_at = ?, revision = revision + 1 WHERE id = ?', (value.content, encoded, role, now, item_id))
                 else:
+                    role = change.role or ''
+                    check_role(role, entry_kind, change.parent_id)
                     if table == 'notes':
                         if not change.date:
                             raise HTTPException(422, 'A note needs a date.')
                         day_id = ensure_day(db, change.date, now)
                         validate_parent(db, table, change.parent_id, day_id)
-                        cursor = db.execute("INSERT INTO entries(kind, day_id, content, tags, created_at, updated_at, parent_id, client_id) VALUES ('note', ?, ?, ?, ?, ?, ?, ?)", (day_id, value.content, encoded, now, now, change.parent_id, change.client_id))
+                        cursor = db.execute("INSERT INTO entries(kind, day_id, content, tags, role, created_at, updated_at, parent_id, client_id) VALUES ('note', ?, ?, ?, ?, ?, ?, ?, ?)", (day_id, value.content, encoded, role, now, now, change.parent_id, change.client_id))
                     else:
                         parent = required(db, 'tasks', change.parent_id) if change.parent_id is not None else None
                         completed_at = now if parent and parent['completed_at'] else None
                         day_id = parent['day_id'] if parent else None
                         validate_parent(db, table, change.parent_id, day_id, allow_completed=bool(completed_at))
-                        cursor = db.execute("INSERT INTO entries(kind, day_id, content, tags, created_at, updated_at, completed_at, parent_id, client_id) VALUES ('task', ?, ?, ?, ?, ?, ?, ?, ?)",
-                                            (day_id, value.content, encoded, now, now, completed_at, change.parent_id, change.client_id))
+                        cursor = db.execute("INSERT INTO entries(kind, day_id, content, tags, role, created_at, updated_at, completed_at, parent_id, client_id) VALUES ('task', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                            (day_id, value.content, encoded, role, now, now, completed_at, change.parent_id, change.client_id))
                     item_id = cursor.lastrowid
                     place(db, table, item_id, change.parent_id, change.after_id,
                           allow_completed_parent=table == 'tasks' and bool(completed_at))
@@ -560,9 +578,10 @@ def add_note(body: NewNote):
                 db.execute("UPDATE entries SET content = ?, tags = ?, updated_at = ?, revision = revision + 1 WHERE id = ?", (body.content, json.dumps(tags), now, existing["id"]))
                 return {**required(db, 'notes', existing['id']), 'date': existing['date']}
         day_id = ensure_day(db, body.date, now)
+        check_role(body.role or '', 'note', body.parent_id)
         validate_parent(db, "notes", body.parent_id, day_id)
-        cursor = db.execute("INSERT INTO entries(kind, day_id, content, tags, created_at, updated_at, client_id, parent_id) VALUES ('note', ?, ?, ?, ?, ?, ?, ?)",
-                            (day_id, body.content, json.dumps(body.tags or []), now, now, body.client_id, body.parent_id))
+        cursor = db.execute("INSERT INTO entries(kind, day_id, content, tags, role, created_at, updated_at, client_id, parent_id) VALUES ('note', ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (day_id, body.content, json.dumps(body.tags or []), body.role or '', now, now, body.client_id, body.parent_id))
         place(db, "notes", cursor.lastrowid, body.parent_id, body.after_id)
         return {**required(db, "notes", cursor.lastrowid), "date": str(body.date)}
 
@@ -573,7 +592,9 @@ def edit_note(note_id: int, body: Content):
         note = required(db, "notes", note_id)
         check_revision(note, body.expected_revision)
         tags = body.tags if body.tags is not None else note["tags"]
-        db.execute("UPDATE entries SET content = ?, tags = ?, updated_at = ?, revision = revision + 1 WHERE id = ?", (body.content, json.dumps(tags), stamp(utcnow()), note_id))
+        role = body.role if body.role is not None else note['role']
+        check_role(role, 'note', note['parent_id'])
+        db.execute("UPDATE entries SET content = ?, tags = ?, role = ?, updated_at = ?, revision = revision + 1 WHERE id = ?", (body.content, json.dumps(tags), role, stamp(utcnow()), note_id))
         return required(db, "notes", note_id)
 
 
@@ -614,9 +635,10 @@ def add_task(body: NewBullet):
         now = stamp(utcnow())
         completed_at = now if parent and parent["completed_at"] else None
         day_id = parent['day_id'] if parent else None
+        check_role(body.role or '', 'task', body.parent_id)
         validate_parent(db, "tasks", body.parent_id, day_id, allow_completed=bool(completed_at))
-        cursor = db.execute("INSERT INTO entries(kind, day_id, content, tags, created_at, updated_at, completed_at, parent_id, client_id) VALUES ('task', ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (day_id, body.content, json.dumps(body.tags or []), now, now, completed_at, body.parent_id, body.client_id))
+        cursor = db.execute("INSERT INTO entries(kind, day_id, content, tags, role, created_at, updated_at, completed_at, parent_id, client_id) VALUES ('task', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (day_id, body.content, json.dumps(body.tags or []), body.role or '', now, now, completed_at, body.parent_id, body.client_id))
         place(db, "tasks", cursor.lastrowid, body.parent_id, body.after_id, allow_completed_parent=bool(completed_at))
         return required(db, "tasks", cursor.lastrowid)
 
@@ -642,8 +664,17 @@ def edit_task(task_id: int, body: Content):
         task = required(db, "tasks", task_id)
         check_revision(task, body.expected_revision)
         tags = body.tags if body.tags is not None else task["tags"]
-        db.execute("UPDATE entries SET content = ?, tags = ?, updated_at = ?, revision = revision + 1 WHERE id = ?", (body.content, json.dumps(tags), stamp(utcnow()), task_id))
+        role = body.role if body.role is not None else task['role']
+        check_role(role, 'task', task['parent_id'])
+        db.execute("UPDATE entries SET content = ?, tags = ?, role = ?, updated_at = ?, revision = revision + 1 WHERE id = ?", (body.content, json.dumps(tags), role, stamp(utcnow()), task_id))
         return required(db, "tasks", task_id)
+
+
+def ready_to_finish(db, parent_id):
+    """A parent finishes on its own once every step is checked and nothing it waits on is open. Waiting alone never finishes it."""
+    children = db.execute("SELECT completed_at, role FROM entries WHERE kind = 'task' AND parent_id = ?", (parent_id,)).fetchall()
+    steps = [child for child in children if child['role'] != 'wait']
+    return bool(steps) and all(child['completed_at'] for child in children)
 
 
 def finish_task(db, task, now):
@@ -652,8 +683,11 @@ def finish_task(db, task, now):
     while child and not child['completed_at']:
         completed_ids.append(child['id'])
         db.execute("UPDATE entries SET completed_at = ?, updated_at = ?, revision = revision + 1 WHERE id = ?", (stamp(now), stamp(now), child["id"]))
+        # Finishing a to-do settles whatever it was still waiting on.
+        db.execute("UPDATE entries SET completed_at = ?, updated_at = ?, revision = revision + 1 WHERE kind = 'task' AND parent_id = ? AND role = 'wait' AND completed_at IS NULL",
+                   (stamp(now), stamp(now), child['id']))
         parent = child['parent_id']
-        if parent is None or db.execute("SELECT 1 FROM entries WHERE kind = 'task' AND parent_id = ? AND completed_at IS NULL", (parent,)).fetchone():
+        if parent is None or not ready_to_finish(db, parent):
             break
         child = required(db, 'tasks', parent)
     return completed_ids
@@ -685,8 +719,7 @@ def finish_ready_parents(db, parents, zone, now):
         if parent is None:
             continue
         row = db.execute("SELECT * FROM entries WHERE kind = 'task' AND id = ?", (parent,)).fetchone()
-        children = db.execute("SELECT completed_at FROM entries WHERE kind = 'task' AND parent_id = ?", (parent,)).fetchall()
-        if row and not row['completed_at'] and children and all(child['completed_at'] for child in children):
+        if row and not row['completed_at'] and ready_to_finish(db, parent):
             finished = finish_task(db, bullet_dict(row), now)
             completed.extend(finished)
             archive_task_tree(db, required(db, 'tasks', finished[-1]), zone, now)
@@ -703,7 +736,7 @@ def complete_task(task_id: int, timezone: str = "UTC", expected_revision: int | 
         if task["completed_at"]:
             return {"completed": True, "task_ids": [], "completed_at": task['completed_at']}
         check_revision(task, expected_revision)
-        if db.execute("SELECT 1 FROM entries WHERE kind = 'task' AND parent_id = ? AND completed_at IS NULL", (task_id,)).fetchone():
+        if db.execute("SELECT 1 FROM entries WHERE kind = 'task' AND parent_id = ? AND completed_at IS NULL AND role != 'wait'", (task_id,)).fetchone():
             raise HTTPException(409, 'Complete the children to finish this parent.')
         completed_ids = finish_task(db, task, now)
         archive_task_tree(db, task, zone, now)
@@ -736,7 +769,7 @@ def reopen_task(task_id: int, body: ReopenTask):
                 db.execute('UPDATE entries SET day_id = NULL, revision = revision + 1 WHERE id = ?', (row['id'],))
         # A root unchecks its descendants. A leaf unchecks itself and completed
         # ancestors, preserving the checked state of its siblings.
-        reopen = [r['id'] for r, _ in descendants(db, 'tasks', task_id) if r['completed_at']]
+        reopen = [r['id'] for r, _ in descendants(db, 'tasks', task_id) if r['completed_at'] and (r['id'] == task_id or r['role'] != 'wait')]
         parent = task['parent_id']
         while parent is not None:
             ancestor = required(db, 'tasks', parent)

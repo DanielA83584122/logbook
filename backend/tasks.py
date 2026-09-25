@@ -12,8 +12,10 @@ def visible_tasks(db):
     while stack:
         row = stack.pop()
         direct = children.get(row['id'], [])
-        visible.append({**row, 'child_count': len(direct),
-                        'completed_child_count': sum(bool(child['completed_at']) for child in direct)})
+        # Progress counts sub-tasks only; the rows a task waits on are not steps of it.
+        steps = [child for child in direct if child['role'] != 'wait']
+        visible.append({**row, 'child_count': len(steps),
+                        'completed_child_count': sum(bool(child['completed_at']) for child in steps)})
         if not row['completed_at']:
             stack.extend(reversed(direct))
     return visible

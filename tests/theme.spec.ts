@@ -43,7 +43,7 @@ test('reference typography, wider margins and persistent night mode', async ({ p
   await shortcuts.hover();
   await expect(shortcuts).toHaveCSS('color', 'rgb(24, 113, 186)');
   await shortcuts.click();
-  const shortcutDialog = page.getByRole('dialog', { name: 'Keyboard shortcuts', exact: true });
+  const shortcutDialog = page.getByRole('dialog', { name: 'Keyboard shortcuts and how things work', exact: true });
   await expect(shortcutDialog).toBeVisible();
   await expect(shortcutDialog.getByText('indent entry', { exact: true })).toBeVisible();
   await expect(shortcutDialog.getByText('outdent entry', { exact: true })).toBeVisible();

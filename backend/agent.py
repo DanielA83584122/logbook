@@ -44,6 +44,7 @@ class AgentBullet(BaseModel):
     parent_id: int | None
     position: int
     content_markdown: str = Field(description="Original stored Markdown, without tag metadata. A root note starting with `# ` is a section row.")
+    role: Literal['', 'scratch', 'wait'] = Field('', description="'' for a plain bullet; 'scratch' for a note kept folded away; 'wait' for something its parent to-do waits on, settled when completed_at is set.")
     tags: list[str] = Field(description="Tags stored on this bullet.")
     inherited_tags: list[str] = Field(default_factory=list, description="Tags this bullet carries from the section row above it on its date, or from its ancestors, without holding them itself.")
     links: list[AgentLink]
@@ -144,7 +145,7 @@ def bullet_tree(rows, kind, tag, query, inherited=None):
     def node(row):
         return {
             'id': row['id'], 'kind': kind, 'parent_id': row['parent_id'], 'position': row['position'],
-            'content_markdown': row['content'], 'tags': row['tags'], 'inherited_tags': inherited.get(row['id'], []),
+            'content_markdown': row['content'], 'role': row.get('role') or '', 'tags': row['tags'], 'inherited_tags': inherited.get(row['id'], []),
             'links': parsed[row['id']][1],
             'matched': row['id'] in matched, 'created_at': row['created_at'],
             'updated_at': row.get('updated_at'), 'completed_at': row.get('completed_at'),
@@ -227,7 +228,7 @@ def markdown_journal(journal):
             content = row.content_markdown.splitlines() or ['']
             lines.append(f'{indent}- {marker}{content[0]}')
             lines.extend(f'{indent}    {line}' for line in content[1:])
-            metadata = {'id': f'{row.kind}:{row.id}', 'parent_id': row.parent_id, 'tags': row.tags, 'inherited_tags': row.inherited_tags,
+            metadata = {'id': f'{row.kind}:{row.id}', 'parent_id': row.parent_id, 'role': row.role, 'tags': row.tags, 'inherited_tags': row.inherited_tags,
                         'matched': row.matched, 'source_task_id': row.source_task_id, 'completed_at': row.completed_at}
             lines.extend([f'{indent}    ', f'{indent}    Metadata: `{json.dumps(metadata, ensure_ascii=False)}`'])
             bullets(row.children, depth + 1)

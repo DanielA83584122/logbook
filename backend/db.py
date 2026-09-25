@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS calendar_subscriptions (
 );
 """
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 ENTRY_SCHEMA = """
 CREATE TABLE IF NOT EXISTS entries (
@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS entries (
     completed_at TEXT,
     client_id TEXT,
     revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+    role TEXT NOT NULL DEFAULT '' CHECK(role IN ('', 'scratch', 'wait')),
     CHECK(kind != 'note' OR (day_id IS NOT NULL AND completed_at IS NULL)),
     CHECK(kind != 'task' OR day_id IS NULL OR completed_at IS NOT NULL)
 );
@@ -287,6 +288,13 @@ def _upgrade_entries_v8(db):
     _create_entry_schema(db)
 
 
+def _upgrade_entries_v12(db):
+    """A role marks scratch notes and the rows a to-do waits on; plain bullets keep ''."""
+    columns = {row['name'] for row in db.execute('PRAGMA table_info(entries)')}
+    if 'role' not in columns:
+        db.execute("ALTER TABLE entries ADD COLUMN role TEXT NOT NULL DEFAULT '' CHECK(role IN ('', 'scratch', 'wait'))")
+
+
 def initialize():
     path = db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -322,9 +330,13 @@ def initialize():
         # Trigger bodies are not replaced by CREATE TRIGGER IF NOT EXISTS.
         db.execute("DROP TRIGGER IF EXISTS entries_parent_update")
         _create_entry_schema(db)
+        _upgrade_entries_v12(db)
         history = db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'document_changes'").fetchone()
         if history:
             columns = {row['name'] for row in db.execute('PRAGMA table_info(document_changes)')}
+            if 'role' not in columns and {field for field in HISTORY_FIELDS if field != 'role'} <= columns:
+                db.execute('ALTER TABLE document_changes ADD COLUMN role TEXT')
+                columns.add('role')
             required = {'operation_id', 'entity', 'row_id', 'phase', 'present', *HISTORY_FIELDS}
             if not required <= columns:
                 # Pre-unification history refers to two independent ID spaces

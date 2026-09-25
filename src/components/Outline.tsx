@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 import styled, { keyframes, css } from 'styled-components';
 import { useJournalContext, registerDraftFlush } from '../JournalContext';
 import { api, ApiError, errorMessage } from '../api';
-import type { EntryKind, OutlineItem } from '../types';
+import type { EntryKind, OutlineItem, Role } from '../types';
 import { TextButton, VisuallyHidden, rowSurface } from '../styles';
 import { MarkdownContent, markdownText, richTextStyles, mergeMarkdown, formatMarkdown, pastedBullet } from '../markdown';
 import { RichTextEditor, type RichTextHandle, type TextOffsets, type VerticalDirection } from './RichTextEditor';
@@ -47,6 +47,12 @@ const Item = styled.li<{ $leaving?: boolean; $arriving?: boolean; $shifting?: 'i
   &[data-section-start]::before { top: 8px; }
   &[data-section-end]::before { bottom: 4px; }
   &[data-section-lit]::before { opacity: .45; transition-duration: 200ms; }
+  /* Scratch notes fold to nothing under their strip and unfold while the group is under the pointer or pinned open. */
+  &[data-scratch] { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--t-structure-out) var(--ease-structure), opacity 120ms ease-out; }
+  &[data-scratch] > * { min-height: 0; }
+  &[data-scratch]:not([data-scratch-open]) > * { overflow: hidden; }
+  &[data-scratch][data-scratch-open] { grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows var(--t-structure) var(--ease-structure), opacity 160ms ease-out 60ms; }
+  @media (prefers-reduced-motion: reduce) { &[data-scratch] { transition: none; } }
   ${({ $leaving }) => $leaving && css`animation: ${popOut} 180ms ease-out both; pointer-events: none;`}
   ${({ $arriving }) => $arriving && css`animation: ${slideIn} 280ms cubic-bezier(.2,.7,.3,1) both;`}
   ${({ $shifting }) => $shifting && css`animation: ${$shifting === 'in' ? shiftIn : shiftOut} 220ms cubic-bezier(.2, 0, 0, 1) both;`}
@@ -57,8 +63,31 @@ const Row = styled.div`
   &[data-section] { align-items: center; }
   &[data-section] h1 { font-size: 1em; font-weight: 400; line-height: inherit; }
   &[data-section] > div:has(.tiptap) { flex: 0 1 auto; min-width: min(160px, 60%); }
+  /* Scratch text reads quieter and smaller; the tokens the row's parts already use carry the change. */
+  &[data-role='scratch'] { --ink: var(--muted); --bullet-size: 14px; }
+  /* An empty waiting row shows what to write until the first character arrives. */
+  > [data-hint-text] { display: none; }
+  &:has(.tiptap > p:only-child > br.ProseMirror-trailingBreak:only-child) > [data-hint-text] { display: block; }
   @media(pointer: coarse) { min-height: 44px; } @media ${compactViewport} { min-height: 36px; }
 `;
+const Hint = styled.span`
+  position: absolute; left: 40px; top: 0; padding: var(--bullet-padding); font-size: var(--bullet-size); line-height: var(--bullet-line-height);
+  color: var(--muted); opacity: .6; pointer-events: none; white-space: nowrap;
+  @media(pointer: coarse) { left: 44px; padding: 10px 0; } @media ${compactViewport} { left: 36px; padding: 6px 0; }
+`;
+// The folded strip that stands for a run of scratch notes: a short dashed line, and a count while it is open.
+const StripItem = styled.li`
+  list-style: none; min-width: 0;
+  &[data-open] > button > span:first-child { border-color: var(--muted); }
+  &[data-pinned] > button > span:first-child { border-top-style: solid; border-color: var(--sage); }
+  &[data-open] > button > span:last-child { opacity: .85; }
+`;
+const StripButton = styled.button`
+  display: flex; align-items: center; gap: 8px; width: 100%; height: 16px; padding: 0 0 0 40px; border: 0; background: transparent; text-align: left; cursor: pointer;
+  @media(pointer: coarse) { height: 28px; padding-left: 44px; } @media ${compactViewport} { padding-left: 36px; }
+`;
+const Dash = styled.span`width: 36px; height: 0; border-top: 1.5px dashed var(--line); transition: border-color var(--t-color) ease-out;`;
+const StripCount = styled.span`font-size: 11px; line-height: 1; color: var(--muted); white-space: nowrap; opacity: 0; transition: opacity var(--t-color) ease-out;`;
 const Hairline = styled.span`
   flex: 1; min-width: 24px; align-self: center; margin-left: 14px; border-top: 1px solid var(--line); opacity: .9;
   @media ${compactViewport} { min-width: 12px; margin-left: 10px; }
@@ -114,11 +143,11 @@ const ComposerTarget = styled.button<{ $floating: boolean; $task?: boolean }>`
   @media(pointer: coarse) { min-height: 44px; &::before, &::after { display: none; } }
   @media ${compactViewport} { min-height: 36px; }
 `;
-const Marker = styled.span<{ $task: boolean; $hidden?: boolean }>`
+const Marker = styled.span<{ $task: boolean; $hidden?: boolean; $wait?: boolean }>`
   display: flex; width: 40px; min-width: 40px; height: var(--bullet-row-height); align-items: center; justify-content: center; color: var(--ink);
   ${({ $hidden }) => $hidden && 'visibility: hidden;'}
-  &::before { content: ${({ $task }) => $task ? "''" : "'–'"}; font-size: 14px; translate: 0 var(--bullet-marker-offset);
-    ${({ $task }) => $task ? 'width: 12px; height: 12px; border: 1.25px solid currentColor; border-radius: 50%;' : ''} }
+  &::before { content: ${({ $task, $wait }) => $wait ? "'···'" : $task ? "''" : "'–'"}; font-size: 14px; translate: 0 var(--bullet-marker-offset);
+    ${({ $task, $wait }) => $wait ? 'color: var(--muted); font-size: 13px; letter-spacing: 1.5px;' : $task ? 'width: 12px; height: 12px; border: 1.25px solid currentColor; border-radius: 50%;' : ''} }
   @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px; }
   @media ${compactViewport} { width: 36px; min-width: 36px; height: 36px; }
 `;
@@ -128,11 +157,12 @@ const DraftItem = styled(Item)<{ $emptyTask: boolean }>`
     &:focus-within > ${Row} > ${Marker} { visibility: visible; }
   `}
 `;
-const Checkbox = styled.button<{ $checked?: boolean; $suppressPreview?: boolean }>`
+const Checkbox = styled.button<{ $checked?: boolean; $suppressPreview?: boolean; $waiting?: boolean }>`
   position: relative; display: flex; align-items: center; justify-content: center; width: 40px; min-width: 40px; height: var(--bullet-row-height);
-  border: 0; padding: 0; background: transparent; border-radius: 50%; color: var(--ink);
+  border: 0; padding: 0; background: transparent; border-radius: 50%; color: ${({ $waiting }) => $waiting ? 'var(--muted)' : 'var(--ink)'};
   transition: transform 120ms ease-out; &:active { transform: scale(0.96); }
-  &::before { content: ''; width: 12px; height: 12px; border: 1.25px solid currentColor; border-radius: 50%; translate: 0 var(--bullet-marker-offset); transition-property: background-color, border-color; transition-duration: 120ms; transition-timing-function: ease-out; }
+  &::before { content: ''; width: 12px; height: 12px; border: 1.25px solid currentColor; border-radius: 50%; translate: 0 var(--bullet-marker-offset); transition-property: background-color, border-color; transition-duration: 120ms; transition-timing-function: ease-out;
+    ${({ $waiting }) => $waiting && 'border-style: dotted; border-width: 1.6px;'} }
   &::after { content: ''; position: absolute; width: 7px; height: 7px; background: currentColor;
     mask: url('/icons/check-flaticon.svg') center / contain no-repeat;
     -webkit-mask: url('/icons/check-flaticon.svg') center / contain no-repeat;
@@ -149,7 +179,36 @@ const Checkbox = styled.button<{ $checked?: boolean; $suppressPreview?: boolean 
   @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px; }
   @media ${compactViewport} { width: 36px; min-width: 36px; height: 36px; }
 `;
-const Disclosure = styled.button<{ $open: boolean; $task: boolean; $progress: number }>`
+// The marker cell holds a checkbox and, while the pointer rests on it, the choice to note what the to-do waits on.
+const MarkerCell = styled.span`position: relative; display: flex; flex-shrink: 0;`;
+const WaitOption = styled.button`
+  position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; margin-left: -30px; padding: 0; border: 0; border-radius: 50%;
+  background: var(--paper); color: var(--muted); box-shadow: 0 0 0 1px var(--line), 0 4px 10px #0000001a; display: grid; place-items: center; cursor: pointer;
+  opacity: 0; scale: .8; translate: calc(-50% + 16px) -50%; z-index: 1;
+  transition: opacity 140ms ease-out, translate 220ms var(--ease-structure), scale 220ms var(--ease-structure), box-shadow var(--t-color) ease-out;
+  &::before { content: ''; width: 11px; height: 11px; border: 1.6px dotted currentColor; border-radius: 50%; }
+  &:hover, &:focus-visible { box-shadow: 0 0 0 1.5px var(--link), 0 6px 14px #00000022; color: var(--ink); }
+  ${MarkerCell}:hover &, ${MarkerCell}:focus-within & { opacity: 1; scale: 1; translate: -50% -50%; transition-delay: 180ms, 140ms, 140ms, 0s; }
+  @media (hover: none) { display: none; }
+`;
+// The dots of a waiting row: click them when the answer arrives.
+const WaitMark = styled.button<{ $settled: boolean }>`
+  display: flex; width: 40px; min-width: 40px; height: var(--bullet-row-height); align-items: center; justify-content: center;
+  border: 0; padding: 0; background: transparent; border-radius: 50%; color: var(--muted); font-size: 13px; line-height: 1;
+  letter-spacing: ${({ $settled }) => $settled ? '0' : '1.5px'}; translate: 0 var(--bullet-marker-offset); transition: color var(--t-color) ease-out;
+  @media (hover: hover) { &:hover { color: var(--link); } }
+  @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px; }
+  @media ${compactViewport} { width: 36px; min-width: 36px; height: 36px; }
+`;
+const FollowUp = styled.button`
+  margin-left: 8px; padding: 0 4px; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; line-height: 18px;
+  white-space: nowrap; cursor: pointer; opacity: 0; transition: opacity var(--t-surface-out) ease-out;
+  &:focus-visible { opacity: .85; }
+  @media (hover: hover) { ${Row}:hover & { opacity: .85; transition-duration: var(--t-surface-in); } &:hover { color: var(--link); } }
+  @media (hover: none) { opacity: .85; }
+`;
+const WaitSummary = styled.span`margin-left: 8px; font-size: 12px; line-height: 18px; color: var(--muted); white-space: nowrap;`;
+const Disclosure = styled.button<{ $open: boolean; $task: boolean; $progress: number; $waiting?: boolean }>`
   width: 40px; min-width: 40px; height: var(--bullet-row-height); padding: 0; border: 0;
   display: grid; place-items: center; background: transparent; border-radius: 4px; color: ${({ $task }) => $task ? 'var(--ink)' : 'var(--muted)'};
   transition: color var(--t-color) ease-out;
@@ -158,6 +217,7 @@ const Disclosure = styled.button<{ $open: boolean; $task: boolean; $progress: nu
   &::before { content: ''; width: 5px; height: 5px; border-right: 1.25px solid currentColor; border-bottom: 1.25px solid currentColor; translate: 0 var(--bullet-marker-offset);
     transform: rotate(${({ $open }) => $open ? '45deg' : '-45deg'}); transition: transform 140ms ease-out; }
   ${({ $task, $progress }) => $task && css`&::before { --task-progress: ${$progress * 360}deg; width: 12px; height: 12px; border: 1px solid currentColor; border-radius: 50%; transform: none; background: conic-gradient(currentColor var(--task-progress), transparent 0); transition: --task-progress 240ms ease-out; }`}
+  ${({ $task, $waiting }) => $task && $waiting && css`color: var(--muted); &::before { border-style: dotted; border-width: 1.6px; }`}
   @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px;
   }
   @media ${compactViewport} { width: 36px; min-width: 36px; height: 36px; }
@@ -185,7 +245,7 @@ const Ghost = styled.span`
 `;
 type Draft = {
   active: boolean; mode: 'new' | 'edit'; id: number | null; content: string; saved: string;
-  kind: EntryKind;
+  kind: EntryKind; role: Role;
   clientId: ReturnType<typeof crypto.randomUUID>; requestId: ReturnType<typeof crypto.randomUUID>; revision: number | null;
   parentId: number | null; afterId: number | null; hiddenTag: string | null; tags: string[]; savedTags: string[];
 };
@@ -215,8 +275,15 @@ function selectedTextOffsets(element?: HTMLElement, link?: HTMLElement): TextOff
 
 const sorted = (items: OutlineItem[]) => [...items].sort((a, b) => a.position - b.position || a.id - b.id);
 const siblings = (items: OutlineItem[], parentId: number | null) => sorted(items.filter(item => item.parent_id === parentId));
+/** The first row of the run of scratch notes a scratch row sits in, which names the run's strip. */
+function scratchGroupOf(items: OutlineItem[], row: OutlineItem) {
+  const group = siblings(items, row.parent_id);
+  let index = group.findIndex(item => item.id === row.id);
+  while (index > 0 && group[index - 1].role === 'scratch') index--;
+  return String(group[index]?.id ?? row.id);
+}
 const fresh = (items: OutlineItem[], active: boolean, kind: EntryKind, parentId: number | null = null, afterId?: number | null): Draft => ({
-  tags: [], savedTags: [], hiddenTag: null, active, mode: 'new', id: null, content: '', saved: '',
+  tags: [], savedTags: [], hiddenTag: null, active, mode: 'new', id: null, content: '', saved: '', role: '',
   clientId: crypto.randomUUID(), requestId: crypto.randomUUID(), revision: null, parentId,
   kind,
   afterId: afterId === undefined ? siblings(items, parentId).at(-1)?.id ?? null : afterId,
@@ -248,6 +315,14 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   const previewSuppressedAt = useRef(new Map<number, number>());
   const [shifting, setShifting] = useState<'in' | 'out' | null>(null);
   const [litSection, setLitSection] = useState<string | null>(null);
+  const [litScratch, setLitScratch] = useState<string | null>(null);
+  const [pinnedScratch, setPinnedScratch] = useState(new Set<string>());
+  const scratchLeave = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lightScratch = (group: string) => { if (scratchLeave.current) clearTimeout(scratchLeave.current); scratchLeave.current = null; setLitScratch(group); };
+  const unlightScratch = () => {
+    if (scratchLeave.current) clearTimeout(scratchLeave.current);
+    scratchLeave.current = setTimeout(() => { scratchLeave.current = null; if (mounted.current) setLitScratch(null); }, 120);
+  };
   const [, setSelectedAll] = useState(false);
   const selectionActive = useRef(false);
   const surface = useRef<HTMLDivElement>(null);
@@ -273,7 +348,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       for (const row of items) {
         const rowKind = entryKind(row);
         const edit = localStorage.getItem(`still-edit-${rowKind}-${row.id}`);
-        if (edit !== null) return { ...blank(items, true), kind: rowKind, mode: 'edit', id: row.id, revision: row.revision, content: edit, saved: row.content, parentId: row.parent_id };
+        if (edit !== null) return { ...blank(items, true), kind: rowKind, role: row.role ?? '', mode: 'edit', id: row.id, revision: row.revision, content: edit, saved: row.content, parentId: row.parent_id };
       }
       const oldTask = kind === 'tasks' ? localStorage.getItem('still-task-draft') : null;
       if (oldTask) return { ...blank(items, true), content: oldTask };
@@ -287,6 +362,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     if (!target || kind !== 'mixed' && target.kind !== kind) return;
     const item = records.current.find(row => row.id === target.id);
     if (!item) return;
+    if (item.role === 'scratch') setPinnedScratch(previous => new Set([...previous, scratchGroupOf(records.current, item)]));
     const parents: number[] = [];
     let parent = item.parent_id;
     while (parent !== null) { parents.push(parent); parent = records.current.find(row => row.id === parent)?.parent_id ?? null; }
@@ -374,7 +450,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
             const index = group.findIndex(item => item.id === latest.id);
             snapshot = {
               ...current.current,
-              kind: entryKind(latest),
+              kind: entryKind(latest), role: latest.role ?? '',
               revision: latest.revision,
               saved: latest.content,
               savedTags: latest.tags ?? [],
@@ -398,7 +474,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
           return null;
         }
         const [result] = await edit(value => [{
-          kind: value.kind, id: value.id, content: value.content, tags: value.tags, date: day, client_id: value.clientId, parent_id: value.parentId, after_id: value.afterId,
+          kind: value.kind, id: value.id, content: value.content, tags: value.tags, role: value.role, date: day, client_id: value.clientId, parent_id: value.parentId, after_id: value.afterId,
           expected_revision: value.revision,
         }]);
         if (!result) throw new Error('The entry could not be saved.');
@@ -499,7 +575,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       const index = group.findIndex(item => item.id === latest.id);
       const content = latest.content;
       flushSync(() => persist({ ...blank(records.current, true), mode: 'edit', id: latest.id, content, saved: content,
-        kind: entryKind(latest),
+        kind: entryKind(latest), role: latest.role ?? '',
         revision: latest.revision,
         tags: latest.tags ?? [], savedTags: latest.tags ?? [], hiddenTag: activeTag && latest.tags?.includes(activeTag) ? activeTag : null,
         parentId: latest.parent_id, afterId: group[index - 1]?.id ?? null }));
@@ -519,6 +595,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     const group = siblings(records.current, snapshot.parentId).filter(item => item.id !== snapshot.id);
     const previous = snapshot.afterId !== null ? group.find(item => item.id === snapshot.afterId) : undefined;
     if (outdent ? !parent : !previous) return;
+    if (outdent && snapshot.role === 'wait') return;
     if (!outdent && kind === 'mixed' && (isSectionRow(previous!) || snapshot.parentId === null && snapshot.kind === 'notes' && isSectionContent(snapshot.content))) return;
     const parentId = outdent ? parent!.parent_id : previous!.id;
     const afterId = outdent ? parent!.id : siblings(records.current, previous!.id).at(-1)?.id ?? null;
@@ -584,6 +661,20 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     } finally { setCompleting(null); }
   }, false);
 
+  // Note what a to-do waits on: a new waiting row under it, opened for typing.
+  const beginWait = (taskId: number) => void run(async () => {
+    await save();
+    const children = siblings(records.current, taskId);
+    setExpanded(previous => previous.has(taskId) ? previous : new Set([...previous, taskId]));
+    lock.current = false;
+    flushSync(() => { setBusy(false); persist({ ...blank(records.current, true, taskId, children.at(-1)?.id ?? null, 'tasks'), role: 'wait' }); });
+  });
+  // A follow-up is an ordinary step placed right after the waiting row it answers.
+  const beginFollowUp = (waiting: OutlineItem) => void run(async () => {
+    await save();
+    lock.current = false;
+    flushSync(() => { setBusy(false); persist(blank(records.current, true, waiting.parent_id, waiting.id, 'tasks')); });
+  });
   const beginBullet = () => void run(async () => {
     await save();
     lock.current = false;
@@ -652,11 +743,11 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       // its end caret. Otherwise a very fast Backspace can land at position 0
       // and be mistaken for another cross-entry merge.
       (document.activeElement as HTMLElement | null)?.blur();
-      flushSync(() => persist({ ...blank([], true), kind: entryKind(other), mode: 'edit', id: other.id, content: other.content, saved: other.content,
+      flushSync(() => persist({ ...blank([], true), kind: entryKind(other), role: other.role ?? '', mode: 'edit', id: other.id, content: other.content, saved: other.content,
         tags: other.tags ?? [], savedTags: other.tags ?? [], parentId: other.parent_id }));
       return;
     }
-    const own = { ...other, id: ownId, kind: snapshot.kind, content: snapshot.content, tags: snapshot.tags, revision: current.current.revision ?? other.revision };
+    const own = { ...other, id: ownId, kind: snapshot.kind, role: snapshot.role, content: snapshot.content, tags: snapshot.tags, revision: current.current.revision ?? other.revision };
     const first = backwards ? other : own;
     const second = backwards ? own : other;
     const content = mergeMarkdown(first.content, second.content), tags = [...new Set([...first.tags ?? [], ...second.tags ?? []])];
@@ -665,7 +756,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       { kind: entryKind(second), id: second.id, delete: true, expected_revision: second.revision },
     ]);
     if (!result) return;
-    persist({ ...blank([], true), kind: entryKind(first), mode: 'edit', id: result.id, content, saved: content, tags, savedTags: tags, parentId: result.parent_id });
+    persist({ ...blank([], true), kind: entryKind(first), role: first.role ?? '', mode: 'edit', id: result.id, content, saved: content, tags, savedTags: tags, parentId: result.parent_id });
     pendingSelection.current = { anchor: markdownText(first.content).length, head: markdownText(first.content).length };
     await refresh();
   }, direction === 'backspace' || direction === 'delete');
@@ -769,20 +860,25 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       return next.size === previous.size ? previous : next;
     });
   };
+  const waitsOf = (id: number) => items.filter(item => item.parent_id === id && item.role === 'wait');
+  const openWaits = (id: number) => waitsOf(id).filter(item => !item.completed_at).length;
+  const stepsOf = (id: number) => items.filter(item => item.parent_id === id && item.role !== 'wait');
+  // A to-do with waiting rows but no steps shows them in place; they are the reason it is still open.
+  const onlyWaits = (id: number) => waitsOf(id).length > 0 && stepsOf(id).length === 0;
   const isExpanded = (id: number) => {
     const row = items.find(item => item.id === id);
-    return (!!row && entryKind(row) === 'tasks' && !!row.completed_at && !collapsed.has(id)) || expanded.has(id) || previewed.has(id) || draftInside(id);
+    return (!!row && entryKind(row) === 'tasks' && !!row.completed_at && !collapsed.has(id)) || expanded.has(id) || previewed.has(id) || draftInside(id) || onlyWaits(id);
   };
   const renderToggle = (id: number | null, content: string) => {
     const row = items.find(item => item.id === id);
-    const childCount = row?.child_count ?? items.filter(item => item.parent_id === id).length;
-    const doneCount = row?.completed_child_count ?? items.filter(item => item.parent_id === id && item.completed_at).length;
+    const childCount = row?.child_count ?? (id === null ? 0 : stepsOf(id).length);
+    const doneCount = row?.completed_child_count ?? (id === null ? 0 : stepsOf(id).filter(item => item.completed_at).length);
     const rowKind = row ? entryKind(row) : draft.kind;
-    if (id === null || !childCount && !(draft.active && draft.parentId === id && (!blankContent(draft.content) || draft.tags.length))) return null;
+    if (id === null || !childCount && !(draft.active && draft.parentId === id && draft.role !== 'wait' && (!blankContent(draft.content) || draft.tags.length))) return null;
     const open = isExpanded(id);
     const pinned = expanded.has(id) || draftInside(id) || (!!row?.completed_at && rowKind === 'tasks' && !collapsed.has(id));
     const progressTask = rowKind === 'tasks' && !row?.completed_at;
-    return <Disclosure type="button" data-focus-chrome $open={open} $task={progressTask} $progress={childCount ? doneCount / childCount : 0} disabled={busy} aria-expanded={open}
+    return <Disclosure type="button" data-focus-chrome $open={open} $task={progressTask} $waiting={progressTask && openWaits(id) > 0} $progress={childCount ? doneCount / childCount : 0} disabled={busy} aria-expanded={open}
       aria-description={progressTask ? `${doneCount} of ${childCount} children completed` : undefined}
       aria-label={`${pinned ? 'Collapse' : 'Expand'} ${markdownText(content) || 'bullet'}`}
       onPointerEnter={event => {
@@ -804,7 +900,8 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       }, false)} />;
   };
 
-  const inputLabel = draft.mode === 'edit' ? draft.kind === 'notes' ? 'Edit note' : 'Edit to-do' : draft.kind === 'notes' ? 'New journal bullet' : 'New to-do';
+  const inputLabel = draft.role === 'wait' ? draft.mode === 'edit' ? 'Edit waiting row' : 'New waiting row'
+    : draft.mode === 'edit' ? draft.kind === 'notes' ? 'Edit note' : 'Edit to-do' : draft.kind === 'notes' ? 'New journal bullet' : 'New to-do';
   const isSection = (id: number | null, content: string) => {
     if (kind !== 'mixed') return false;
     const row = items.find(item => item.id === id);
@@ -814,10 +911,18 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     const toggle = renderToggle(id, content);
     const row = items.find(item => item.id === id);
     const rowKind = row ? entryKind(row) : draft.kind;
+    const role = row ? row.role ?? '' : draft.role;
     if (isSection(id, content)) return toggle ?? <Marker data-focus-chrome $task={false} $hidden aria-hidden="true" />;
+    if (role === 'wait' && rowKind === 'tasks') {
+      if (id === null) return <Marker data-focus-chrome $task={false} $wait aria-hidden="true" />;
+      const settled = !!row?.completed_at;
+      return <WaitMark type="button" data-focus-chrome $settled={settled} aria-pressed={settled} disabled={busy}
+        aria-label={`${settled ? 'Reopen' : 'Settle'} waiting on ${markdownText(content)}`} onClick={() => complete(id)}>{settled ? '–' : '···'}</WaitMark>;
+    }
     if (rowKind === 'tasks' && id !== null) {
       const done = !!row?.completed_at;
-      return toggle ?? <Checkbox type="button" data-focus-chrome data-preview-suppressed={suppressedPreviews.has(id) || undefined} $checked={done} $suppressPreview={suppressedPreviews.has(id)} aria-pressed={done} disabled={busy} aria-label={`${done ? 'Reopen' : 'Complete'} ${markdownText(content)}`}
+      const waiting = !done && openWaits(id) > 0;
+      const checkbox = <Checkbox type="button" data-focus-chrome data-preview-suppressed={suppressedPreviews.has(id) || undefined} $checked={done} $waiting={waiting} $suppressPreview={suppressedPreviews.has(id)} aria-pressed={done} disabled={busy} aria-label={`${done ? 'Reopen' : 'Complete'} ${markdownText(content)}`}
         onPointerLeave={event => {
           const button = event.currentTarget;
           const release = () => {
@@ -829,8 +934,21 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
           if (remaining > 0) setTimeout(release, remaining); else release();
         }}
         onClick={() => { previewSuppressedAt.current.set(id, performance.now()); setSuppressedPreviews(previous => new Set([...previous, id])); complete(id); }} />;
+      if (toggle) return toggle;
+      if (archived || done) return checkbox;
+      return <MarkerCell>{checkbox}<WaitOption type="button" disabled={busy} aria-label={`Note what ${markdownText(content)} waits on`} onClick={() => beginWait(id)} /></MarkerCell>;
     }
     return toggle ?? <Marker data-focus-chrome $task={rowKind === 'tasks'} aria-hidden="true" />;
+  };
+  // After the text of a waiting row: a follow-up step. After a collapsed to-do that waits: how many things it waits on.
+  const renderWaitExtras = (item: OutlineItem) => {
+    if (entryKind(item) !== 'tasks' || archived) return null;
+    if (item.role === 'wait') {
+      return item.completed_at ? null : <FollowUp type="button" onClick={event => { event.stopPropagation(); beginFollowUp(item); }}>follow up</FollowUp>;
+    }
+    const count = openWaits(item.id);
+    if (!count || item.completed_at || isExpanded(item.id)) return null;
+    return <WaitSummary>waiting on {count}</WaitSummary>;
   };
   const renderInherited = (item: OutlineItem) => {
     const inherited = (item.inherited_tags ?? []).filter(tag => tag !== activeTag);
@@ -838,21 +956,26 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     return <Inherited aria-hidden="true" data-inherited>{inherited.map(tag => <Ghost key={tag}>#{tag}</Ghost>)}</Inherited>;
   };
   type SectionPlace = { section: string | null; start: boolean; end: boolean };
-  const sectionAttributes = ({ section, start, end }: SectionPlace) => section === null ? {} : {
+  const sectionAttributes = ({ section, start, end }: SectionPlace): Record<string, unknown> & { onPointerEnter?: () => void; onFocusCapture?: () => void } => section === null ? {} : {
     'data-in-section': section, 'data-section-start': start || undefined, 'data-section-end': end || undefined,
     'data-section-lit': litSection === section || undefined,
     onPointerEnter: () => setLitSection(section), onFocusCapture: () => setLitSection(section),
   };
-  const renderDraft = (depth: number, place: SectionPlace = { section: null, start: false, end: false }): ReactNode => <DraftItem key="draft" data-depth={depth}
-    data-outline-key={key} data-kind={draft.kind} data-item-id={draft.id ?? 'draft'} {...sectionAttributes(place)}
-    onPointerLeave={() => clearPreview(draft.id)}
+  const renderDraft = (depth: number, attributes: Record<string, unknown> = {}): ReactNode => <DraftItem key="draft" data-depth={depth}
+    data-outline-key={key} data-kind={draft.kind} data-item-id={draft.id ?? 'draft'} {...attributes}
+    onPointerLeave={() => { clearPreview(draft.id); if ('data-scratch' in attributes) unlightScratch(); }}
     $emptyTask={draft.kind === 'tasks' && draft.id === null && blankContent(draft.content) && !draft.tags.length}
     $shifting={shifting}
     $leaving={completing === draft.id && completing !== null}>
-    <Row aria-busy={saving} data-section={isSection(draft.id, draft.content) || undefined}>{renderMarker(draft.id, draft.content)}<RichTextEditor key={draft.clientId} ref={input} label={archived && draft.kind === 'tasks' && draft.parentId !== null && draft.mode === 'new' ? 'New completed subtask' : inputLabel} value={draft.content} tags={draft.tags.filter(tag => tag !== activeTag)} readOnly={false}
+    <Row aria-busy={saving} data-section={isSection(draft.id, draft.content) || undefined} data-role={draft.role || undefined}>{renderMarker(draft.id, draft.content)}<RichTextEditor key={draft.clientId} ref={input} label={archived && draft.kind === 'tasks' && draft.parentId !== null && draft.mode === 'new' ? 'New completed subtask' : inputLabel} value={draft.content} tags={draft.tags.filter(tag => tag !== activeTag)} readOnly={false}
       onBoundary={boundary} onVerticalBoundary={verticalBoundary} onSelectDocument={selectDocument}
       onChange={(content, tags) => {
         verticalX.current = null;
+        // Two slashes opening a journal bullet fold it into a scratch note; the slashes themselves are not kept.
+        if (current.current.role === '' && current.current.kind === 'notes' && !tags.length && /^\/\/[ \u00a0]?$/.test(content)) {
+          persist({ ...current.current, content: '', role: 'scratch' });
+          return;
+        }
         const hiddenTag = current.current.hiddenTag ?? (activeTag && current.current.savedTags.includes(activeTag) ? activeTag : null);
         persist({ ...current.current, content, tags: [...new Set([...tags, ...(hiddenTag && (!blankContent(content) || tags.length) ? [hiddenTag] : [])])] });
       }}
@@ -882,6 +1005,18 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
           restoringFocus.current = false;
         }
         if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') verticalX.current = null;
+        const mod = event.metaKey || event.ctrlKey;
+        if (mod && event.shiftKey && event.code === 'Period' && current.current.kind === 'notes') {
+          event.preventDefault();
+          persist({ ...current.current, role: current.current.role === 'scratch' ? '' : 'scratch' });
+          return;
+        }
+        if (mod && event.shiftKey && event.code === 'Comma' && current.current.kind === 'tasks' && !archived) {
+          event.preventDefault();
+          const owner = current.current.role === 'wait' ? current.current.parentId : current.current.id;
+          if (owner !== null) beginWait(owner);
+          return;
+        }
         if (event.key === 'Enter' && !(event.currentTarget as HTMLElement).textContent?.trim() && current.current.id !== null) {
           persist({ ...current.current, content: '', tags: [] });
         }
@@ -921,7 +1056,8 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
         } else if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault();
           if (blankContent(current.current.content) && !current.current.tags.length && !current.current.id) {
-            if (current.current.parentId !== null) void run(() => move(true));
+            if (current.current.role === 'wait') dismissEmptyDraft();
+            else if (current.current.parentId !== null) void run(() => move(true));
             return;
           }
           void run(async () => {
@@ -941,7 +1077,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
             }
             const parent = snapshot.parentId === null ? null : records.current.find(item => item.id === snapshot.parentId);
             const nextKind = parent ? entryKind(parent) : defaultKind;
-            const next = id ? blank(records.current, true, snapshot.parentId, id, nextKind) : blank(records.current, composer);
+            const next = id ? { ...blank(records.current, true, snapshot.parentId, id, nextKind), role: snapshot.role } : blank(records.current, composer);
             const splitDraft = split?.after.content || split?.after.tags.length
               ? { ...next, content: split.after.content, tags: keepHiddenTag(split.after.content, split.after.tags, next.hiddenTag) }
               : next;
@@ -956,7 +1092,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
         } else if (event.key === 'Escape' && draft.mode === 'edit') {
           event.preventDefault(); persist(blank(records.current, composer)); focus();
         }
-      }} />{isSection(draft.id, draft.content) && <Hairline aria-hidden="true" />}</Row>
+      }} />{isSection(draft.id, draft.content) && <Hairline aria-hidden="true" />}{draft.role === 'wait' && <Hint data-hint-text aria-hidden="true">what are you waiting for?</Hint>}</Row>
     {failed && <TextButton onClick={() => void run(async () => { await save(); })}>Retry saving</TextButton>}
     {draft.id !== null && <Branch data-branch-for={draft.id} $open={isExpanded(draft.id)} aria-hidden={!isExpanded(draft.id)}>{renderChildren(draft.id, depth + 1)}</Branch>}
   </DraftItem>;
@@ -988,25 +1124,55 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       });
     }
     const placeOf = (index: number): SectionPlace => places[index] ?? { section: null, start: false, end: false };
-    const content = group.map((item, index) => item === null ? renderDraft(depth, placeOf(index)) : <Item key={item.id} data-outline-key={key} data-done={!!item.completed_at && !archived} data-kind={entryKind(item)} data-item-id={item.id} data-depth={depth} $leaving={completing === item.id} {...sectionAttributes(placeOf(index))}
-      onPointerLeave={() => clearPreview(item.id)}
+    // Consecutive scratch notes among these siblings fold under one strip, named after the first of them.
+    const scratchGroups: (string | null)[] = [];
+    group.forEach((item, index) => {
+      const scratch = item === null ? draft.kind === 'notes' && draft.role === 'scratch' : entryKind(item) === 'notes' && item.role === 'scratch';
+      const previous = scratchGroups[index - 1] ?? null;
+      scratchGroups.push(scratch ? previous ?? (item === null ? 'draft' : String(item.id)) : null);
+    });
+    const scratchOpen = (groupId: string) => litScratch === groupId || pinnedScratch.has(groupId) ||
+      draft.active && scratchGroups.some((candidate, at) => candidate === groupId && group[at] === null) ||
+      target !== null && scratchGroups.some((candidate, at) => candidate === groupId && group[at]?.id === target.id);
+    const rowAttributes = (index: number) => {
+      const section = sectionAttributes(placeOf(index));
+      const groupId = scratchGroups[index];
+      if (groupId === null) return { ...section, onFocusCapture: () => { section.onFocusCapture?.(); unlightScratch(); } };
+      return { ...section, 'data-scratch': groupId, 'data-scratch-open': scratchOpen(groupId) || undefined,
+        onPointerEnter: () => { section.onPointerEnter?.(); lightScratch(groupId); }, onPointerLeave: unlightScratch,
+        onFocusCapture: () => { section.onFocusCapture?.(); lightScratch(groupId); } };
+    };
+    const strip = (index: number): ReactNode => {
+      const groupId = scratchGroups[index];
+      if (groupId === null || scratchGroups[index - 1] === groupId) return null;
+      const count = scratchGroups.filter(candidate => candidate === groupId).length;
+      const open = scratchOpen(groupId);
+      return <StripItem key={`strip-${groupId}`} data-open={open || undefined} data-pinned={pinnedScratch.has(groupId) || undefined}
+        onPointerEnter={() => lightScratch(groupId)} onPointerLeave={unlightScratch}>
+        <StripButton type="button" aria-expanded={open} aria-label={`${count} scratch ${count === 1 ? 'note' : 'notes'}`}
+          onClick={() => setPinnedScratch(previous => { const next = new Set(previous); if (next.has(groupId)) next.delete(groupId); else next.add(groupId); return next; })}>
+          <Dash aria-hidden="true" /><StripCount aria-hidden="true">scratch · {count}</StripCount></StripButton>
+      </StripItem>;
+    };
+    const content = group.flatMap((item, index) => [strip(index), item === null ? renderDraft(depth, rowAttributes(index)) : <Item key={item.id} data-outline-key={key} data-done={!!item.completed_at && !archived} data-kind={entryKind(item)} data-item-id={item.id} data-depth={depth} $leaving={completing === item.id} {...rowAttributes(index)}
+      onPointerLeave={() => { clearPreview(item.id); if (scratchGroups[index] !== null) unlightScratch(); }}
       $arriving={entryKind(item) === 'tasks' && (completed.has(item.id) || reopened.has(item.id))}>
-      <Row data-section={isSection(item.id, item.content) || undefined}>{renderMarker(item.id, item.content)}<Text $done={!!item.completed_at && !archived} $action={archived && entryKind(item) === 'tasks'} $section={isSection(item.id, item.content)} role="group" tabIndex={0} aria-label={markdownText(item.content) || (item.tags ?? []).filter(tag => tag !== activeTag).map(tag => '#' + tag).join(' ')}
+      <Row data-section={isSection(item.id, item.content) || undefined} data-role={item.role || undefined}>{renderMarker(item.id, item.content)}<Text $done={!!item.completed_at && !archived} $action={archived && entryKind(item) === 'tasks'} $section={isSection(item.id, item.content)} role="group" tabIndex={0} aria-label={markdownText(item.content) || (item.tags ?? []).filter(tag => tag !== activeTag).map(tag => '#' + tag).join(' ')}
         onClick={event => { if ((archived || !item.completed_at) && !(event.target as HTMLElement).closest('a')) select(item, event.currentTarget); }}
         onContextMenu={event => {
           const link = (event.target as HTMLElement).closest('a');
           if (link && (archived || !item.completed_at)) { event.preventDefault(); select(item, event.currentTarget, link); }
         }}
         onKeyDown={event => { if ((archived || !item.completed_at) && event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); select(item); } }}
-      ><MarkdownContent content={item.content} tags={activeTag ? item.tags?.filter(tag => tag !== activeTag) : item.tags} trailing={renderInherited(item)} /></Text>{isSection(item.id, item.content) && <Hairline aria-hidden="true" />}
+      ><MarkdownContent content={item.content} tags={activeTag ? item.tags?.filter(tag => tag !== activeTag) : item.tags} trailing={<>{renderInherited(item)}{renderWaitExtras(item)}</>} /></Text>{isSection(item.id, item.content) && <Hairline aria-hidden="true" />}
       </Row>
       <Branch data-branch-for={item.id} $open={isExpanded(item.id)} aria-hidden={!isExpanded(item.id)}>{renderChildren(item.id, depth + 1)}</Branch>
-    </Item>);
+    </Item>]);
     const parent = parentId === null ? null : items.find(item => item.id === parentId);
     return parentId === null ? <List>{content}</List> : <Children $task={parent ? entryKind(parent) === 'tasks' : draft.kind === 'tasks'}>{content}</Children>;
   };
   return <OutlineSurface ref={surface} data-outline-kind={defaultKind} tabIndex={-1} onPointerDown={() => { verticalX.current = null; selectionActive.current = false; setSelectedAll(false); }}
-  onPointerLeave={() => setLitSection(null)} onBlurCapture={event => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setLitSection(null); }} onCopyCapture={event => {
+  onPointerLeave={() => { setLitSection(null); unlightScratch(); }} onBlurCapture={event => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) { setLitSection(null); unlightScratch(); } }} onCopyCapture={event => {
     if (!selectionActive.current) return;
     event.preventDefault(); event.stopPropagation(); copyDocument(event.clipboardData);
   }} onCutCapture={event => { if (selectionActive.current) { event.preventDefault(); event.stopPropagation(); copyDocument(event.clipboardData); replaceDocument(); } }}

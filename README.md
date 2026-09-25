@@ -56,6 +56,11 @@ I personally like to live and die honestly. If you don't want your lack of actio
   - use hashtags to group entries.
   - type `# ` at the start of a bullet to make a section row: a quiet heading with tags and a hairline. Its tags apply to every bullet after it on that date, until the next section row, so the rows themselves stay untagged. Hover a row to see the tags it carries.
   - hover over left margin to see sidebar with all topics
+  - press ⌘ + ? (Ctrl + ? on Windows and Linux) for the cheat sheet: every shortcut, and a short note on how each feature works
+
+#### scratch notes and waiting
+  - start a bullet with `//` to make it a scratch note. Scratch notes in a row fold into a short dashed strip so they do not clutter the day; hover the strip to read them, click it to keep them open, ⌘ + shift + . toggles scratch on the entry you are writing.
+  - rest on a to-do's checkbox and pick the dotted mark (or press ⌘ + shift + ,) to note what you are waiting on. The checkbox stays dotted until you click the dots on each waiting row; hover a waiting row for a follow-up step. Waiting never finishes a to-do by itself.
   - click one to see all the notes and to do items associated with that topic
   - click the title in sidebar (logbook) to go back to main view
 
@@ -114,6 +119,9 @@ Both to-dos and journal bullets render formatting as you type. Select text and u
 
 | Action | Mac | Windows / Linux |
 | --- | --- | --- |
+| Cheat sheet | Command+? | Ctrl+? |
+| Toggle scratch note | Command+Shift+. | Ctrl+Shift+. |
+| Note what a to-do waits on | Command+Shift+, | Ctrl+Shift+, |
 | Bold | Command+B | Ctrl+B |
 | Italic | Command+I | Ctrl+I |
 | Underline | Command+U | Ctrl+U |
@@ -146,6 +154,10 @@ Tags are **separate from Markdown content**: the `notes.tags` and `tasks.tags` c
 
 A **section row** groups the bullets after it. Type `#` and a space at the start of a root journal bullet (the Markdown heading shortcut also works) and it loses its dash: the title reads at bullet size, its tags follow, and a hairline runs to the edge. Every root bullet after it on that date, with everything nested beneath, carries the section's tags until the next section row or the end of the day. A section row with a title and no tags ends the previous section without tagging anything; one with neither is dropped when you leave it. Hovering a row shows the tags it carries from its section or its ancestors as hollow pills, and hovering anywhere in a section draws a rule beside the whole section. Section rows stay at the root: Tab does not nest them or the row after them. Inherited tags are derived from the row order, never stored, so moving a row changes what it carries. Existing bullets that begin with a level-1 heading are section rows too.
 
+A **scratch note** is a journal bullet with `role: "scratch"`. Type `//` at the start of a bullet and the slashes disappear as the bullet becomes scratch; ⌘ + shift + . toggles it. Consecutive scratch notes fold under one strip, a 36 px dashed line in the text column with a count while open; hover unfolds them in muted 14 px text, a click pins them open, Enter on a scratch note continues with another, and a search hit inside a folded group opens it. Scratch notes keep their tags and take part in filters like any bullet.
+
+A **waiting row** is a to-do child with `role: "wait"`: what its parent waits on. Rest on a checkbox and a dotted mark slides out into the margin (or press ⌘ + shift + , while editing the to-do); choosing it opens a waiting row under the to-do, with a hint until you type. Waiting rows show three dots for a marker and never count as steps, so a to-do that only waits shows them in place and its checkbox goes dotted; with steps the progress ring gets a dotted edge and a collapsed to-do says how many things it waits on. Click the dots to settle a row when the answer arrives, and hover a row for “follow up”, which adds an ordinary step right after it. A parent finishes on its own only when every step is checked and nothing it waits on is open; checking it by hand settles its open waiting rows, and reopening it keeps them settled. Waiting rows never outdent, and an empty one disappears on Enter.
+
 Hover in the outer half of the left margin (or keyboard-focus the Tags navigation) to reveal the sidebar. The left margin is slightly wider than the right. A “logbook” home link sits above a wrapping collection of rounded tag pills, without selected highlights or bars. The rest of the page blurs and dims while the sidebar is open. Move back to the document or press Escape to close it. Select a tag to show matching to-dos and notes **plus all their children**, and every row in a section carrying that tag, across paginated history. The active tag is hidden inline, and all sidebar tags remain hidden until the sidebar is opened again. New entries in that view inherit its tag. Click “logbook” to return to everything. Tags and suggestions derive from saved notes and tasks, so unused tags disappear automatically. Completed tasks retain their own tags in the logbook.
 
 Inline tags use fully rounded pills with balanced vertical padding, more horizontal padding, and space around the pill so it cannot overlap neighboring text. Their muted color differs from the date background. Saved bullets and active editors share the same pill styling.
@@ -173,7 +185,7 @@ The normalized tables are:
 | Table | Stored facts |
 | --- | --- |
 | `days` | Unique journal date and creation timestamp |
-| `entries` | Note/task kind, optional day, Markdown content, JSON tags, parent entry, shared sibling position, timestamps, retry ID |
+| `entries` | Note/task kind, optional day, Markdown content, JSON tags, role (plain, scratch or wait), parent entry, shared sibling position, timestamps, retry ID |
 | `sessions` | UTC start and end timestamps; a null end means running |
 | `calendar_subscriptions` | Public/private ICS URLs, feed-provided names, and background connection status |
 | `document_operations` | IDs, timestamps, and undo/redo state for document transactions |

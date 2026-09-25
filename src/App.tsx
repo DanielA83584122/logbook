@@ -161,7 +161,15 @@ const MobileTagControls = styled.div`
 `;
 const SoundMenu = styled.div`display: grid; gap: 8px; padding: 4px; button { justify-content: center; } input { width: 100%; min-height: 40px; accent-color: var(--link); }`;
 const ShortcutPanel = styled.div`
-  padding: 4px 12px 8px;
+  padding: 4px 12px 8px; display: grid; gap: 14px;
+`;
+const HelpSection = styled.section`display: grid; gap: 2px;`;
+const HelpHeading = styled.h3`
+  margin: 6px 0 2px; font-size: 10px; font-weight: 600; letter-spacing: 1.8px; text-transform: uppercase; color: var(--muted);
+`;
+const HelpNote = styled.p`
+  margin: 2px 0 6px; font-size: 12.5px; line-height: 1.45; color: var(--muted);
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; color: var(--code-ink); }
 `;
 const ShortcutRows = styled.div`
   display: grid; grid-template-columns: minmax(0, 1fr) max-content; column-gap: 20px; row-gap: 2px;
@@ -307,6 +315,8 @@ export default function App({ locked = false, load = !locked, onReady, onLoadErr
       if (event.metaKey || event.ctrlKey) {
         if (['z', 'y'].includes(event.key.toLowerCase())) { event.preventDefault(); void documentUndo(event.shiftKey || event.key.toLowerCase() === 'y').catch(e => notify(errorMessage(e))); }
         if (event.key.toLowerCase() === 'f') { event.preventDefault(); setSearchOpen(true); }
+        // ? sits on a different physical key per layout, so accept the character itself, and / for keyboards that need Shift.
+        if (event.key === '?' || event.key === '/') { event.preventDefault(); setShortcutsOpen(open => !open); }
       }
     };
     window.addEventListener('keydown', shortcut);
@@ -545,22 +555,55 @@ export default function App({ locked = false, load = !locked, onReady, onLoadErr
       <TextButton aria-label={audible ? 'Mute focus sound' : 'Play focus sound'} onClick={() => void toggleSound()}>{audible ? 'Mute' : 'Play sound'}</TextButton>
       <input aria-label="Focus sound volume" type="range" min="0" max="1" step="0.01" value={volume} onChange={e => { const value = Number(e.target.value); setVolume(value); localStorage.setItem('still-volume', String(value)); sound.current.setVolume(value); }} />
     </SoundMenu></Modal>
-    <Modal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" compact><ShortcutPanel>
-      <ShortcutRows data-testid="shortcut-rows">
-        <ShortcutRow><Demo>create the next entry</Demo><Keys>enter</Keys></ShortcutRow>
-        <ShortcutRow><Demo>add a line break</Demo><Keys>shift + enter</Keys></ShortcutRow>
-        <ShortcutRow><Demo>indent entry</Demo><Keys>tab</Keys></ShortcutRow>
-        <ShortcutRow><Demo>outdent entry</Demo><Keys>shift + tab</Keys></ShortcutRow>
-        <ShortcutRow><Demo>select all entries</Demo><Keys>⌘ + a twice</Keys></ShortcutRow>
-        <ShortcutRow><Demo>make this <strong>bold</strong></Demo><Keys>⌘ + b</Keys></ShortcutRow>
-        <ShortcutRow><Demo>make this <em>italic</em></Demo><Keys>⌘ + i</Keys></ShortcutRow>
-        <ShortcutRow><Demo>make this <u>underlined</u></Demo><Keys>⌘ + u</Keys></ShortcutRow>
-        <ShortcutRow><Demo>add or edit a <a href="#" onClick={event => event.preventDefault()}>link</a></Demo><Keys>⌘ + k</Keys></ShortcutRow>
-        <ShortcutRow><Demo>turn text into <code>code</code></Demo><Keys>⌘ + shift + c</Keys></ShortcutRow>
-        <ShortcutRow><Demo>search</Demo><Keys>⌘ + f</Keys></ShortcutRow>
-        <ShortcutRow><Demo>undo</Demo><Keys>⌘ + z</Keys></ShortcutRow>
-        <ShortcutRow><Demo>redo</Demo><Keys>⌘ + shift + z</Keys></ShortcutRow>
-      </ShortcutRows>
+    <Modal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts and how things work" compact><ShortcutPanel>
+      <HelpSection>
+        <HelpHeading>Writing</HelpHeading>
+        <ShortcutRows data-testid="shortcut-rows">
+          <ShortcutRow><Demo>create the next entry</Demo><Keys>enter</Keys></ShortcutRow>
+          <ShortcutRow><Demo>add a line break</Demo><Keys>shift + enter</Keys></ShortcutRow>
+          <ShortcutRow><Demo>indent entry</Demo><Keys>tab</Keys></ShortcutRow>
+          <ShortcutRow><Demo>outdent entry</Demo><Keys>shift + tab</Keys></ShortcutRow>
+          <ShortcutRow><Demo>select all entries</Demo><Keys>⌘ + a twice</Keys></ShortcutRow>
+          <ShortcutRow><Demo>undo</Demo><Keys>⌘ + z</Keys></ShortcutRow>
+          <ShortcutRow><Demo>redo</Demo><Keys>⌘ + shift + z</Keys></ShortcutRow>
+          <ShortcutRow><Demo>search everything</Demo><Keys>⌘ + f</Keys></ShortcutRow>
+          <ShortcutRow><Demo>this sheet</Demo><Keys>⌘ + ?</Keys></ShortcutRow>
+        </ShortcutRows>
+        <HelpNote>Click an entry to edit it. Enter saves and starts the next one; Escape cancels; clearing the text removes it. Click the empty space under a date to add a bullet there. Check off a to-do and it moves under today’s date; a parent finishes when its last step does.</HelpNote>
+      </HelpSection>
+      <HelpSection>
+        <HelpHeading>Formatting</HelpHeading>
+        <ShortcutRows>
+          <ShortcutRow><Demo>make this <strong>bold</strong></Demo><Keys>⌘ + b</Keys></ShortcutRow>
+          <ShortcutRow><Demo>make this <em>italic</em></Demo><Keys>⌘ + i</Keys></ShortcutRow>
+          <ShortcutRow><Demo>make this <u>underlined</u></Demo><Keys>⌘ + u</Keys></ShortcutRow>
+          <ShortcutRow><Demo>add or edit a <a href="#" onClick={event => event.preventDefault()}>link</a></Demo><Keys>⌘ + k</Keys></ShortcutRow>
+          <ShortcutRow><Demo>turn text into <code>code</code></Demo><Keys>⌘ + shift + c</Keys></ShortcutRow>
+          <ShortcutRow><Demo>heading</Demo><Keys>⌘ + alt + 1 … 6</Keys></ShortcutRow>
+        </ShortcutRows>
+        <HelpNote>Select text to see the formatting menu. Everything is stored as Markdown.</HelpNote>
+      </HelpSection>
+      <HelpSection>
+        <HelpHeading>Tags and sections</HelpHeading>
+        <ShortcutRows>
+          <ShortcutRow><Demo>tag an entry</Demo><Keys>#name</Keys></ShortcutRow>
+          <ShortcutRow><Demo>start a section</Demo><Keys># + space</Keys></ShortcutRow>
+        </ShortcutRows>
+        <HelpNote>Type <code>#</code> to pick from existing tags. Hover the left margin for the tag list: a tag shows its entries with everything nested beneath. A section row is a heading typed as <code>#</code> and a space, with tags after its title; every bullet below it on that date carries those tags until the next section row. Hover a bullet to see the tags it carries.</HelpNote>
+      </HelpSection>
+      <HelpSection>
+        <HelpHeading>Scratch and waiting</HelpHeading>
+        <ShortcutRows>
+          <ShortcutRow><Demo>scratch note</Demo><Keys>// at the start</Keys></ShortcutRow>
+          <ShortcutRow><Demo>toggle scratch on this entry</Demo><Keys>⌘ + shift + .</Keys></ShortcutRow>
+          <ShortcutRow><Demo>note what a to-do waits on</Demo><Keys>⌘ + shift + ,</Keys></ShortcutRow>
+        </ShortcutRows>
+        <HelpNote>Scratch notes fold into a short dashed strip so they do not clutter the day. Hover the strip to read them; click it to keep them open. For a to-do, rest on its checkbox and choose the dotted mark, or use the shortcut, to add a row for what you are waiting on. The checkbox stays dotted until every waiting row is settled: click its dots when the answer arrives, and hover a waiting row for a follow-up step.</HelpNote>
+      </HelpSection>
+      <HelpSection>
+        <HelpHeading>Focus timer</HelpHeading>
+        <HelpNote>Click the timer to start a focus session with white noise, and again to stop and save it. Right-click it for sound and volume. Click a date’s total to see and edit that day’s sessions.</HelpNote>
+      </HelpSection>
     </ShortcutPanel></Modal>
     {undoTask && !message && <Toast><TextButton aria-label="Undo task completion" onClick={async () => {
       try { await documentUndo(); setUndoTask(null); }
