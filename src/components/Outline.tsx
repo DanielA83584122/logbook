@@ -971,9 +971,10 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       onBoundary={boundary} onVerticalBoundary={verticalBoundary} onSelectDocument={selectDocument}
       onChange={(content, tags) => {
         verticalX.current = null;
-        // Two slashes opening a journal bullet fold it into a scratch note; the slashes themselves are not kept.
-        if (current.current.role === '' && current.current.kind === 'notes' && !tags.length && /^\/\/[ \u00a0]?$/.test(content)) {
-          persist({ ...current.current, content: '', role: 'scratch' });
+        // Two slashes opening a journal bullet, new or existing, fold it into a scratch note; the slashes themselves are not kept.
+        const opened = current.current.role === '' && current.current.kind === 'notes' ? /^\/\/[ \u00a0]?([\s\S]*)$/.exec(content) : null;
+        if (opened) {
+          persist({ ...current.current, content: opened[1], tags, role: 'scratch' });
           return;
         }
         const hiddenTag = current.current.hiddenTag ?? (activeTag && current.current.savedTags.includes(activeTag) ? activeTag : null);
