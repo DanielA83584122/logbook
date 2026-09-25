@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sektionstaggar · kladdrader · väntar</title>
+  <style>
+    @font-face { font-family: "Sohne"; src: url("../public/fonts/sohne-variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+    :root {
+      --desk: #e6e3dc; --desk-ink: #242422; --desk-muted: #626762; --desk-line: #d0cdc4; --rec: #1871ba;
+      --paper: #f2f1ed; --ink: #242422; --muted: #626762; --line: #d4d2cb; --sage: #59605d; --soft: #e8e6df;
+      --date-bg: #dfe7ed; --tag-bg: #e8e6df; --tag-ink: #525a56; --tag-selected: #1871ba; --link: #1871ba; --selection: #ccdbe7;
+      --t-surface-in: 140ms; --t-surface-out: 200ms; --t-color: 160ms;
+      --t-structure: 320ms; --t-structure-out: 180ms; --ease-structure: cubic-bezier(.2, 0, 0, 1);
+    }
+    .board[data-theme="night"] {
+      --desk: #0b1f2f; --desk-ink: #c0c7d1; --desk-muted: #a3b0bf; --desk-line: #294559; --rec: #75d1c4;
+      --paper: #011627; --ink: #c0c7d1; --muted: #a3b0bf; --line: #294559; --sage: #b1c4cc; --soft: #193447;
+      --date-bg: #173449; --tag-bg: #26394a; --tag-ink: #c0c7d1; --tag-selected: #75d1c4; --link: #75d1c4; --selection: #1f4f55;
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--desk); }
+    body { margin: 0; color: var(--desk-ink); background: var(--desk); font-family: "Sohne", "Helvetica Neue", Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; transition: background-color var(--t-color) ease-out, color var(--t-color) ease-out; }
+    button, a { font: inherit; color: inherit; }
+    h1, h2, h3, p { margin: 0; }
+    .page { max-width: 1240px; margin: 0 auto; padding: 52px 40px 96px; }
+    header { display: flex; justify-content: space-between; align-items: flex-end; gap: 32px; margin-bottom: 48px; }
+    .eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--desk-muted); margin-bottom: 10px; }
+    h1 { font-size: 32px; font-weight: 450; letter-spacing: -.03em; line-height: 1.15; }
+    .lede { margin-top: 10px; max-width: 62ch; color: var(--desk-muted); font-size: 15px; line-height: 1.5; }
+    .theme { flex-shrink: 0; border: 0; background: transparent; padding: 4px 0 3px; border-bottom: 1px solid var(--desk-ink); font-size: 13px; line-height: 1; cursor: pointer; }
+    .theme:focus-visible { outline: 2px solid var(--rec); outline-offset: 4px; }
+    .chapter { margin-top: 64px; }
+    .chapter-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 22px; padding-bottom: 12px; border-bottom: 1px solid var(--desk-line); }
+    .chapter-head h2 { font-size: 20px; font-weight: 500; letter-spacing: -.02em; }
+    .chapter-head p { color: var(--desk-muted); font-size: 14px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 42px 28px; }
+    .frame { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+    .frame:has(.states) { grid-column: 1 / -1; }
+    .kicker { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .name { font-size: 16px; font-weight: 500; letter-spacing: -.02em; }
+    .index { margin-right: 8px; color: var(--desk-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+    .badge { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--rec); }
+    .caption { font-size: 14px; line-height: 1.5; max-width: 62ch; }
+    .spec { display: block; margin-top: 4px; color: var(--desk-muted); font-size: 12px; }
+    .notes { margin-top: 36px; padding-top: 18px; border-top: 1px solid var(--desk-line); max-width: 74ch; color: var(--desk-muted); font-size: 13px; line-height: 1.55; display: grid; gap: 8px; }
+    .notes strong { font-weight: 500; color: var(--desk-ink); }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: .01ms !important; } }
+    @media (max-width: 720px) {
+      .page { padding: 32px 18px 64px; }
+      header { flex-direction: column; align-items: flex-start; }
+      h1 { font-size: 26px; }
+      .grid { grid-template-columns: 1fr; }
+      .sheet { padding: 22px 18px 16px 40px; }
+      .states { grid-template-columns: 1fr; }
+    }
+
+
+    .sheet {
+      position: relative; background: var(--paper); color: var(--ink); border-radius: 2px;
+      box-shadow: 0 0 0 1px #0000000d, 0 18px 40px #31392b12;
+      padding: 26px 32px 22px 52px; font-weight: 300; font-size: 15px; line-height: 1.2;
+      transition: background-color var(--t-color) ease-out, color var(--t-color) ease-out;
+    }
+    .sheet ::selection { background: var(--selection); }
+    .sheet a { color: var(--link); text-decoration: none; }
+    .sheet h2 { font-size: 20px; font-weight: 500; line-height: 1.4; margin: 0 0 4px; }
+
+    /* section rule from the app: a 2px line in the margin says which section the pointer is in */
+    .section { position: relative; }
+    .section + .section { margin-top: 20px; }
+    .section::before {
+      content: ""; position: absolute; left: -20px; top: 8px; bottom: 6px; width: 2px; border-radius: 1px;
+      background: var(--sage); opacity: 0; transform: scaleY(0); transform-origin: top center; pointer-events: none;
+      transition: opacity var(--t-structure-out) ease-out, transform 0s linear var(--t-structure-out);
+    }
+    .section:hover::before, .section.is-hover::before {
+      opacity: .55; transform: scaleY(1);
+      transition: transform var(--t-structure) var(--ease-structure), opacity 200ms ease-out;
+    }
+
+    .date { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-height: 40px; margin: 0 0 3px; }
+    .pill { font-size: 15px; line-height: 24px; padding: 0 6px; margin-left: -6px; border-radius: 9px; background: var(--date-bg); transition: background-color var(--t-color) ease-out; }
+    .time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; transition: color var(--t-color) ease-out; }
+    .section:hover .pill, .section.is-hover .pill { background: color-mix(in srgb, var(--date-bg), var(--ink) 8%); }
+    .section:hover .time, .section.is-hover .time { color: var(--link); }
+
+    .body { padding-left: 20px; }
+    .row { position: relative; display: flex; align-items: flex-start; min-height: 28px; }
+    .row.n1 { margin-left: 32px; }
+    .row.n2 { margin-left: 64px; }
+    .marker { display: grid; place-items: center; width: 40px; min-width: 40px; height: 28px; color: var(--ink); font-size: 14px; line-height: 1; }
+    .marker.task::before { content: ""; width: 12px; height: 12px; border: 1.25px solid currentColor; border-radius: 50%; }
+    .marker.open::before { content: ""; width: 0; height: 0; border-style: solid; border-width: 4px 0 4px 6px; border-color: transparent transparent transparent currentColor; rotate: 90deg; translate: 0 -1px; }
+    .text { flex: 1; min-width: 0; padding: 4px 0; overflow-wrap: anywhere; }
+
+    /* inline tag chip, as saved text renders it */
+    .tag { display: inline-block; position: relative; isolation: isolate; padding: 0 8px 0 7px; color: var(--tag-ink); font-size: calc(1em - .5px); white-space: nowrap; }
+    .tag::before { content: ""; position: absolute; z-index: -1; inset: -1px 0; border-radius: 999px; background: var(--tag-bg); }
+    .tag.ghost { color: var(--muted); }
+    .tag.ghost::before { background: transparent; border: 1px solid var(--line); }
+    .tag.on { color: var(--tag-selected); }
+
+    /* A1 — tag in the heading line */
+    .date .tag { font-size: 13px; line-height: 20px; }
+    .date .add { margin-left: -2px; opacity: 0; transition: opacity var(--t-surface-out) ease-out; }
+    .section:hover .date .add, .section.is-hover .date .add { opacity: .7; transition-duration: var(--t-surface-in); }
+    .inherit { margin-left: 8px; font-size: 13px; line-height: 18px; opacity: 0; transition: opacity var(--t-surface-out) ease-out; }
+    .row:hover .inherit, .row.is-hover .inherit { opacity: 1; transition-duration: var(--t-surface-in); }
+
+    /* A1 — a section row inside the day: title, tags, a hairline; the rows below belong to it */
+    .sec-group { position: relative; }
+    .sec-group::before {
+      content: ""; position: absolute; left: 0; top: 10px; bottom: 4px; width: 2px; border-radius: 1px;
+      background: var(--sage); opacity: 0; transform: scaleY(0); transform-origin: top center; pointer-events: none;
+      transition: opacity var(--t-structure-out) ease-out, transform 0s linear var(--t-structure-out);
+    }
+    .sec-group:hover::before, .sec-group.is-hover::before {
+      opacity: .45; transform: scaleY(1);
+      transition: transform var(--t-structure) var(--ease-structure), opacity 200ms ease-out;
+    }
+    .row.sec { align-items: center; min-height: 32px; margin-top: 6px; }
+    .row.sec:first-child { margin-top: 0; }
+    .row.sec .marker { visibility: hidden; }
+    .row.sec .text { flex: 0 1 auto; white-space: nowrap; }
+    .row.sec .title { padding: 4px 0; font-weight: 400; color: var(--ink); }
+    .row.sec .tag { font-size: 13px; line-height: 20px; margin-left: 6px; }
+    .row.sec .hair { flex: 1; min-width: 24px; height: 0; margin-left: 14px; border-top: 1px solid var(--line); opacity: .9; }
+    .row.sec .add { opacity: 0; transition: opacity var(--t-surface-out) ease-out; }
+    .sec-group:hover .row.sec .add, .sec-group.is-hover .row.sec .add { opacity: .7; transition-duration: var(--t-surface-in); }
+    /* A2 — tags sitting on a hairline, no title */
+    .row.line { align-items: center; min-height: 28px; margin-top: 4px; }
+    .row.line .marker { visibility: hidden; }
+    .row.line .tag { font-size: 13px; line-height: 20px; margin-right: 6px; }
+    .row.line .hair { flex: 1; height: 0; margin-left: 6px; border-top: 1px solid var(--line); }
+    /* A2 (old) — a tag line of its own under the date */
+    .tagline { display: flex; flex-wrap: wrap; gap: 6px; min-height: 28px; align-items: center; padding: 0 0 2px 20px; }
+    .tagline .tag { font-size: 12px; line-height: 22px; padding: 0 9px; }
+    .tagline .tag.ghost { color: var(--tag-ink); }
+    .tagline .add { opacity: 0; transition: opacity var(--t-surface-out) ease-out; }
+    .section:hover .tagline .add, .section.is-hover .tagline .add { opacity: .7; }
+
+    /* A3 — the filtered view, with a slice of the sidebar */
+    .filtered { display: grid; grid-template-columns: 96px 1fr; gap: 20px; }
+    .rail { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding-top: 4px; border-right: 1px solid var(--line); padding-right: 14px; }
+    .rail .home { font-size: 16px; font-weight: 400; letter-spacing: -.02em; margin-bottom: 8px; }
+    .rail .tag { font-size: 12px; line-height: 22px; padding: 0 9px; }
+
+    /* B1 — scratch strip: a collapsed group of scratch rows */
+    .scratch { position: relative; }
+    .strip { display: flex; align-items: center; gap: 8px; width: 100%; height: 16px; padding: 0 0 0 40px; border: 0; background: transparent; text-align: left; cursor: pointer; }
+    .dash { width: 36px; height: 0; border-top: 1.5px dashed var(--line); transition: border-color var(--t-color) ease-out, width var(--t-structure) var(--ease-structure); }
+    .count { font-size: 11px; line-height: 1; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; opacity: 0; transition: opacity var(--t-color) ease-out; }
+    .scratch:hover .dash, .scratch.is-hover .dash, .scratch.pinned .dash { border-color: var(--muted); }
+    .scratch.pinned .dash { border-top-style: solid; border-color: var(--sage); }
+    .scratch:hover .count, .scratch.is-hover .count, .scratch.pinned .count { opacity: .85; }
+    .rows { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--t-structure-out) var(--ease-structure), opacity 120ms ease-out; }
+    .rows > div { overflow: hidden; min-height: 0; }
+    .scratch:hover .rows, .scratch.is-hover .rows, .scratch.pinned .rows { grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows var(--t-structure) var(--ease-structure), opacity 160ms ease-out 60ms; }
+    .scratch .row .text { color: var(--muted); font-size: 14px; }
+    .scratch .row .marker { color: var(--muted); }
+    @media (hover: none) { .strip { height: 28px; } }
+
+    /* B2 — first words: the row keeps its height, the text fades out to the right */
+    .peek .marker { color: var(--muted); }
+    .peek .text { color: var(--muted); font-size: 14px; white-space: nowrap; overflow: hidden; max-width: 50%;
+      -webkit-mask-image: linear-gradient(90deg, #000 55%, transparent 100%); mask-image: linear-gradient(90deg, #000 55%, transparent 100%);
+      transition: max-width var(--t-structure) var(--ease-structure); }
+    .peek:hover .text, .peek.is-hover .text, .peek.pinned .text { white-space: pre-wrap; max-width: 100%; -webkit-mask-image: none; mask-image: none; }
+
+    /* B3 — a dot in the margin, nothing in the text column */
+    .dots { position: relative; }
+    .dots .handle { display: flex; align-items: center; height: 12px; width: 100%; padding: 0 0 0 17px; border: 0; background: transparent; cursor: pointer; }
+    .dots .handle::before { content: ""; width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--line); transition: border-color var(--t-color) ease-out, background-color var(--t-color) ease-out; }
+    .dots:hover .handle::before, .dots.is-hover .handle::before, .dots.pinned .handle::before { border-color: var(--muted); background: var(--muted); }
+    .dots .rows { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--t-structure-out) var(--ease-structure), opacity 120ms ease-out; }
+    .dots:hover .rows, .dots.is-hover .rows, .dots.pinned .rows { grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows var(--t-structure) var(--ease-structure), opacity 160ms ease-out 60ms; }
+    .dots .row .text { color: var(--muted); font-size: 14px; }
+    .dots .row .marker { color: var(--muted); }
+
+
+    /* C — waiting on the checkbox */
+    .st { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 1.25px solid currentColor; box-sizing: border-box; position: relative; flex-shrink: 0; }
+    .st.waiting { border-style: dotted; border-width: 1.6px; color: var(--muted); }
+    .st.done { background: currentColor; }
+    .st.done::after { content: ""; position: absolute; left: 2.5px; top: 2px; width: 5px; height: 3px; border-left: 1.4px solid var(--paper); border-bottom: 1.4px solid var(--paper); rotate: -45deg; }
+    .st.pie { background: conic-gradient(currentColor 0 var(--p, 50%), transparent var(--p, 50%) 100%); }
+    .st.pie.waiting { border-style: dotted; border-width: 1.6px; color: var(--muted); }
+    .marker.task:has(.st)::before { content: none; }
+    .marker.task.status-waiting { color: var(--muted); }
+    .marker.pick { position: relative; cursor: pointer; overflow: visible; }
+    .opt { position: absolute; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: var(--paper); color: var(--ink);
+      box-shadow: 0 0 0 1px var(--line), 0 4px 10px #0000001a; display: grid; place-items: center; cursor: pointer;
+      opacity: 0; scale: .8; top: 50%; left: 50%; translate: calc(-50% + 16px) -50%;
+      transition: opacity 140ms ease-out, translate 220ms var(--ease-structure), scale 220ms var(--ease-structure), box-shadow var(--t-color) ease-out; }
+    .opt .st { width: 11px; height: 11px; }
+    .opt.w { margin-left: -30px; }
+    .opt:hover, .opt.is-hover { box-shadow: 0 0 0 1.5px var(--link), 0 6px 14px #00000022; }
+    .pick:hover .opt, .pick.is-hover .opt { opacity: 1; scale: 1; translate: -50% -50%; transition-delay: 180ms, 140ms, 140ms, 0s; }
+    /* hold: a ring fills around the checkbox */
+    .hold { position: relative; }
+    .hold .ring { position: absolute; left: 50%; top: 50%; width: 20px; height: 20px; translate: -50% calc(-50% - 1px); border-radius: 50%;
+      background: conic-gradient(var(--link) 0 var(--p), transparent var(--p) 100%);
+      -webkit-mask: radial-gradient(circle, transparent 7.5px, #000 8px); mask: radial-gradient(circle, transparent 7.5px, #000 8px); }
+    .hold .hint { position: absolute; right: calc(100% - 8px); top: 50%; translate: 0 -50%; font-size: 11px; line-height: 1; color: var(--link); white-space: nowrap; }
+    /* wait rows: children of a task that say what it waits for */
+    .row.wait .marker { color: var(--muted); font-size: 13px; letter-spacing: 1.5px; }
+    .row.wait.resolved .text { color: var(--muted); text-decoration: line-through; }
+    .row.wait.resolved .marker { letter-spacing: 0; }
+    .placeholder { color: var(--muted); opacity: .6; }
+    .caret { display: inline-block; width: 1px; height: 15px; margin-right: 1px; background: var(--ink); vertical-align: -3px; }
+    .follow { margin-left: 8px; font-size: 12px; color: var(--muted); opacity: 0; transition: opacity var(--t-surface-out) ease-out; white-space: nowrap; }
+    .row:hover .follow, .row.is-hover .follow { opacity: .85; transition-duration: var(--t-surface-in); }
+    .due { margin-left: 8px; font-size: 12px; line-height: 18px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .summary { margin-left: 8px; font-size: 12px; line-height: 18px; color: var(--muted); white-space: nowrap; }
+    .rest .row .text { display: flex; justify-content: space-between; gap: 12px; }
+    .rest .row .text .w { color: var(--muted); font-size: 12px; }
+
+    /* state strip: three small sheets with forced states */
+    .states { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .states .sheet { padding: 18px 20px 14px 44px; }
+    .states .label { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+
+    .sheet { font-family: "Sohne", "Helvetica Neue", Arial, sans-serif; }
+    .sheet code { font: inherit; }
+  </style>
+</head>
+<body>
+  <div class="board" id="board">
+  <div class="page">
+    <header>
+      <div>
+        <p class="eyebrow">Logbook · design</p>
+        <h1>Taggar på sektioner, rader för kladd, väntar på to do</h1>
+        <p class="lede">Tre tillägg som ska hålla dokumentet lika tyst som idag. För musen över dagarna och strecken; rutorna använder appens papper, chip och länkfärg.</p>
+      </div>
+      <button class="theme" type="button" id="theme">Natt</button>
+    </header>
+
+    <section class="chapter">
+      <div class="chapter-head"><h2>Sektionstaggar</h2><p>en sektionsrad inne i dagen taggar alla rader under den</p></div>
+      <div class="grid">
+      <article class="frame">
+        <div class="kicker"><div class="name"><span class="index">01</span>Sektionsrad</div><div class="badge">Rekommenderad</div></div>
+        
+<div class="sheet">
+  <section class="section">
+    <div class="date"><time class="pill" datetime="2026-09-24">Sep 24, 2026</time><span class="time">1h 12m 04s</span></div>
+    <div class="body">
+      <div class="row"><span class="marker">–</span><span class="text">called the bank about the loan</span></div>
+      <div class="sec-group is-hover">
+        <div class="row sec"><span class="marker"></span><span class="text"><span class="title">fence and hedge</span><span class="tag">#garden</span><span class="tag">#house</span><span class="tag ghost add" aria-hidden="true">#</span></span><span class="hair"></span></div>
+        <div class="row"><span class="marker">–</span><span class="text">moved the bench under the apple tree<span class="tag ghost inherit">#garden</span><span class="tag ghost inherit">#house</span></span></div>
+        <div class="row"><span class="marker">–</span><span class="text">asked for a quote on the fence<span class="tag ghost inherit">#garden</span><span class="tag ghost inherit">#house</span></span></div>
+        <div class="row"><span class="marker open"></span><span class="text">reading notes <span class="tag">#reading</span><span class="tag ghost inherit">#garden</span><span class="tag ghost inherit">#house</span></span></div>
+        <div class="row n1"><span class="marker">–</span><span class="text">chapter four is about soil<span class="tag ghost inherit">#reading</span><span class="tag ghost inherit">#garden</span><span class="tag ghost inherit">#house</span></span></div>
+      </div>
+      <div class="sec-group">
+        <div class="row sec"><span class="marker"></span><span class="text"><span class="title">grant</span><span class="tag">#work</span><span class="tag ghost add" aria-hidden="true">#</span></span><span class="hair"></span></div>
+        <div class="row"><span class="marker">–</span><span class="text">wrote the intro<span class="tag ghost inherit">#work</span></span></div>
+        <div class="row"><span class="marker">–</span><span class="text">budget line 4, ask Sam<span class="tag ghost inherit">#work</span></span></div>
+      </div>
+    </div>
+  </section>
+  <section class="section">
+    <div class="date"><time class="pill" datetime="2026-09-23">Sep 23, 2026</time><span class="time">46m 10s</span></div>
+    <div class="body">
+      <div class="row"><span class="marker">–</span><span class="text">the line about the garden path <span class="tag">#garden</span></span></div>
+      <div class="row"><span class="marker">–</span><span class="text">a day without sections stays as today</span></div>
+    </div>
+  </section>
+</div>
+
+        <p class="caption">En sektion börjar med en sektionsrad inne i dagen: utan punkt, med en valfri rubrik, taggarna och en hårlinje ut till kanten. Alla rotrader under den hör till sektionen, med sina nästlade rader, fram till nästa sektionsrad eller dagens slut. Raderna upprepar inte taggarna; för musen över en rad så visas de ärvda som hålpiller. Hover på sektionen visar ett streck i marginalen längs hela dess längd, som dagens streck idag.<span class="spec">rubrik 400, 15 px · chip som i text, 13 px · hårlinje 1 px --line · sektionsstreck 2 px --sage 45 % · ärvd tagg: hålpill, 140 ms</span></p>
+      </article>
+      <article class="frame">
+        <div class="kicker"><div class="name"><span class="index">02</span>Taggar på linjen</div></div>
+        
+<div class="sheet">
+  <section class="section">
+    <div class="date"><time class="pill" datetime="2026-09-24">Sep 24, 2026</time><span class="time">1h 12m 04s</span></div>
+    <div class="body">
+      <div class="row"><span class="marker">–</span><span class="text">called the bank about the loan</span></div>
+      <div class="sec-group">
+        <div class="row line"><span class="marker"></span><span class="tag">#garden</span><span class="tag">#house</span><span class="hair"></span></div>
+        <div class="row"><span class="marker">–</span><span class="text">moved the bench under the apple tree<span class="tag ghost inherit">#garden</span><span class="tag ghost inherit">#house</span></span></div>
+        <div class="row"><span class="marker">–</span><span class="text">asked for a quote on the fence<span class="tag ghost inherit">#garden</span><span class="tag ghost inherit">#house</span></span></div>
+        <div class="row open"><span class="marker open"></span><span class="text">reading notes <span class="tag">#reading</span><span class="tag ghost inherit">#garden</span><span class="tag ghost inherit">#house</span></span></div>
+        <div class="row n1"><span class="marker">–</span><span class="text">chapter four is about soil<span class="tag ghost inherit">#reading</span><span class="tag ghost inherit">#garden</span><span class="tag ghost inherit">#house</span></span></div>
+      </div>
+      <div class="sec-group">
+        <div class="row line"><span class="marker"></span><span class="tag">#work</span><span class="hair"></span></div>
+        <div class="row"><span class="marker">–</span><span class="text">wrote the intro<span class="tag ghost inherit">#work</span></span></div>
+        <div class="row"><span class="marker">–</span><span class="text">budget line 4, ask Sam<span class="tag ghost inherit">#work</span></span></div>
+      </div>
+    </div>
+  </section>
+  <section class="section">
+    <div class="date"><time class="pill" datetime="2026-09-23">Sep 23, 2026</time><span class="time">46m 10s</span></div>
+    <div class="body">
+      <div class="row"><span class="marker">–</span><span class="text">the line about the garden path <span class="tag">#garden</span></span></div>
+      <div class="row"><span class="marker">–</span><span class="text">a day without sections stays as today</span></div>
+    </div>
+  </section>
+</div>
+
+        <p class="caption">Samma sektioner utan rubrik: chipen sitter direkt på hårlinjen. Tystare, men sektionen kan inte få ett namn, och en sektion utan taggar blir bara ett streck.<span class="spec">chip 13 px · hårlinje 1 px --line · samma sektionsstreck och ärvda hålpiller som 01</span></p>
+      </article>
+      <article class="frame">
+        <div class="kicker"><div class="name"><span class="index">03</span>Filtret #garden</div><div class="badge">Konsekvens</div></div>
+        
+<div class="sheet filtered">
+  <div class="rail">
+    <span class="home">logbook</span>
+    <span class="tag ghost">all</span>
+    <span class="tag ghost on">#garden</span>
+    <span class="tag ghost">#house</span>
+    <span class="tag ghost">#reading</span>
+    <span class="tag ghost">#work</span>
+  </div>
+  <div>
+    <section class="section">
+      <div class="date"><time class="pill" datetime="2026-09-24">Sep 24, 2026</time><span class="time">1h 12m 04s</span></div>
+      <div class="body">
+        <div class="sec-group">
+          <div class="row sec"><span class="marker"></span><span class="text"><span class="title">fence and hedge</span><span class="tag">#house</span></span><span class="hair"></span></div>
+          <div class="row"><span class="marker">–</span><span class="text">moved the bench under the apple tree</span></div>
+          <div class="row"><span class="marker">–</span><span class="text">asked for a quote on the fence</span></div>
+          <div class="row"><span class="marker open"></span><span class="text">reading notes <span class="tag">#reading</span></span></div>
+          <div class="row n1"><span class="marker">–</span><span class="text">chapter four is about soil</span></div>
+        </div>
+      </div>
+    </section>
+    <section class="section">
+      <div class="date"><time class="pill" datetime="2026-09-23">Sep 23, 2026</time><span class="time">46m 10s</span></div>
+      <div class="body">
+        <div class="row"><span class="marker">–</span><span class="text">the line about the garden path</span></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+        <p class="caption">Det vanliga filtret, oförändrat. Sektionen visas med sin sektionsrad och alla sina rader, och sektionens egen #garden döljs som aktiv tagg döljs idag; #house står kvar. Rader utanför sektioner visas bara om de bär taggen själva. Ärvda rader räknas i sidopanelens antal och i sök.<span class="spec">ingen ny vy · sektionsraden följer med som rubrik · grant-sektionen syns inte</span></p>
+      </article>
+      </div>
+
+      <div class="notes">
+        <p><strong>Vad en sektion är.</strong> En sektionsrad och rotraderna efter den, till nästa sektionsrad eller dagens slut. Ingen tagg per dag. Sektionens taggar gäller varje rotrad i den och allt nästlat under dem; en tagg som skrivs på en enskild rad gäller som idag bara den raden. To do-listan kan få sektionsrader på samma sätt.</p>
+        <p><strong>Skriva.</strong> Skriv # och mellanslag först på raden så blir den en sektionsrad, som en markdown-rubrik. Rubriken är valfri; taggarna skrivs som i en punkt med samma autoförslag. En sektionsrad utan både rubrik och taggar försvinner när den lämnas. En sektionsrad med bara rubrik avslutar sektionen före utan att tagga något. Enter på en sektionsrad ger sektionens första punkt.</p>
+        <p><strong>Lagring.</strong> Sektionsraden är en rad av egen sort i dagens ordning. Tillhörighet räknas från ordningen, så en rad som flyttas byter sektion med sig. Filter, sök och sidopanelens antal räknar ärvda rader. En ny punkt i en sektion får dess taggar automatiskt, som en ny punkt under ett aktivt filter gör idag.</p>
+      </div>
+
+    </section>
+
+    <section class="chapter">
+      <div class="chapter-head"><h2>Kladdrader</h2><p>hopfällda tills musen kommer, för det som inte ska skräpa ner</p></div>
+      <div class="grid">
+      <article class="frame">
+        <div class="kicker"><div class="name"><span class="index">04</span>Kladdstreck</div><div class="badge">Rekommenderad</div></div>
+        
+<div class="sheet">
+  <section class="section">
+    <div class="date"><time class="pill" datetime="2026-09-24">Today</time><span class="time">1h 12m 04s</span></div>
+    <div class="body">
+      <div class="row"><span class="marker">–</span><span class="text">wrote the intro for the grant</span></div>
+      <div class="scratch "><button class="strip" type="button" aria-expanded="false" aria-label="3 scratch rows"><span class="dash"></span><span class="count">kladd · 3</span></button><div class="rows"><div><div class="row"><span class="marker">–</span><span class="text">maybe reuse the old grant text as a skeleton?</span></div><div class="row"><span class="marker">–</span><span class="text">budget line 4 — ask Sam</span></div><div class="row"><span class="marker">–</span><span class="text">or skip the appendix entirely</span></div></div></div></div>
+      <div class="row"><span class="marker task"></span><span class="text">call with Mira at 3</span></div>
+      <div class="row"><span class="marker">–</span><span class="text">the fence quote came in, lower than feared</span></div>
+      <div class="scratch "><button class="strip" type="button" aria-expanded="false" aria-label="1 scratch rows"><span class="dash"></span><span class="count">kladd · 1</span></button><div class="rows"><div><div class="row"><span class="marker">–</span><span class="text">check if the neighbour splits it</span></div></div></div></div>
+    </div>
+  </section>
+</div>
+
+        <p class="caption">Kladdrader i följd fälls ihop till ett kort streckat streck i textkolumnen, 16 px högt. För musen över det så vecklas raderna ut i dämpad färg och antalet syns; lämna och de faller ihop igen. Klick på strecket håller gruppen öppen tills nästa klick, som grenpilarna.<span class="spec">streck 36 px, 1.5 px dashed --line → --muted · fäst: solid --sage · 320 ms ease-structure in, 180 ms ut · text 14 px --muted</span></p>
+      </article>
+      <article class="frame">
+        <div class="kicker"><div class="name"><span class="index">05</span>Första orden</div></div>
+        
+<div class="sheet">
+  <section class="section">
+    <div class="date"><time class="pill" datetime="2026-09-24">Today</time><span class="time">1h 12m 04s</span></div>
+    <div class="body">
+      <div class="row"><span class="marker">–</span><span class="text">wrote the intro for the grant</span></div>
+      <div class="row peek"><span class="marker">–</span><span class="text">maybe reuse the old grant text as a skeleton? the structure was fine, the numbers were not</span></div>
+      <div class="row peek"><span class="marker">–</span><span class="text">budget line 4 — ask Sam before Friday</span></div>
+      <div class="row"><span class="marker task"></span><span class="text">call with Mira at 3</span></div>
+      <div class="row"><span class="marker">–</span><span class="text">the fence quote came in, lower than feared</span></div>
+      <div class="row peek"><span class="marker">–</span><span class="text">check if the neighbour splits it, they said something in spring</span></div>
+    </div>
+  </section>
+</div>
+
+        <p class="caption">Raden behåller sin höjd och visar de första orden, tonade ut åt höger. Hover breder ut hela texten. Lättare att skumma, men varje kladdrad kostar en hel radhöjd.<span class="spec">max-width 50 % · mask 55 % → 0 · 320 ms · text 14 px --muted</span></p>
+      </article>
+      <article class="frame">
+        <div class="kicker"><div class="name"><span class="index">06</span>Marginalprick</div></div>
+        
+<div class="sheet">
+  <section class="section">
+    <div class="date"><time class="pill" datetime="2026-09-24">Today</time><span class="time">1h 12m 04s</span></div>
+    <div class="body">
+      <div class="row"><span class="marker">–</span><span class="text">wrote the intro for the grant</span></div>
+      <div class="dots "><button class="handle" type="button" aria-expanded="false" aria-label="3 scratch rows"></button><div class="rows"><div><div class="row"><span class="marker">–</span><span class="text">maybe reuse the old grant text as a skeleton?</span></div><div class="row"><span class="marker">–</span><span class="text">budget line 4 — ask Sam</span></div><div class="row"><span class="marker">–</span><span class="text">or skip the appendix entirely</span></div></div></div></div>
+      <div class="row"><span class="marker task"></span><span class="text">call with Mira at 3</span></div>
+      <div class="row"><span class="marker">–</span><span class="text">the fence quote came in, lower than feared</span></div>
+      <div class="dots "><button class="handle" type="button" aria-expanded="false" aria-label="1 scratch rows"></button><div class="rows"><div><div class="row"><span class="marker">–</span><span class="text">check if the neighbour splits it</span></div></div></div></div>
+    </div>
+  </section>
+</div>
+
+        <p class="caption">Bara en 6 px hålprick i markörkolumnen säger att det finns kladd. Hover på pricken vecklar ut raderna. Tystast av de tre, men lättast att missa.<span class="spec">prick 6 px, kant --line → fylld --muted · yta 12 px · samma utfällning som 04</span></p>
+      </article>
+      <article class="frame">
+        <div class="kicker"><div class="name"><span class="index">04b</span>Kladdstreck i tre lägen</div></div>
+        <div class="states">
+<div class="sheet">
+  <div class="label">Vila</div>
+  <div class="row"><span class="marker">–</span><span class="text">wrote the intro</span></div>
+  <div class="scratch "><button class="strip" type="button" aria-expanded="false" aria-label="2 scratch rows"><span class="dash"></span><span class="count">kladd · 2</span></button><div class="rows"><div><div class="row"><span class="marker">–</span><span class="text">reuse the old text?</span></div><div class="row"><span class="marker">–</span><span class="text">ask Sam about line 4</span></div></div></div></div>
+  <div class="row"><span class="marker task"></span><span class="text">call Mira</span></div>
+</div>
+
+<div class="sheet">
+  <div class="label">Hover</div>
+  <div class="row"><span class="marker">–</span><span class="text">wrote the intro</span></div>
+  <div class="scratch is-hover"><button class="strip" type="button" aria-expanded="false" aria-label="2 scratch rows"><span class="dash"></span><span class="count">kladd · 2</span></button><div class="rows"><div><div class="row"><span class="marker">–</span><span class="text">reuse the old text?</span></div><div class="row"><span class="marker">–</span><span class="text">ask Sam about line 4</span></div></div></div></div>
+  <div class="row"><span class="marker task"></span><span class="text">call Mira</span></div>
+</div>
+
+<div class="sheet">
+  <div class="label">Fäst</div>
+  <div class="row"><span class="marker">–</span><span class="text">wrote the intro</span></div>
+  <div class="scratch pinned"><button class="strip" type="button" aria-expanded="false" aria-label="2 scratch rows"><span class="dash"></span><span class="count">kladd · 2</span></button><div class="rows"><div><div class="row"><span class="marker">–</span><span class="text">reuse the old text?</span></div><div class="row"><span class="marker">–</span><span class="text">ask Sam about line 4</span></div></div></div></div>
+  <div class="row"><span class="marker task"></span><span class="text">call Mira</span></div>
+</div>
+</div>
+        <p class="caption">Vila, hover och fäst sida vid sida. Fäst skiljer sig från hover bara genom att strecket blir solitt, så att man ser varför gruppen inte faller ihop.<span class="spec">vila: --line dashed · hover: --muted dashed + antal · fäst: --sage solid + antal</span></p>
+      </article>
+      </div>
+
+      <div class="notes">
+        <p><strong>Så blir en rad kladd.</strong> Skriv <code>//</code> först på raden. Prefixet försvinner när raden lämnas, som #tagg blir chip, och raden fälls in. Cmd+Shift+. växlar en befintlig rad. Kladdrader i följd bildar en grupp; en vanlig rad emellan bryter gruppen.</p>
+        <p><strong>Redigera.</strong> Hover vecklar ut; klick i texten redigerar som vanligt och håller gruppen öppen tills fokus lämnar den. Klick på strecket fäster utan att redigera. På touch, där hover saknas, öppnar ett tryck och ett tryck till redigerar; strecket är då 28 px högt.</p>
+        <p><strong>Övrigt.</strong> Kladd följer sektionens taggar men visas hopfällt även under filter. Sökträffar i kladd öppnar gruppen. Reduced motion tar bort utfällningen och visar direkt. Ingen kursiv: dämpad färg och 14 px räcker för att skilja kladd från anteckning.</p>
+      </div>
+
+    </section>
+
+    <section class="chapter">
+      <div class="chapter-head"><h2>Väntar på to do</h2><p>vad man väntar på, i flera rader, med uppföljning</p></div>
+      <div class="grid">
+      <article class="frame">
+        <div class="kicker"><div class="name"><span class="index">07</span>Välja väntar</div><div class="badge">Rekommenderad</div></div>
+        
+<div class="sheet">
+  <section class="section">
+    <h2>to do</h2>
+    <div class="body">
+      <div class="row"><span class="marker task status-open pick is-hover"><span class="st"></span><button class="opt w is-hover" type="button" aria-label="Väntar"><span class="st waiting"></span></button></span><span class="text">send the draft to Mira</span></div>
+      <div class="row"><span class="marker task status-waiting "><span class="st waiting"></span></span><span class="text">fence quote</span></div>
+      <div class="row n1 wait"><span class="marker">···</span><span class="text"><span class="caret"></span><span class="placeholder">vad väntar du på?</span></span></div>
+      <div class="row"><span class="marker task status-open pick"><span class="st"></span><button class="opt w " type="button" aria-label="Väntar"><span class="st waiting"></span></button></span><span class="text">book the dentist</span></div>
+      <div class="row"><span class="marker task status-open pick"><span class="st"></span><button class="opt w " type="button" aria-label="Väntar"><span class="st waiting"></span></button></span><span class="text">walk before lunch</span></div>
+    </div>
+  </section>
+</div>
+
+        <p class="caption">Vila på kryssrutan i 180 ms så glider ett prickat val ut i marginalen till vänster, centrerat på pekarens höjd. Klicka på det så får uppgiften en väntar-rad under sig med markören redo: skriv vad du väntar på. Kryssrutan blir prickad så länge en väntar-rad är öppen. Vanligt klick är fortfarande klar.<span class="spec">val 22 px på papper med kant --line · 30 px till vänster · fördröjning 180 ms · 220 ms ease-structure in, 140 ms ut</span></p>
+      </article>
+      <article class="frame">
+        <div class="kicker"><div class="name"><span class="index">08</span>Håll in</div></div>
+        
+<div class="sheet">
+  <section class="section">
+    <h2>to do</h2>
+    <div class="body">
+      <div class="row"><span class="marker task status-open "><span class="st"></span></span><span class="text">send the draft to Mira</span></div>
+      <div class="row"><span class="marker task hold"><span class="st"></span><span class="ring" style="--p: 72%"></span><span class="hint">väntar</span></span><span class="text">fence quote</span></div>
+      <div class="row"><span class="marker task status-open "><span class="st"></span></span><span class="text">book the dentist</span></div>
+      <div class="row"><span class="marker task status-open "><span class="st"></span></span><span class="text">walk before lunch</span></div>
+    </div>
+  </section>
+</div>
+
+        <p class="caption">Alternativ utan extra yta: håll ner musknappen på kryssrutan. En ring fyller sig på 0,4 s och ordet väntar står i marginalen. Släpp så öppnas väntar-raden. Snabbt klick är klar. Kräver att man lärt sig gesten.<span class="spec">ring 20 px, 2 px, --link · conic-gradient · hint 11 px --link · reduced motion: ringen hoppar till full</span></p>
+      </article>
+      <article class="frame">
+        <div class="kicker"><div class="name"><span class="index">09</span>Flera saker, uppföljning</div></div>
+        
+<div class="sheet">
+  <section class="section">
+    <h2>to do</h2>
+    <div class="body">
+      <div class="row"><span class="marker task status-waiting "><span class="st waiting"></span></span><span class="text">fence quote</span></div>
+      <div class="row n1 wait is-hover"><span class="marker">···</span><span class="text">the neighbour’s answer on splitting the cost<span class="follow">följ upp</span></span></div>
+      <div class="row n2"><span class="marker task status-open "><span class="st"></span></span><span class="text">ring grannen igen<span class="tag ghost due">fre 27 sep</span></span></div>
+      <div class="row n1 wait resolved"><span class="marker">–</span><span class="text">the second quote from Byggarna</span></div>
+      <div class="row n1 wait"><span class="marker">···</span><span class="text">the council’s answer on the height<span class="follow">följ upp</span></span></div>
+      <div class="row"><span class="marker task status-open "><span class="st"></span></span><span class="text">send the draft to Mira</span></div>
+    </div>
+  </section>
+</div>
+
+        <p class="caption">Varje sak man väntar på är en egen rad med tre prickar som markör; Enter på en väntar-rad ger nästa. Klick på prickarna löser raden: den dämpas och stryks, som en klar del-todo. Hover på en väntar-rad visar följ upp, som skapar en vanlig del-todo under den, med valfritt datum. Uppföljningen är det som ska utföras, så den räknas i förälderns framsteg; väntar-rader gör det inte.<span class="spec">markör ··· 13 px --muted · löst: – och line-through --muted · följ upp 12 px, tonar in 140 ms · datum som hålpill</span></p>
+      </article>
+      <article class="frame">
+        <div class="kicker"><div class="name"><span class="index">10</span>Hopfälld</div></div>
+        
+<div class="sheet">
+  <section class="section">
+    <h2>to do</h2>
+    <div class="body">
+      <div class="row"><span class="marker task status-waiting "><span class="st waiting"></span></span><span class="text">fence quote<span class="summary">väntar på 2</span></span></div>
+      <div class="row"><span class="marker task status-waiting"><span class="st pie waiting" style="--p: 33%"></span></span><span class="text">grant application<span class="summary">1 av 3 · väntar på 1</span></span></div>
+      <div class="row"><span class="marker task status-open "><span class="st"></span></span><span class="text">book the dentist</span></div>
+      <div class="row"><span class="marker task"><span class="st pie" style="--p: 50%"></span></span><span class="text">garden weekend<span class="summary">2 av 4</span></span></div>
+    </div>
+  </section>
+</div>
+
+        <p class="caption">Föräldrar startar hopfällda som idag. En uppgift som väntar visar prickad kryssruta och en kort dämpad summering efter texten. Har den också del-todos så visas tårtbiten som vanligt, med prickad kant så länge något väntar. När den sista väntar-raden är löst blir kryssrutan hel igen.<span class="spec">summering 12 px --muted · tårtbit conic-gradient, prickad kant 1.6 px --muted · framsteg räknar bara avbockade del-todos</span></p>
+      </article>
+      <article class="frame">
+        <div class="kicker"><div class="name"><span class="index">07b</span>Lägen i vila</div></div>
+        
+<div class="sheet rest">
+  <section class="section">
+    <h2>to do</h2>
+    <div class="body">
+      <div class="row"><span class="marker task status-open "><span class="st"></span></span><span class="text"><span>book the dentist</span><span class="w">öppen</span></span></div>
+      <div class="row"><span class="marker task status-waiting "><span class="st waiting"></span></span><span class="text"><span>fence quote</span><span class="w">väntar: minst en öppen väntar-rad</span></span></div>
+      <div class="row n1 wait"><span class="marker">···</span><span class="text"><span>the neighbour’s answer</span><span class="w">väntar-rad, öppen</span></span></div>
+      <div class="row n1 wait resolved"><span class="marker">–</span><span class="text"><span>the second quote</span><span class="w">väntar-rad, löst</span></span></div>
+      <div class="row"><span class="marker task"><span class="st pie" style="--p: 50%"></span></span><span class="text"><span>garden weekend</span><span class="w">förälder, 2 av 4 del-todos klara</span></span></div>
+      <div class="row"><span class="marker task status-waiting"><span class="st pie waiting" style="--p: 50%"></span></span><span class="text"><span>grant application</span><span class="w">förälder som också väntar</span></span></div>
+      <div class="row"><span class="marker task status-done "><span class="st done"></span></span><span class="text"><span>walk before lunch</span><span class="w">klar · flyttas till dagens datum som idag</span></span></div>
+    </div>
+  </section>
+</div>
+
+        <p class="caption">Alla lägen utan pekare. Väntar är inget eget fält på uppgiften utan följer av att en väntar-rad är öppen. Inget halvfyllt läge: framsteg kommer bara från avbockade del-todos.<span class="spec">cirkel 12 px, 1.25 px · väntar: dotted 1.6 px --muted · klar och tårtbit som idag</span></p>
+      </article>
+      </div>
+
+      <div class="notes">
+        <p><strong>Modell.</strong> En väntar-rad är ett barn till uppgiften av en egen sort, med text och löst-tid. Uppgiften väntar när minst en väntar-rad är öppen; det lagras inte separat. Klar är <code>completed_at</code> som idag. Framsteg räknar bara avbockade del-todos, aldrig väntar-rader. Undo täcker att lösa och ta bort väntar-rader.</p>
+        <p><strong>Skriva.</strong> Väntar-raden öppnas med markören i sig; en tom väntar-rad som lämnas försvinner, som en tom punkt gör idag. Enter ger nästa väntar-rad, Shift+Tab gör om den till en vanlig del-todo. Följ upp under en väntar-rad är en vanlig del-todo; ett datum skrivs som hålpill i slutet av texten och kan senare ge en påminnelse under dagens datum.</p>
+        <p><strong>Tangentbord och touch.</strong> Cmd+Shift+W på raden med fokus öppnar en väntar-rad. På touch, där hover saknas, visar ett långt tryck på kryssrutan valet från 07. Högerklick på kryssrutan visar samma val som en vanlig meny, som timerns ljudmeny.</p>
+      </div>
+
+    </section>
+  </div>
+  </div>
+
+  <script>
+    const board = document.getElementById("board");
+    const theme = document.getElementById("theme");
+    theme.addEventListener("click", () => {
+      const night = board.dataset.theme !== "night";
+      board.dataset.theme = night ? "night" : "day";
+      theme.textContent = night ? "Dag" : "Natt";
+    });
+    // click on a strip or dot pins the group open, like the branch disclosure in the app
+    for (const handle of document.querySelectorAll(".strip, .handle")) {
+      handle.addEventListener("click", () => {
+        const group = handle.parentElement;
+        if (group.closest(".states")) return;
+        const pinned = group.classList.toggle("pinned");
+        handle.setAttribute("aria-expanded", String(pinned));
+      });
+    }
+  </script>
+</body>
+</html>
