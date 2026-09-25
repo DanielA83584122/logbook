@@ -15,8 +15,8 @@ test('calendar events render beneath their date in start order and retain links 
   await page.goto('/');
 
   const allDay = page.getByText('Company offsite (all day)', { exact: true });
-  const cancelled = page.getByText('Standup (8:00 AM – 8:30 AM)', { exact: true });
-  const planning = page.getByRole('link', { name: 'Planning (9:00 AM – 10:00 AM)', exact: true });
+  const cancelled = page.getByText('Standup (8 AM – 8:30 AM)', { exact: true });
+  const planning = page.getByRole('link', { name: 'Planning (9 AM – 10 AM)', exact: true });
   await expect(allDay).toBeVisible();
   await expect(allDay).toHaveCSS('font-size', '15px');
   await expect(page.locator('[data-calendar-marker]')).toHaveCount(3);
@@ -28,7 +28,18 @@ test('calendar events render beneath their date in start order and retain links 
   const linkColor = await planning.evaluate(element => getComputedStyle(element).color);
   const colorTotal = (color: string) => [...color.matchAll(/[+-]?(?:\d+\.?\d*|\.\d+)/g)].slice(0, 3).reduce((total, match) => total + Number(match[0]), 0);
   expect(colorTotal(markerStyle.backgroundColor)).toBeGreaterThan(colorTotal(linkColor));
-  await expect(planning.locator('span')).toHaveCSS('color', linkColor);
+  const title = planning.locator('[data-calendar-event-title]');
+  const time = planning.locator('[data-calendar-event-meta]');
+  await expect(title).toHaveCSS('font-weight', '400');
+  await expect(time).toHaveCSS('color', linkColor);
+  await expect(time).toHaveCSS('font-weight', '300');
+  await expect(time).toHaveCSS('font-variant-numeric', 'tabular-nums');
+  await expect(time).toHaveCSS('opacity', '1');
+  const cancelledMarkerStyle = await page.locator('[data-calendar-marker]').nth(1).evaluate(element => {
+    const style = getComputedStyle(element, '::before');
+    return { backgroundColor: style.backgroundColor, borderWidth: style.borderTopWidth, borderStyle: style.borderTopStyle };
+  });
+  expect(cancelledMarkerStyle).toEqual({ backgroundColor: 'rgba(0, 0, 0, 0)', borderWidth: '1px', borderStyle: 'solid' });
   await page.evaluate(() => { document.documentElement.dataset.theme = 'night'; });
   expect(await page.locator('[data-calendar-marker]').first().evaluate(element => getComputedStyle(element, '::before').backgroundColor))
     .toBe(await planning.evaluate(element => getComputedStyle(element).color));

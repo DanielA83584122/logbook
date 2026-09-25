@@ -42,10 +42,14 @@ const EventRow = styled.li`
   @media(pointer: coarse) { min-height: 44px; }
   @media ${compactViewport} { min-height: 36px; }
 `;
-const EventMarker = styled.span`
+const EventMarker = styled.span<{ $cancelled: boolean }>`
   display: flex; width: 40px; min-width: 40px; height: 28px; align-items: center; justify-content: center;
   color: color-mix(in srgb, var(--link), var(--paper) 38%);
-  &::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; translate: 0 -1px; }
+  &::before {
+    content: ''; width: 6px; height: 6px; border-radius: 50%; translate: 0 -1px;
+    background: ${({ $cancelled }) => $cancelled ? 'transparent' : 'currentColor'};
+    border: ${({ $cancelled }) => $cancelled ? '1px solid currentColor' : '0'};
+  }
   :root[data-theme='night'] & { color: color-mix(in srgb, var(--link), #000 12%); }
   @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px; }
   @media ${compactViewport} { width: 36px; min-width: 36px; height: 36px; }
@@ -62,7 +66,8 @@ const EventLink = styled.a<{ $cancelled: boolean }>`
   ${eventEntry}; color: color-mix(in srgb, var(--link), #000 12%);
   &:hover { text-decoration: ${({ $cancelled }) => $cancelled ? 'line-through underline' : 'underline'}; text-underline-offset: 2px; }
 `;
-const EventMeta = styled.span`color: inherit;`;
+const EventTitle = styled.span`font-weight: 400;`;
+const EventMeta = styled.span`color: inherit; font-weight: 300; font-variant-numeric: tabular-nums;`;
 const Body = styled.div`
   min-width: 0; padding-left: 20px; flex: 1; display: flex; flex-direction: column;
   > [data-outline-kind='tasks'] { flex: 1; display: flex; flex-direction: column; }
@@ -81,7 +86,10 @@ function eventText(event: CalendarEvent) {
 
 function eventDetail(event: CalendarEvent) {
   if (event.all_day) return '(all day)';
-  const format = (value: string) => new Date(value).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const format = (value: string) => {
+    const date = new Date(value);
+    return date.toLocaleTimeString('en-US', date.getMinutes() === 0 ? { hour: 'numeric' } : { hour: 'numeric', minute: '2-digit' });
+  };
   return `(${format(event.start)} – ${format(event.end)})`;
 }
 
@@ -144,9 +152,9 @@ export function Journal({ days, today, refresh, notify, openSessions, sessionsEn
         {!!day.events?.length && <EventList aria-label={`Calendar events for ${day.date}`}>
           {day.events.map(event => {
             const text = eventText(event);
-            const content = <>{event.title} <EventMeta>{eventDetail(event)}</EventMeta></>;
+            const content = <><EventTitle data-calendar-event-title>{event.title}</EventTitle> <EventMeta data-calendar-event-meta>{eventDetail(event)}</EventMeta></>;
             return <EventRow key={event.id} data-calendar-event>
-              <EventMarker data-calendar-marker aria-hidden="true" />
+              <EventMarker $cancelled={event.cancelled} data-calendar-marker aria-hidden="true" />
               {event.url
                 ? <EventLink $cancelled={event.cancelled} href={event.url} target="_blank" rel="noopener noreferrer"
                     aria-label={event.cancelled ? `${text}, cancelled` : text}>{content}</EventLink>
