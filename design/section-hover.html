@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hover · anteckningarnas sektioner</title>
+  <style>
+    :root {
+      --desk: #e6e3dc;
+      --desk-ink: #242422;
+      --desk-muted: #626762;
+      --desk-line: #d0cdc4;
+      --rec: #1871ba;
+      --paper: #f2f1ed;
+      --ink: #242422;
+      --muted: #626762;
+      --sage: #59605d;
+      --soft: #e8e6df;
+      --date-bg: #dfe7ed;
+      --link: #1871ba;
+      --selection: #ccdbe7;
+    }
+    .board[data-theme="night"] {
+      --paper: #011627;
+      --ink: #c0c7d1;
+      --muted: #a3b0bf;
+      --sage: #b1c4cc;
+      --soft: #193447;
+      --date-bg: #173449;
+      --link: #75d1c4;
+      --selection: #315366;
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--desk); }
+    body {
+      margin: 0;
+      color: var(--desk-ink);
+      background: var(--desk);
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-weight: 400;
+      -webkit-font-smoothing: antialiased;
+    }
+    ::selection { background: #ccdbe7; }
+    button, a { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    h1, h2, p { margin: 0; }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 52px 40px 88px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 32px;
+      margin-bottom: 40px;
+    }
+    .eyebrow {
+      font-size: 12px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--desk-muted);
+      margin-bottom: 10px;
+    }
+    h1 {
+      font-size: 32px;
+      font-weight: 450;
+      letter-spacing: -.03em;
+      line-height: 1.15;
+    }
+    .lede {
+      margin-top: 10px;
+      max-width: 46ch;
+      color: var(--desk-muted);
+      font-size: 15px;
+      line-height: 1.5;
+      font-weight: 400;
+    }
+    .theme {
+      flex-shrink: 0;
+      border: 0;
+      background: transparent;
+      padding: 4px 0 3px;
+      border-bottom: 1px solid var(--desk-ink);
+      font-size: 13px;
+      line-height: 1;
+    }
+    .theme:focus-visible { outline: 2px solid var(--rec); outline-offset: 4px; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+      gap: 42px 28px;
+    }
+    .frame { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+    .kicker {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .name {
+      font-size: 16px;
+      font-weight: 500;
+      letter-spacing: -.02em;
+    }
+    .index {
+      margin-right: 8px;
+      color: var(--desk-muted);
+      font-weight: 400;
+      font-variant-numeric: tabular-nums;
+    }
+    .badge {
+      font-size: 12px;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: var(--rec);
+    }
+    .caption {
+      font-size: 14px;
+      line-height: 1.5;
+      max-width: 58ch;
+    }
+    .spec {
+      display: block;
+      margin-top: 4px;
+      color: var(--desk-muted);
+      font-size: 12px;
+      letter-spacing: .01em;
+    }
+
+    .sheet {
+      background: var(--paper);
+      color: var(--ink);
+      border-radius: 2px;
+      box-shadow: 0 0 0 1px #0000000d, 0 18px 40px #31392b12;
+      padding: 32px 40px 22px 52px;
+      font-weight: 300;
+      font-size: 15px;
+      line-height: 1.2;
+      min-height: 392px;
+    }
+    .sheet ::selection { background: var(--selection); }
+    .sheet a { color: var(--link); text-decoration: none; }
+
+    .todo, .day { position: relative; }
+    .todo { margin-bottom: 26px; }
+    .day { margin-bottom: 20px; }
+    .day:last-child { margin-bottom: 0; }
+
+    .sheet h2 {
+      font-size: 20px;
+      font-weight: 500;
+      line-height: 1.4;
+      margin-bottom: 4px;
+      letter-spacing: 0;
+    }
+    .date {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 40px;
+      margin-bottom: 3px;
+    }
+    .pill {
+      display: inline-block;
+      font-size: 15px;
+      line-height: 24px;
+      padding: 0 6px;
+      margin-left: -6px;
+      border-radius: 9px;
+      background: var(--date-bg);
+      transform: translateY(1px);
+      transition: background-color 160ms ease-out;
+    }
+    .time {
+      font-size: 12px;
+      line-height: 24px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      transition: color 160ms ease-out;
+    }
+    .body { padding-left: 20px; }
+    .bullet {
+      display: flex;
+      align-items: flex-start;
+      min-height: 28px;
+      border-radius: 7px;
+    }
+    .bullet.nest { margin-left: 32px; }
+    .mark {
+      display: flex;
+      width: 40px;
+      min-width: 40px;
+      height: 28px;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+    .mark.task::before {
+      content: "";
+      width: 12px;
+      height: 12px;
+      border: 1.25px solid currentColor;
+      border-radius: 50%;
+    }
+    .text { padding: 4px 0; min-width: 0; }
+
+    /* 01 — marginalstreck */
+    .frame[data-variant="margin"] .todo::before,
+    .frame[data-variant="margin"] .day::before {
+      content: "";
+      position: absolute;
+      left: -20px;
+      top: 8px;
+      bottom: 8px;
+      width: 2px;
+      border-radius: 1px;
+      background: var(--sage);
+      opacity: 0;
+      transition: opacity 160ms ease-out;
+    }
+    .frame[data-variant="margin"] .todo::before { background: var(--link); }
+    .frame[data-variant="margin"] .todo:hover::before,
+    .frame[data-variant="margin"] .day:hover::before { opacity: .55; }
+    .frame[data-variant="margin"] .day:hover .pill,
+    .frame[data-variant="date"] .day:hover .pill {
+      background: color-mix(in srgb, var(--date-bg), var(--ink) 8%);
+    }
+    .frame[data-variant="margin"] .day:hover .time,
+    .frame[data-variant="date"] .day:hover .time { color: var(--link); }
+
+    /* 02 — papperslyft */
+    .frame[data-variant="paper"] .day {
+      margin-inline: -14px;
+      padding: 4px 14px 8px;
+      border-radius: 12px;
+      transition: background-color 180ms ease-out;
+    }
+    .frame[data-variant="paper"] .day:hover { background: var(--soft); }
+
+    /* 04 — punkt för punkt */
+    .frame[data-variant="row"] .bullet {
+      margin-right: -10px;
+      padding-right: 10px;
+      transition: background-color 140ms ease-out;
+    }
+    .frame[data-variant="row"] .bullet:hover { background: var(--soft); }
+
+    .notes {
+      margin-top: 48px;
+      padding-top: 18px;
+      border-top: 1px solid var(--desk-line);
+      max-width: 68ch;
+      color: var(--desk-muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    @media (hover: none) {
+      .frame[data-variant="margin"] .day::before,
+      .frame[data-variant="margin"] .todo::before { opacity: .55; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition-duration: .01ms !important; }
+    }
+    @media (max-width: 720px) {
+      .page { padding: 32px 18px 64px; }
+      header { flex-direction: column; align-items: flex-start; }
+      h1 { font-size: 26px; }
+      .sheet { padding: 24px 18px 16px 36px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <div>
+        <p class="eyebrow">Logbook · design</p>
+        <h1>Hover på anteckningarnas sektioner</h1>
+        <p class="lede">Fyra riktningar för dagsblocken. För musen över en dag. Rutorna använder appens papper, pill och länkfärg.</p>
+      </div>
+      <button class="theme" type="button" id="theme">Natt</button>
+    </header>
+
+    <div class="board" id="board">
+      <div class="grid" id="grid"></div>
+      <p class="notes">Gemensamt: effekten finns bara när enheten har en riktig pekare. Vid reduced motion blir skiftet direkt. Ingen skala, skugga eller blur på texten. To-do-strecket i den rekommenderade riktningen är i länkfärg, så rubriken känns som samma sorts yta.</p>
+    </div>
+  </div>
+
+  <template id="logbook">
+    <section class="todo">
+      <h2>to do</h2>
+      <div class="bullet"><span class="mark task"></span><span class="text">send the draft</span></div>
+      <div class="bullet"><span class="mark task"></span><span class="text">walk before lunch</span></div>
+    </section>
+    <section class="day">
+      <div class="date">
+        <time class="pill" datetime="2026-09-24">Sep 24, 2026</time>
+        <span class="time">1h 12m 04s</span>
+      </div>
+      <div class="body">
+        <div class="bullet"><span class="mark">–</span><span class="text">the line about the garden path</span></div>
+        <div class="bullet"><span class="mark">–</span><span class="text">a <a href="#garden">link</a> keeps its color</span></div>
+        <div class="bullet nest"><span class="mark">–</span><span class="text">and the nested one stays quieter</span></div>
+      </div>
+    </section>
+    <section class="day">
+      <div class="date">
+        <time class="pill" datetime="2026-09-23">Sep 23, 2026</time>
+        <span class="time">46m 10s</span>
+      </div>
+      <div class="body">
+        <div class="bullet"><span class="mark">–</span><span class="text">yesterday sat further down the page</span></div>
+        <div class="bullet"><span class="mark">–</span><span class="text">hover one day, the other stays paper</span></div>
+      </div>
+    </section>
+  </template>
+
+  <script>
+    const directions = [
+      {
+        variant: "margin",
+        index: "01",
+        name: "Marginalstreck",
+        badge: "Rekommenderad",
+        caption: "Ett streck tonar in i vänstermarginalen. Datumpillen djupnar och fokustiden går till länkfärg. To-do-rubriken får samma streck, i länkfärg.",
+        spec: "160 ms ease-out · opacitet .55 · pillen blandas 8 % med textfärgen"
+      },
+      {
+        variant: "paper",
+        index: "02",
+        name: "Papperslyft",
+        caption: "Hela dagen får en yta i soft-tonen, med tolv pixlars radie. Textfärgen är oförändrad.",
+        spec: "180 ms ease-out · bakgrund var(--soft)"
+      },
+      {
+        variant: "date",
+        index: "03",
+        name: "Bara datumet",
+        caption: "Pillen djupnar och tiden växlar till länkfärg. Anteckningarna ligger kvar på pappret.",
+        spec: "160 ms ease-out · samma pill och tid som 01"
+      },
+      {
+        variant: "row",
+        index: "04",
+        name: "Punkt för punkt",
+        caption: "Raden under musen får en mjuk bakgrund som följer med in i marginalen. Raden flyttar sig inte.",
+        spec: "140 ms ease-out · bakgrund var(--soft)"
+      }
+    ];
+
+    const grid = document.getElementById("grid");
+    const logbook = document.getElementById("logbook");
+    for (const direction of directions) {
+      const frame = document.createElement("article");
+      frame.className = "frame";
+      frame.dataset.variant = direction.variant;
+      frame.innerHTML = `
+        <div class="kicker">
+          <div class="name"><span class="index">${direction.index}</span>${direction.name}</div>
+          ${direction.badge ? `<div class="badge">${direction.badge}</div>` : ""}
+        </div>
+        <div class="sheet"></div>
+        <p class="caption">${direction.caption}<span class="spec">${direction.spec}</span></p>
+      `;
+      frame.querySelector(".sheet").appendChild(logbook.content.cloneNode(true));
+      grid.appendChild(frame);
+    }
+
+    const board = document.getElementById("board");
+    const theme = document.getElementById("theme");
+    theme.addEventListener("click", () => {
+      const night = board.dataset.theme !== "night";
+      board.dataset.theme = night ? "night" : "day";
+      theme.textContent = night ? "Dag" : "Natt";
+    });
+  </script>
+</body>
+</html>

@@ -7,6 +7,14 @@ import { PasswordGate } from './components/PasswordGate';
 
 document.documentElement.dataset.theme = localStorage.getItem('still-theme') === 'night' ? 'night' : 'day';
 
+// The browser suite serves this build on port 8001. Skip the worker there so
+// its request hooks keep seeing traffic directly.
+if (import.meta.env.PROD && location.port !== '8001' && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    void navigator.serviceWorker.register('/sw.js');
+  });
+}
+
 const AppSurface = styled.div<{ $blurred: boolean; $blocked: boolean }>`
   min-height: 100dvh; filter: blur(${({ $blurred }) => $blurred ? '7px' : '0'});
   opacity: ${({ $blurred }) => $blurred ? .72 : 1}; pointer-events: ${({ $blocked }) => $blocked ? 'none' : 'auto'};

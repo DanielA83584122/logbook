@@ -50,6 +50,7 @@ const Page = styled.div<{ $focusing: boolean }>`
       --code-ink: color-mix(in srgb, #4d615d, #000 16%);
       --quote: color-mix(in srgb, #5f645f, #000 16%);
       --selection: color-mix(in srgb, #ccdbe7, #000 16%);
+      --selection-ink: color-mix(in srgb, #1b2a35, #000 16%);
       --focus: color-mix(in srgb, #6f7f88, #000 16%);
       --link: color-mix(in srgb, #1871ba, #000 16%);
       --url: color-mix(in srgb, #70588f, #000 16%);
@@ -186,8 +187,9 @@ const LogFrame = styled.div`
 `;
 const LogViewport = styled.div`
   flex: 1; min-height: min(240px, max(64px, calc(100dvh - 160px))); overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain;
-  padding: 30px 12px 24px 8px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent;
-  @media ${compactViewport} { min-height: 0; padding: 24px 2px 10px 0; }
+  /* The extra left padding is room for the day rule in the margin; the negative margin keeps the text where it was. */
+  margin-left: -16px; padding: 30px 12px 24px 24px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent;
+  @media ${compactViewport} { min-height: 0; margin-left: 0; padding: 24px 2px 10px 0; }
 `;
 const LogEdgeWash = styled.div`
   position: absolute; z-index: 7; top: -2px; left: -24px; right: -24px; height: 30px; pointer-events: none;

@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hover · ett språk i tre lager</title>
+  <style>
+    @font-face { font-family: "Sohne"; src: url("../public/fonts/sohne-variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+
+    :root {
+      --desk: #e6e3dc;
+      --desk-ink: #242422;
+      --desk-muted: #626762;
+      --desk-line: #d0cdc4;
+      --rec: #1871ba;
+
+      --paper: #f2f1ed;
+      --ink: #242422;
+      --muted: #626762;
+      --sage: #59605d;
+      --soft: #e8e6df;
+      --date-bg: #dfe7ed;
+      --link: #1871ba;
+      --selection: #ccdbe7;
+
+      /* motion tokens — förslag till styles.ts */
+      --t-surface-in: 140ms;
+      --t-surface-out: 200ms;
+      --t-color: 160ms;
+      --t-structure: 320ms;
+      --t-structure-out: 180ms;
+      --ease-out: ease-out;
+      --ease-structure: cubic-bezier(.2, 0, 0, 1);
+    }
+    .board[data-theme="night"] {
+      --paper: #011627;
+      --ink: #c0c7d1;
+      --muted: #a3b0bf;
+      --sage: #b1c4cc;
+      --soft: #193447;
+      --date-bg: #173449;
+      --link: #75d1c4;
+      --selection: #315366;
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--desk); }
+    body {
+      margin: 0;
+      color: var(--desk-ink);
+      background: var(--desk);
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    ::selection { background: #ccdbe7; }
+    button, a { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    h1, h2, h3, p { margin: 0; }
+
+    .page { max-width: 1180px; margin: 0 auto; padding: 52px 40px 96px; }
+    header { display: flex; justify-content: space-between; align-items: flex-end; gap: 32px; margin-bottom: 56px; }
+    .eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--desk-muted); margin-bottom: 10px; }
+    h1 { font-size: 32px; font-weight: 450; letter-spacing: -.03em; line-height: 1.15; }
+    .lede { margin-top: 10px; max-width: 60ch; color: var(--desk-muted); font-size: 15px; line-height: 1.5; }
+    .theme { flex-shrink: 0; border: 0; background: transparent; padding: 4px 0 3px; border-bottom: 1px solid var(--desk-ink); font-size: 13px; line-height: 1; }
+    .theme:focus-visible { outline: 2px solid var(--rec); outline-offset: 4px; }
+
+    .chapter { margin-top: 72px; }
+    .chapter-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 22px; padding-bottom: 12px; border-bottom: 1px solid var(--desk-line); }
+    .chapter-head h2 { font-size: 20px; font-weight: 500; letter-spacing: -.02em; }
+    .chapter-head p { color: var(--desk-muted); font-size: 14px; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 42px 28px; }
+    .frame { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+    .kicker { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .name { font-size: 16px; font-weight: 500; letter-spacing: -.02em; }
+    .index { margin-right: 8px; color: var(--desk-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+    .badge { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--rec); }
+    .caption { font-size: 14px; line-height: 1.5; max-width: 62ch; }
+    .spec { display: block; margin-top: 4px; color: var(--desk-muted); font-size: 12px; }
+
+    /* ---- the sheet (mock of the logbook) ---- */
+    .sheet {
+      position: relative;
+      background: var(--paper);
+      color: var(--ink);
+      border-radius: 2px;
+      box-shadow: 0 0 0 1px #0000000d, 0 18px 40px #31392b12;
+      padding: 28px 36px 24px 52px;
+      font-family: "Sohne", "Helvetica Neue", Arial, sans-serif;
+      font-weight: 300;
+      font-size: 18px;
+      line-height: 1.4;
+      transition: background-color var(--t-color) var(--ease-out), color var(--t-color) var(--ease-out);
+    }
+    .sheet ::selection { background: var(--selection); }
+    .sheet a { color: var(--link); text-decoration: none; }
+    .sheet h2 { font-size: 20px; font-weight: 500; line-height: 1.4; margin: 0 0 4px; }
+
+    .section { position: relative; }
+    .section + .section { margin-top: 20px; }
+    .section::before {
+      content: "";
+      position: absolute;
+      left: -20px;
+      top: 8px;
+      bottom: 6px;
+      width: 2px;
+      border-radius: 1px;
+      background: var(--sage);
+      opacity: 0;
+      transform: scaleY(0);
+      transform-origin: top center;
+      pointer-events: none;
+      /* utgång: tona ut, nollställ längden först när den är osynlig */
+      transition: opacity var(--t-structure-out) var(--ease-out), transform 0s linear var(--t-structure-out);
+    }
+    .section.todo::before { background: var(--link); }
+    .rule-on { opacity: .55; transform: scaleY(1); transition: transform var(--t-structure) var(--ease-structure), opacity 200ms var(--ease-out); }
+    @media (hover: hover) { .section:hover::before { opacity: .55; transform: scaleY(1); transition: transform var(--t-structure) var(--ease-structure), opacity 200ms var(--ease-out); } }
+    .section:focus-within::before { opacity: .55; transform: scaleY(1); transition: transform var(--t-structure) var(--ease-structure), opacity 200ms var(--ease-out); }
+
+    .date { display: flex; align-items: center; gap: 10px; min-height: 40px; margin: 0 0 3px; padding: 0; border: 0; background: transparent; text-align: left; }
+    .pill { font-size: 15px; line-height: 24px; padding: 0 6px; margin-left: -6px; border-radius: 9px; background: var(--date-bg); transition: background-color var(--t-color) var(--ease-out); }
+    .time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; transition: color var(--t-color) var(--ease-out); }
+    @media (hover: hover) {
+      .date:hover .pill, .date:focus-visible .pill { background: color-mix(in srgb, var(--date-bg), var(--ink) 8%); }
+      .date:hover .time, .date:focus-visible .time { color: var(--link); }
+    }
+    .date-underline:hover .pill { text-decoration: underline; }
+    .date-underline:hover .time { text-decoration: underline; color: var(--muted); }
+    .date-underline:hover .pill { background: var(--date-bg); }
+
+    .row { position: relative; display: flex; align-items: flex-start; min-height: 28px; }
+    .marker {
+      position: relative; display: grid; place-items: center;
+      width: 40px; min-width: 40px; height: 28px; padding: 0; border: 0; background: transparent;
+      color: var(--ink); font-size: 14px;
+    }
+    .marker.check, .marker.disclosure { cursor: pointer; border-radius: 50%; }
+    .glyph { translate: 0 .5px; }
+
+    /* checkbox: appens befintliga förhandsvisning */
+    .ring { width: 12px; height: 12px; border: 1.25px solid currentColor; border-radius: 50%; translate: 0 .5px; transition: border-color 120ms var(--ease-out); }
+    .tick {
+      position: absolute; width: 7px; height: 7px; translate: 0 .5px; background: currentColor;
+      mask: url("../public/icons/check-flaticon.svg") center / contain no-repeat;
+      -webkit-mask: url("../public/icons/check-flaticon.svg") center / contain no-repeat;
+      opacity: 0; scale: .25; filter: blur(4px);
+      transition: opacity 150ms var(--ease-structure), scale 150ms var(--ease-structure), filter 150ms var(--ease-structure), background-color 120ms var(--ease-out);
+    }
+    .check.on .tick { opacity: 1; scale: 1; filter: blur(0); }
+    .check-hot .ring { border-color: var(--link); }
+    .check-hot .tick { opacity: 1; scale: 1; filter: blur(0); background: var(--link); }
+    .check.on.check-hot .tick { opacity: 0; scale: .25; filter: blur(4px); }
+    @media (hover: hover) {
+      .check:hover .ring { border-color: var(--link); }
+      .check:hover .tick { opacity: 1; scale: 1; filter: blur(0); background: var(--link); }
+      .check.on:hover .tick { opacity: 0; scale: .25; filter: blur(4px); }
+    }
+
+    /* disclosure: färgskifte, ingen yta */
+    .disclosure { color: var(--muted); transition: color var(--t-color) var(--ease-out); }
+    .chev { width: 5px; height: 5px; border-right: 1.25px solid currentColor; border-bottom: 1.25px solid currentColor; transform: rotate(-45deg); translate: 0 .5px; transition: transform 140ms var(--ease-out); }
+    .item[data-open] > .row .chev { transform: rotate(45deg); }
+    .disclosure.task { color: var(--ink); }
+    .pie { width: 12px; height: 12px; border: 1px solid currentColor; border-radius: 50%; translate: 0 .5px; background: conic-gradient(currentColor var(--progress, 0deg), transparent 0); }
+    @media (hover: hover) {
+      .disclosure:hover { color: var(--ink); }
+      .disclosure.task:hover { color: var(--link); }
+    }
+    .disclosure.disc-hot { color: var(--ink); }
+    .disclosure.task.disc-hot { color: var(--link); }
+
+    /* text: ytan ligger i ett pseudoelement, texten flyttar sig inte */
+    .text {
+      position: relative; isolation: isolate;
+      flex: 1; min-width: 0; min-height: 28px; padding: 4px 0;
+      font-size: 15px; line-height: 1.2; cursor: text; outline: none;
+      white-space: pre-wrap; overflow-wrap: anywhere;
+    }
+    .text::before {
+      content: ""; position: absolute; inset: 1px -7px; z-index: -1;
+      border-radius: 7px; background: var(--soft); opacity: 0;
+      transition: opacity var(--t-surface-out) var(--ease-out);
+    }
+    @media (hover: hover) { .text:hover::before { opacity: 1; transition-duration: var(--t-surface-in); } }
+    .text:focus-visible::before, .text-hot::before { opacity: 1; transition-duration: var(--t-surface-in); }
+    .text.done { color: var(--muted); text-decoration: line-through; }
+    .text.done a { color: var(--muted); }
+
+    /* tom yta under dagens sista rad */
+    .composer { display: flex; align-items: flex-start; min-height: 28px; cursor: text; }
+    .composer .marker { color: var(--muted); opacity: 0; transition: opacity var(--t-color) var(--ease-out); }
+    .composer .text { color: var(--muted); }
+    .composer .text::before { display: none; }
+    .composer .hint { opacity: 0; transition: opacity var(--t-color) var(--ease-out); }
+    @media (hover: hover) { .composer:hover .marker { opacity: .5; } .composer:hover .hint { opacity: .5; } }
+    .composer-hot .marker { opacity: .5; } .composer-hot .hint { opacity: .5; }
+
+    /* branch: appens utfällning */
+    .nest { margin-left: 32px; }
+    .branch {
+      display: grid; min-height: 0; grid-template-rows: 0fr; opacity: 0; transform: translateY(-3px);
+      visibility: hidden; pointer-events: none;
+      transition-property: grid-template-rows, opacity, transform, visibility;
+      transition-duration: 320ms, 240ms, 320ms, 0s;
+      transition-timing-function: var(--ease-structure);
+      transition-delay: 0s, 60ms, 0s, 320ms;
+    }
+    .item[data-open] > .branch { grid-template-rows: 1fr; opacity: 1; transform: translateY(0); visibility: visible; pointer-events: auto; transition-delay: 0s; }
+    .branch-inner { min-height: 0; overflow: hidden; }
+    .branch .row { opacity: 0; transform: translateY(-3px); transition-property: opacity, transform; transition-duration: 220ms, 280ms; transition-timing-function: var(--ease-out); }
+    .item[data-open] > .branch .row { opacity: 1; transform: translateY(0); }
+    .item[data-open] > .branch .row:nth-child(2) { transition-delay: 35ms; }
+    .item[data-open] > .branch .row:nth-child(3) { transition-delay: 70ms; }
+
+    /* ---- recommended composition: sheet + legend ---- */
+    .compose { display: grid; grid-template-columns: minmax(0, 640px) minmax(260px, 1fr); gap: 36px; align-items: start; }
+    .legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 24px; }
+    .legend li { display: grid; grid-template-columns: 28px 1fr; gap: 12px; padding: 12px 12px 12px 10px; border-radius: 8px; cursor: default; transition: background-color 140ms ease-out; }
+    .legend li:hover { background: #dbd8d0; }
+    .legend .n { font-size: 12px; color: var(--desk-muted); font-variant-numeric: tabular-nums; padding-top: 3px; }
+    .legend b { display: block; font-weight: 500; font-size: 14px; margin-bottom: 3px; }
+    .legend span { font-size: 13px; line-height: 1.45; color: var(--desk-muted); }
+    .legend .spec { margin-top: 5px; }
+
+    /* demo states driven from the legend */
+    .sheet[data-demo="section"] .day.today::before { opacity: .55; transform: scaleY(1); transition: transform var(--t-structure) var(--ease-structure), opacity 200ms var(--ease-out); }
+    .sheet[data-demo="text"] .day.today .item > .row .text::before { opacity: 1; }
+    .sheet[data-demo="check"] .todo .row:first-of-type .check .ring { border-color: var(--link); }
+    .sheet[data-demo="check"] .todo .row:first-of-type .check .tick { opacity: 1; scale: 1; filter: blur(0); background: var(--link); }
+    .sheet[data-demo="disclosure"] .day.today .item > .row .disclosure { color: var(--ink); }
+    .sheet[data-demo="date"] .day.today .pill { background: color-mix(in srgb, var(--date-bg), var(--ink) 8%); }
+    .sheet[data-demo="date"] .day.today .time { color: var(--link); }
+    .sheet[data-demo="composer"] .composer .marker, .sheet[data-demo="composer"] .composer .hint { opacity: .5; }
+
+    /* ---- rule motion variants ---- */
+    .frame[data-variant="origin"] .section::before { transform-origin: 50% var(--origin, 0px); }
+
+    .frame[data-variant="draw"] .section::before {
+      opacity: .55; transform: none;
+      clip-path: inset(0 0 100% 0 round 1px);
+      transition: none;
+    }
+    .frame[data-variant="draw"] .section:hover::before { clip-path: inset(0 round 1px); transition: clip-path var(--t-structure) var(--ease-structure); }
+    .frame[data-variant="draw"] .section.leaving::before { clip-path: inset(100% 0 0 0 round 1px); transition: clip-path 260ms var(--ease-structure); }
+
+    .frame[data-variant="notch"] .section:hover::before { opacity: .22; }
+    .notch {
+      position: absolute; left: -20px; width: 2px; border-radius: 1px; background: var(--sage);
+      opacity: 0; pointer-events: none;
+      transition: opacity 160ms var(--ease-out);
+    }
+    .section.todo .notch { background: var(--link); }
+    .notch[data-live] { opacity: .9; transition: top 220ms var(--ease-structure), height 220ms var(--ease-structure), opacity 160ms var(--ease-out); }
+
+    /* ---- compare panels ---- */
+    .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .compare .sheet { padding: 20px 20px 18px 40px; }
+    .tag { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--desk-muted); margin-bottom: 8px; }
+    .tag.now { color: #99493b; }
+
+    /* ---- tokens ---- */
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 12px 14px 12px 0; border-bottom: 1px solid var(--desk-line); vertical-align: top; }
+    th { font-weight: 500; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--desk-muted); }
+    td code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; color: var(--desk-ink); }
+    td.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; white-space: nowrap; }
+    tr:last-child td { border-bottom: 0; }
+
+    .notes { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--desk-line); max-width: 72ch; color: var(--desk-muted); font-size: 13px; line-height: 1.55; }
+    .notes p + p { margin-top: 8px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition-duration: .01ms !important; transition-delay: 0s !important; }
+    }
+    @media (max-width: 960px) {
+      .compose { grid-template-columns: 1fr; }
+      .legend { position: static; }
+    }
+    @media (max-width: 720px) {
+      .page { padding: 32px 18px 64px; }
+      header { flex-direction: column; align-items: flex-start; }
+      h1 { font-size: 26px; }
+      .sheet { padding: 22px 16px 18px 36px; }
+      .compare { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <div>
+        <p class="eyebrow">Logbook · hover</p>
+        <h1>Ett hoverspråk i tre lager</h1>
+        <p class="lede">Sektionen säger var du är, raden säger vad du kan redigera, och målet säger vad som händer om du klickar. Varje lager har sin egen tid. Inget som inte går att klicka på reagerar. Hovra i arken; utfällningen är appens egen.</p>
+      </div>
+      <button class="theme" type="button" id="theme">Natt</button>
+    </header>
+
+    <div class="board" id="board">
+
+      <!-- ============ 1. Rekommendation ============ -->
+      <section class="chapter" style="margin-top:0">
+        <div class="chapter-head"><h2>Rekommendation</h2><p>Hela systemet i ett ark. För musen över punkterna till höger för att se varje lager för sig.</p></div>
+        <div class="compose">
+          <div class="sheet" id="hero"></div>
+          <ol class="legend" id="legend">
+            <li data-demo="section"><span class="n">1</span><div><b>Sektionsstreck</b><span>Växer nedåt från datumet när musen är inne i dagen, tonar bort när den lämnar. Följer höjden när barn fälls ut.</span><span class="spec">In 320 ms · ut 180 ms · sage 55 %</span></div></li>
+            <li data-demo="text"><span class="n">2</span><div><b>Textyta</b><span>Mjuk yta bakom raden du kan skriva i. Ytan ligger i ett pseudoelement 7 px utanför texten, så texten flyttar sig aldrig.</span><span class="spec">In 140 ms · ut 200 ms · soft</span></div></li>
+            <li data-demo="check"><span class="n">3</span><div><b>Checkbox</b><span>Appens befintliga förhandsvisning: ringen och bocken går i länkfärg. Ingen cirkel bakom; bocken är redan svaret.</span><span class="spec">150 ms · cubic-bezier(.2,0,0,1)</span></div></li>
+            <li data-demo="disclosure"><span class="n">4</span><div><b>Pil</b><span>Färgen går från muted till ink och barnen fälls ut. Ingen bakgrund, som designgranskningen bestämde. Uppgiftens pil går till länkfärg.</span><span class="spec">160 ms · utfällning 320 ms</span></div></li>
+            <li data-demo="date"><span class="n">5</span><div><b>Datum</b><span>Pillen blir 8 % djupare och fokustiden går i länkfärg. Ersätter dagens understrykning, som är den enda i appen.</span><span class="spec">160 ms · color-mix 8 % ink</span></div></li>
+            <li data-demo="composer"><span class="n">6</span><div><b>Tom yta</b><span>Under dagens sista rad tänds en svag punkt. Den säger att ett klick här börjar en ny anteckning. Neutrala streck reagerar inte.</span><span class="spec">160 ms · muted 50 %</span></div></li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- ============ 2. Streckets rörelse ============ -->
+      <section class="chapter">
+        <div class="chapter-head"><h2>Streckets rörelse</h2><p>Fyra sätt att komma och gå. Hovra pilen för att fälla ut barnen och se strecket följa med.</p></div>
+        <div class="grid" id="motion"></div>
+      </section>
+
+      <!-- ============ 3. Fler förbättringar ============ -->
+      <section class="chapter">
+        <div class="chapter-head"><h2>Fler förbättringar</h2><p>Saker som sitter bredvid hovern och som samma språk kan lösa.</p></div>
+        <div class="grid" id="more"></div>
+      </section>
+
+      <!-- ============ 4. Tokens ============ -->
+      <section class="chapter">
+        <div class="chapter-head"><h2>Rörelsetokens</h2><p>Appen använder idag 120, 140, 150 och 160 ms om vartannat. Fem värden räcker.</p></div>
+        <table>
+          <thead><tr><th>Token</th><th>Värde</th><th>Används för</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">--t-surface-in</td><td class="mono">140ms ease-out</td><td>Textyta tänds</td></tr>
+            <tr><td class="mono">--t-surface-out</td><td class="mono">200ms ease-out</td><td>Textyta släcks. Långsammare ut än in, så ytan inte blinkar när musen sveper över listan.</td></tr>
+            <tr><td class="mono">--t-color</td><td class="mono">160ms ease-out</td><td>Pill, fokustid, pilfärg, ghost-punkt, temabyte</td></tr>
+            <tr><td class="mono">--t-structure</td><td class="mono">320ms cubic-bezier(.2, 0, 0, 1)</td><td>Sektionsstreck in, utfällning av barn. Det som ändrar layout delar en kurva.</td></tr>
+            <tr><td class="mono">--t-structure-out</td><td class="mono">180ms ease-out</td><td>Sektionsstreck tonar bort</td></tr>
+            <tr><td class="mono">stagger</td><td class="mono">35ms</td><td>Barnrader, som idag</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <div class="notes">
+        <p>Alla hover-regler ligger i <code>@media (hover: hover)</code>. På touch reagerar inget på pekning, och inget fastnar i hover-läge efter ett tryck. Vid <code>prefers-reduced-motion</code> blir alla skiften direkta, samma regel som appen redan har.</p>
+        <p>Sektionsstrecket och textytan visas också vid tangentbordsfokus, via <code>:focus-within</code> och <code>:focus-visible</code>. Appen släcker idag alla outlines globalt, så det här är det första synliga fokusläget i loggboken.</p>
+        <p>Implementation: strecket är ett <code>::before</code> på <code>DayBlock</code> och <code>TodoSection</code>, textytan ett <code>::before</code> på <code>Text</code> med <code>isolation: isolate</code>. Inga nya element i DOM:en och inga ändringar i Outline-logiken.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ templates ============ -->
+  <template id="full">
+    <section class="section todo" tabindex="-1">
+      <h2>to do</h2>
+      <div class="row">
+        <button class="marker check" type="button" aria-label="Complete send the draft"><span class="ring"></span><span class="tick"></span></button>
+        <div class="text" tabindex="0">send the draft to Ines</div>
+      </div>
+      <div class="item">
+        <div class="row">
+          <button class="marker disclosure task" type="button" aria-expanded="false" aria-label="Expand plan the week" aria-description="1 of 3 children completed"><span class="pie" style="--progress:120deg"></span></button>
+          <div class="text" tabindex="0">plan the week</div>
+        </div>
+        <div class="branch"><div class="branch-inner">
+          <div class="row nest"><button class="marker check on" type="button" aria-label="Reopen book the room"><span class="ring"></span><span class="tick"></span></button><div class="text done" tabindex="0">book the room</div></div>
+          <div class="row nest"><button class="marker check" type="button" aria-label="Complete write the agenda"><span class="ring"></span><span class="tick"></span></button><div class="text" tabindex="0">write the agenda</div></div>
+          <div class="row nest"><button class="marker check" type="button" aria-label="Complete invite Maja"><span class="ring"></span><span class="tick"></span></button><div class="text" tabindex="0">invite Maja</div></div>
+        </div></div>
+      </div>
+    </section>
+    <section class="section day today">
+      <button class="date" type="button" aria-label="Focus sessions for 2026-09-24"><time class="pill" datetime="2026-09-24">Sep 24, 2026</time><span class="time">1h 12m 04s</span></button>
+      <div class="item">
+        <div class="row">
+          <button class="marker disclosure" type="button" aria-expanded="false" aria-label="Expand the garden path"><span class="chev"></span></button>
+          <div class="text" tabindex="0">the line about the garden path</div>
+        </div>
+        <div class="branch"><div class="branch-inner">
+          <div class="row nest"><span class="marker" aria-hidden="true"><span class="glyph">–</span></span><div class="text" tabindex="0">first child arrives with the branch</div></div>
+          <div class="row nest"><span class="marker" aria-hidden="true"><span class="glyph">–</span></span><div class="text" tabindex="0">the next waits 35 ms</div></div>
+          <div class="row nest"><span class="marker" aria-hidden="true"><span class="glyph">–</span></span><div class="text" tabindex="0">and the third waits 70 ms</div></div>
+        </div></div>
+      </div>
+      <div class="row">
+        <span class="marker" aria-hidden="true"><span class="glyph">–</span></span>
+        <div class="text" tabindex="0">a <a href="#garden">link</a> keeps its color and never underlines</div>
+      </div>
+      <div class="composer" role="button" tabindex="-1" aria-label="New bullet">
+        <span class="marker" aria-hidden="true"><span class="glyph">–</span></span>
+        <div class="text"><span class="hint">new bullet</span></div>
+      </div>
+    </section>
+    <section class="section day">
+      <button class="date" type="button" aria-label="Focus sessions for 2026-09-23"><time class="pill" datetime="2026-09-23">Sep 23, 2026</time><span class="time">46m 10s</span></button>
+      <div class="row">
+        <span class="marker" aria-hidden="true"><span class="glyph">–</span></span>
+        <div class="text" tabindex="0">yesterday keeps its own line</div>
+      </div>
+    </section>
+  </template>
+
+  <template id="short">
+    <section class="section day today">
+      <button class="date" type="button" aria-label="Focus sessions"><time class="pill" datetime="2026-09-24">Sep 24, 2026</time><span class="time">1h 12m 04s</span></button>
+      <div class="item">
+        <div class="row">
+          <button class="marker disclosure" type="button" aria-expanded="false" aria-label="Expand"><span class="chev"></span></button>
+          <div class="text" tabindex="0">the line about the garden path</div>
+        </div>
+        <div class="branch"><div class="branch-inner">
+          <div class="row nest"><span class="marker" aria-hidden="true"><span class="glyph">–</span></span><div class="text" tabindex="0">first child arrives with the branch</div></div>
+          <div class="row nest"><span class="marker" aria-hidden="true"><span class="glyph">–</span></span><div class="text" tabindex="0">the next waits 35 ms</div></div>
+          <div class="row nest"><span class="marker" aria-hidden="true"><span class="glyph">–</span></span><div class="text" tabindex="0">and the third waits 70 ms</div></div>
+        </div></div>
+      </div>
+      <div class="row">
+        <span class="marker" aria-hidden="true"><span class="glyph">–</span></span>
+        <div class="text" tabindex="0">a <a href="#garden">link</a> keeps its color</div>
+      </div>
+    </section>
+    <section class="section day">
+      <button class="date" type="button" aria-label="Focus sessions"><time class="pill" datetime="2026-09-23">Sep 23, 2026</time><span class="time">46m 10s</span></button>
+      <div class="row">
+        <span class="marker" aria-hidden="true"><span class="glyph">–</span></span>
+        <div class="text" tabindex="0">yesterday keeps its own line</div>
+      </div>
+    </section>
+  </template>
+
+  <template id="date-only">
+    <section class="section day today">
+      <button class="date" type="button" aria-label="Focus sessions"><time class="pill" datetime="2026-09-24">Sep 24, 2026</time><span class="time">1h 12m 04s</span></button>
+      <div class="row"><span class="marker" aria-hidden="true"><span class="glyph">–</span></span><div class="text" tabindex="0">hover the date</div></div>
+    </section>
+  </template>
+
+  <template id="composer-only">
+    <section class="section day today">
+      <button class="date" type="button" aria-label="Focus sessions"><time class="pill" datetime="2026-09-24">Sep 24, 2026</time><span class="time">1h 12m 04s</span></button>
+      <div class="row"><span class="marker" aria-hidden="true"><span class="glyph">–</span></span><div class="text" tabindex="0">the dash on this row is not a button</div></div>
+      <div class="composer" role="button" tabindex="-1" aria-label="New bullet">
+        <span class="marker" aria-hidden="true"><span class="glyph">–</span></span>
+        <div class="text"><span class="hint">new bullet</span></div>
+      </div>
+    </section>
+  </template>
+
+  <script>
+    const $ = (sel, root = document) => root.querySelector(sel);
+    const stamp = (id) => document.getElementById(id).content.cloneNode(true);
+
+    function bindItems(root) {
+      root.querySelectorAll(".item").forEach(item => {
+        const disclosure = item.querySelector(":scope > .row .disclosure");
+        disclosure.addEventListener("pointerenter", e => {
+          if (e.pointerType === "touch") return;
+          item.dataset.open = "true";
+          disclosure.setAttribute("aria-expanded", "true");
+        });
+        item.addEventListener("pointerleave", () => {
+          delete item.dataset.open;
+          disclosure.setAttribute("aria-expanded", "false");
+        });
+      });
+      root.querySelectorAll(".check").forEach(check => {
+        check.addEventListener("click", () => check.classList.toggle("on"));
+      });
+      root.addEventListener("click", e => { if (e.target.closest("a")) e.preventDefault(); });
+    }
+
+    function frame({ index, name, badge, caption, spec, variant, template = "short" }) {
+      const el = document.createElement("article");
+      el.className = "frame";
+      if (variant) el.dataset.variant = variant;
+      el.innerHTML = `
+        <div class="kicker"><div class="name"><span class="index">${index}</span>${name}</div>${badge ? `<div class="badge">${badge}</div>` : ""}</div>
+        <div class="sheet"></div>
+        <p class="caption">${caption}${spec ? `<span class="spec">${spec}</span>` : ""}</p>`;
+      const sheet = $(".sheet", el);
+      sheet.appendChild(stamp(template));
+      bindItems(sheet);
+      return el;
+    }
+
+    /* ---- hero ---- */
+    const hero = $("#hero");
+    hero.appendChild(stamp("full"));
+    bindItems(hero);
+    const heroToday = $(".day.today", hero);
+    $("#legend").querySelectorAll("li").forEach(li => {
+      li.addEventListener("pointerenter", () => {
+        hero.dataset.demo = li.dataset.demo;
+        if (li.dataset.demo === "disclosure") heroToday.querySelector(".item").dataset.open = "true";
+      });
+      li.addEventListener("pointerleave", () => {
+        delete hero.dataset.demo;
+        delete heroToday.querySelector(".item").dataset.open;
+      });
+    });
+
+    /* ---- motion variants ---- */
+    const motion = $("#motion");
+    const variants = [
+      { variant: "grow", index: "01", name: "Växer, tonar bort", badge: "Rekommenderad",
+        caption: "In: strecket ritas nedåt från datumet i samma kurva som utfällningen. Ut: det tonar bort utan att röra sig. En utgång som drar ihop sig följer musen ut ur sektionen och drar blicken dit; en som tonar släpper taget.",
+        spec: "in 320 ms cubic-bezier(.2,0,0,1) · ut 180 ms opacitet · längden nollställs när det är osynligt" },
+      { variant: "origin", index: "02", name: "Från raden du kom in på",
+        caption: "Strecket växer åt båda håll från den höjd musen kom in i sektionen. Kommer du uppifrån växer det nedåt, kommer du från mitten öppnar det sig som en fläkt. Samma utgång som 01.",
+        spec: "transform-origin sätts av pointerenter · 320 ms · ut 180 ms" },
+      { variant: "draw", index: "03", name: "Ritas, sveps bort",
+        caption: "Strecket ritas ut med klippmask så ändarna behåller sin rundning hela vägen. Utgången sveper i läsriktningen: toppen försvinner först, som en penna som lyfts.",
+        spec: "clip-path inset · in 320 ms · ut 260 ms" },
+      { variant: "notch", index: "04", name: "Streck med markör",
+        caption: "Sektionsstrecket ligger svagt i hela dagens längd. En kort, mättad bit glider till raden under musen, även när musen står på en checkbox eller pil där textytan inte tänds. Rad och sektion i samma marginal.",
+        spec: "streck 22 % · markör 90 % · glider 220 ms cubic-bezier(.2,0,0,1)" },
+    ];
+    for (const v of variants) {
+      const el = frame(v);
+      motion.appendChild(el);
+      if (v.variant === "origin") el.querySelectorAll(".section").forEach(section => {
+        section.addEventListener("pointerenter", e => {
+          const box = section.getBoundingClientRect();
+          section.style.setProperty("--origin", `${Math.max(8, Math.min(box.height - 6, e.clientY - box.top)) - 8}px`);
+        });
+      });
+      if (v.variant === "draw") el.querySelectorAll(".section").forEach(section => {
+        let timer;
+        section.addEventListener("pointerenter", () => { clearTimeout(timer); section.classList.remove("leaving"); });
+        section.addEventListener("pointerleave", () => { section.classList.add("leaving"); timer = setTimeout(() => section.classList.remove("leaving"), 260); });
+      });
+      if (v.variant === "notch") el.querySelectorAll(".section").forEach(section => {
+        const notch = document.createElement("span");
+        notch.className = "notch";
+        section.appendChild(notch);
+        const place = target => {
+          const a = section.getBoundingClientRect(), b = target.getBoundingClientRect();
+          notch.style.top = `${b.top - a.top + 3}px`;
+          notch.style.height = `${b.height - 6}px`;
+        };
+        section.addEventListener("pointerenter", e => {
+          const target = e.target.closest(".row, .date") || section.querySelector(".date, .row");
+          place(target);
+          requestAnimationFrame(() => notch.dataset.live = "");
+        });
+        section.addEventListener("pointerover", e => {
+          const target = e.target.closest(".row, .date");
+          if (target && target.closest(".section") === section && notch.dataset.live !== undefined) place(target);
+        });
+        section.addEventListener("pointerleave", () => { delete notch.dataset.live; });
+      });
+    }
+
+    /* ---- further improvements ---- */
+    const more = $("#more");
+
+    const dateFrame = document.createElement("article");
+    dateFrame.className = "frame";
+    dateFrame.innerHTML = `
+      <div class="kicker"><div class="name"><span class="index">05</span>Datumraden</div></div>
+      <div class="compare">
+        <div><p class="tag now">Nu</p><div class="sheet" data-side="now"></div></div>
+        <div><p class="tag">Förslag</p><div class="sheet" data-side="new"></div></div>
+      </div>
+      <p class="caption">Understrykningen är den enda i appen, och länkar får aldrig understrykas. Pill och fokustid är redan färgade ytor; låt dem svara i stället. Samma skifte används som fokusläge för tangentbord.<span class="spec">pill: color-mix(in srgb, var(--date-bg), var(--ink) 8%) · tid: var(--link) · 160 ms</span></p>`;
+    const nowSheet = $('[data-side="now"]', dateFrame), newSheet = $('[data-side="new"]', dateFrame);
+    nowSheet.appendChild(stamp("date-only")); newSheet.appendChild(stamp("date-only"));
+    $(".date", nowSheet).classList.add("date-underline");
+    $(".text", nowSheet).textContent = "hover the date";
+    bindItems(nowSheet); bindItems(newSheet);
+    more.appendChild(dateFrame);
+
+    more.appendChild(frame({
+      index: "06", name: "Tom yta och neutralt streck", template: "composer-only",
+      caption: "Ett klick i tomrummet under dagens sista rad börjar en ny anteckning, men inget säger det idag. En svag punkt och ett ord tänds när musen är där. Strecket på en vanlig rad är inte en knapp och får därför ingen hover; bara sådant som går att klicka på svarar.",
+      spec: "punkt och text: muted 50 % · 160 ms · försvinner när du börjar skriva"
+    }));
+
+    const kb = frame({
+      index: "07", name: "Tangentbordet får samma språk", template: "short",
+      caption: "Appen släcker alla outlines. Låt strecket och textytan vara fokusläget: :focus-within tänder sektionen, :focus-visible tänder raden. Klicka i arket och tabba dig ned. Ingen ny form, bara samma ytor som musen får.",
+      spec: ".section:focus-within::before · .text:focus-visible::before"
+    });
+    kb.querySelector(".sheet").insertAdjacentHTML("afterbegin", `<p style="font-size:12px;color:var(--muted);margin:0 0 14px;font-family:'Helvetica Neue',Arial,sans-serif">Klicka här och tryck Tab ↓</p>`);
+    kb.querySelector(".sheet").tabIndex = -1;
+    more.appendChild(kb);
+
+    /* ---- theme ---- */
+    const board = $("#board"), theme = $("#theme");
+    theme.addEventListener("click", () => {
+      const night = board.dataset.theme !== "night";
+      board.dataset.theme = night ? "night" : "day";
+      theme.textContent = night ? "Dag" : "Natt";
+    });
+  </script>
+</body>
+</html>

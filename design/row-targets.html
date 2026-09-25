@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hover · streckets rörelse</title>
+  <style>
+    :root {
+      --desk: #e6e3dc;
+      --desk-ink: #242422;
+      --desk-muted: #626762;
+      --desk-line: #d0cdc4;
+      --rec: #1871ba;
+      --paper: #f2f1ed;
+      --ink: #242422;
+      --muted: #626762;
+      --sage: #59605d;
+      --soft: #e8e6df;
+      --date-bg: #dfe7ed;
+      --link: #1871ba;
+      --selection: #ccdbe7;
+      --ease: cubic-bezier(.2, 0, 0, 1);
+    }
+    .board[data-theme="night"] {
+      --paper: #011627;
+      --ink: #c0c7d1;
+      --muted: #a3b0bf;
+      --sage: #b1c4cc;
+      --soft: #193447;
+      --date-bg: #173449;
+      --link: #75d1c4;
+      --selection: #315366;
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--desk); }
+    body {
+      margin: 0;
+      color: var(--desk-ink);
+      background: var(--desk);
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-weight: 400;
+      -webkit-font-smoothing: antialiased;
+    }
+    ::selection { background: #ccdbe7; }
+    button, a { font: inherit; color: inherit; }
+    button { cursor: pointer; }
+    h1, h2, p { margin: 0; }
+
+    .page { max-width: 1180px; margin: 0 auto; padding: 52px 40px 88px; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 32px;
+      margin-bottom: 40px;
+    }
+    .eyebrow {
+      font-size: 12px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--desk-muted);
+      margin-bottom: 10px;
+    }
+    h1 { font-size: 32px; font-weight: 450; letter-spacing: -.03em; line-height: 1.15; }
+    .lede {
+      margin-top: 10px;
+      max-width: 58ch;
+      color: var(--desk-muted);
+      font-size: 15px;
+      line-height: 1.5;
+    }
+    .theme {
+      flex-shrink: 0;
+      border: 0;
+      background: transparent;
+      padding: 4px 0 3px;
+      border-bottom: 1px solid var(--desk-ink);
+      font-size: 13px;
+      line-height: 1;
+    }
+    .theme:focus-visible { outline: 2px solid var(--rec); outline-offset: 4px; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+      gap: 42px 28px;
+    }
+    .frame { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+    .kicker { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .name { font-size: 16px; font-weight: 500; letter-spacing: -.02em; }
+    .index { margin-right: 8px; color: var(--desk-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+    .badge { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--rec); }
+    .caption { font-size: 14px; line-height: 1.5; max-width: 62ch; }
+    .spec { display: block; margin-top: 4px; color: var(--desk-muted); font-size: 12px; }
+
+    .sheet {
+      background: var(--paper);
+      color: var(--ink);
+      border-radius: 2px;
+      box-shadow: 0 0 0 1px #0000000d, 0 18px 40px #31392b12;
+      padding: 28px 36px 24px 52px;
+      font-weight: 300;
+      font-size: 15px;
+      line-height: 1.2;
+    }
+    .sheet ::selection { background: var(--selection); }
+    .sheet a { color: var(--link); text-decoration: none; }
+    .sheet h2 { font-size: 20px; font-weight: 500; line-height: 1.4; margin: 0 0 4px 4px; }
+
+    .section { position: relative; }
+    .section.day { margin-top: 18px; }
+    .section::before {
+      content: "";
+      position: absolute;
+      left: -20px;
+      top: 8px;
+      bottom: 8px;
+      width: 2px;
+      border-radius: 1px;
+      background: var(--sage);
+      opacity: 0;
+      pointer-events: none;
+    }
+    .section.todo::before { background: var(--link); }
+
+    .date { display: flex; align-items: center; gap: 10px; min-height: 40px; margin: 0 0 3px; }
+    .pill {
+      font-size: 15px;
+      line-height: 24px;
+      padding: 0 6px;
+      margin-left: -2px;
+      border-radius: 9px;
+      background: var(--date-bg);
+    }
+    .time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+    .row { display: flex; align-items: flex-start; min-height: 28px; }
+    .nest { margin-left: 32px; }
+    .marker {
+      position: relative;
+      display: grid;
+      place-items: center;
+      width: 40px;
+      min-width: 40px;
+      height: 28px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--ink);
+      font-size: 14px;
+    }
+    .marker.check, .marker.disclosure { cursor: pointer; }
+    .marker.disclosure { color: var(--muted); }
+    .glyph, .box, .tick, .chev { position: relative; z-index: 1; }
+    .box {
+      width: 12px;
+      height: 12px;
+      border: 1.25px solid currentColor;
+      border-radius: 50%;
+    }
+    .tick {
+      position: absolute;
+      font-size: 9px;
+      line-height: 1;
+      opacity: 0;
+    }
+    .marker.on .tick { opacity: 1; }
+    .chev {
+      width: 5px;
+      height: 5px;
+      border-right: 1.25px solid currentColor;
+      border-bottom: 1.25px solid currentColor;
+      transform: rotate(-45deg);
+      transition: transform 140ms ease-out;
+    }
+    .item[data-open] > .row .chev { transform: rotate(45deg); }
+    .text {
+      flex: 1;
+      min-width: 0;
+      margin: 1px 0;
+      padding: 4px 8px 4px 2px;
+      border-radius: 7px;
+      cursor: text;
+      transition: background-color 140ms ease-out;
+    }
+    .text:hover { background: var(--soft); }
+    .text.done { color: var(--muted); text-decoration: line-through; }
+
+    .marker::after {
+      content: "";
+      position: absolute;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: var(--soft);
+      opacity: 0;
+      transition: opacity 140ms ease-out;
+    }
+    .marker:hover::after { opacity: 1; }
+    .frame[data-variant="rows"] .marker::after { z-index: 0; }
+
+    .branch {
+      display: grid;
+      min-height: 0;
+      grid-template-rows: 0fr;
+      opacity: 0;
+      transform: translateY(-3px);
+      visibility: hidden;
+      pointer-events: none;
+      transition-property: grid-template-rows, opacity, transform, visibility;
+      transition-duration: 320ms, 240ms, 320ms, 0s;
+      transition-timing-function: var(--ease);
+      transition-delay: 0s, 60ms, 0s, 320ms;
+    }
+    .item[data-open] > .branch {
+      grid-template-rows: 1fr;
+      opacity: 1;
+      transform: translateY(0);
+      visibility: visible;
+      pointer-events: auto;
+      transition-delay: 0s;
+    }
+    .branch-inner { min-height: 0; overflow: hidden; }
+    .branch .row {
+      opacity: 0;
+      transform: translateY(-3px);
+      transition-property: opacity, transform;
+      transition-duration: 220ms, 280ms;
+      transition-timing-function: ease-out;
+    }
+    .item[data-open] > .branch .row { opacity: 1; transform: translateY(0); }
+    .item[data-open] > .branch .row:nth-child(2) { transition-delay: 35ms; }
+    .item[data-open] > .branch .row:nth-child(3) { transition-delay: 70ms; }
+
+    /* 01 växer uppifrån */
+    .frame[data-variant="grow"] .section::before {
+      transform: scaleY(0);
+      transform-origin: top center;
+      transition: transform 320ms var(--ease), opacity 200ms ease-out 60ms;
+    }
+    .frame[data-variant="grow"] .section:hover::before {
+      transform: scaleY(1);
+      opacity: .55;
+      transition: transform 320ms var(--ease), opacity 240ms ease-out;
+    }
+
+    /* 02 från mitten */
+    .frame[data-variant="center"] .section::before {
+      transform: scaleY(0);
+      transform-origin: center center;
+      transition: transform 320ms var(--ease), opacity 200ms ease-out 60ms;
+    }
+    .frame[data-variant="center"] .section:hover::before {
+      transform: scaleY(1);
+      opacity: .55;
+      transition: transform 320ms var(--ease), opacity 240ms ease-out;
+    }
+
+    /* 03 glider in */
+    .frame[data-variant="slide"] .section::before {
+      transform: translateX(-6px);
+      transition: transform 320ms var(--ease), opacity 200ms ease-out 60ms;
+    }
+    .frame[data-variant="slide"] .section:hover::before {
+      transform: translateX(0);
+      opacity: .55;
+      transition: transform 320ms var(--ease), opacity 240ms ease-out;
+    }
+
+    /* 04 rad för rad — segmenten ritas av skriptet, sektionens eget streck är av */
+    .frame[data-variant="rows"] .section::before { display: none; }
+    .rules { position: absolute; inset: 0 auto 0 0; width: 0; pointer-events: none; }
+    .seg {
+      position: absolute;
+      left: -20px;
+      width: 2px;
+      border-radius: 1px;
+      background: var(--sage);
+      opacity: 0;
+      transform: scaleY(0);
+      transform-origin: top center;
+      transition: transform 280ms var(--ease), opacity 180ms ease-out;
+    }
+    .section.todo .seg { background: var(--link); }
+    .seg.in { opacity: .55; transform: scaleY(1); }
+
+    .notes {
+      margin-top: 48px;
+      padding-top: 18px;
+      border-top: 1px solid var(--desk-line);
+      max-width: 72ch;
+      color: var(--desk-muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition-duration: .01ms !important; transition-delay: 0s !important; }
+    }
+    @media (max-width: 720px) {
+      .page { padding: 32px 18px 64px; }
+      header { flex-direction: column; align-items: flex-start; }
+      h1 { font-size: 26px; }
+      .sheet { padding: 22px 16px 18px 36px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <div>
+        <p class="eyebrow">Logbook · streckets rörelse</p>
+        <h1>Strecket kommer och går</h1>
+        <p class="lede">Fyra ingångar för sektionsstrecket. Hovra en dag för att se strecket, och pilen på en rad för att fälla ut barnen. Utfällningen är appens egen: 320 ms, barnen följer efter med 35 ms mellanrum. Textyta och punktcirkel är desamma i alla rutor.</p>
+      </div>
+      <button class="theme" type="button" id="theme">Natt</button>
+    </header>
+    <div class="board" id="board">
+      <div class="grid" id="grid"></div>
+      <p class="notes">När barnen öppnas växer sektionen, och strecket följer med den höjden. Lämnar du raden men stannar i dagen stängs barnen och strecket kortas. Lämnar du dagen spelas utgången. To do använder samma rörelse i länkfärg. Vid reduced motion är skiftet direkt.</p>
+    </div>
+  </div>
+
+  <template id="logbook">
+    <section class="section todo">
+      <h2>to do</h2>
+      <div class="row">
+        <button class="marker check" type="button" aria-label="Checkbox"><span class="box"></span><span class="tick">✓</span></button>
+        <span class="text">send the draft</span>
+      </div>
+      <div class="row">
+        <button class="marker check on" type="button" aria-label="Checked"><span class="box"></span><span class="tick">✓</span></button>
+        <span class="text done">walk before lunch</span>
+      </div>
+    </section>
+    <section class="section day">
+      <div class="date">
+        <time class="pill" datetime="2026-09-24">Sep 24, 2026</time>
+        <span class="time">1h 12m 04s</span>
+      </div>
+      <div class="item">
+        <div class="row">
+          <button class="marker disclosure" type="button" aria-expanded="false" aria-label="Expand the garden path"><span class="chev"></span></button>
+          <span class="text">the line about the garden path</span>
+        </div>
+        <div class="branch">
+          <div class="branch-inner">
+            <div class="row nest"><span class="marker" aria-hidden="true"><span class="glyph">–</span></span><span class="text">first child arrives with the branch</span></div>
+            <div class="row nest"><span class="marker" aria-hidden="true"><span class="glyph">–</span></span><span class="text">the next waits 35 ms</span></div>
+            <div class="row nest"><span class="marker" aria-hidden="true"><span class="glyph">–</span></span><span class="text">and the third waits 70 ms</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <span class="marker" aria-hidden="true"><span class="glyph">–</span></span>
+        <span class="text">a <a href="#garden">link</a> keeps its color</span>
+      </div>
+    </section>
+    <section class="section day">
+      <div class="date">
+        <time class="pill" datetime="2026-09-23">Sep 23, 2026</time>
+        <span class="time">46m 10s</span>
+      </div>
+      <div class="row">
+        <span class="marker" aria-hidden="true"><span class="glyph">–</span></span>
+        <span class="text">yesterday keeps its own line</span>
+      </div>
+    </section>
+  </template>
+
+  <script>
+    const directions = [
+      {
+        variant: "grow",
+        index: "01",
+        name: "Växer uppifrån",
+        badge: "Rekommenderad",
+        caption: "Strecket ritas nedåt från sektionens topp och dras ihop dit igen. Samma kurva och längd som utfällningen, så streck och barn känns som en rörelse. När barnen öppnas följer streckets slut med höjden.",
+        spec: "320 ms cubic-bezier(.2, 0, 0, 1) · opacitet 240 ms · utgångens opacitet väntar 60 ms"
+      },
+      {
+        variant: "center",
+        index: "02",
+        name: "Från mitten",
+        caption: "Strecket växer ut från sin mitt och stängs till en punkt där. Längden följer fortfarande barnen, men ingången är egen och inte riktad mot datumet.",
+        spec: "320 ms · transform-origin center · samma opacitet som 01"
+      },
+      {
+        variant: "slide",
+        index: "03",
+        name: "Glider in",
+        caption: "Strecket finns redan i dagens längd och glider ut ur marginalen. Utfällningen ändrar bara hur långt det är, inte hur det kommer in.",
+        spec: "320 ms · 6 px från vänster · opacitet 240 ms"
+      },
+      {
+        variant: "rows",
+        index: "04",
+        name: "Rad för rad",
+        caption: "Varje rad ritar sin bit, och bitarna möts till ett streck. Barnens bitar väntar lika länge som raderna själva, så strecket växer tillsammans med utfällningen.",
+        spec: "280 ms per bit · fördröjning 0, 35, 70 ms · samma steg som barnraderna"
+      }
+    ];
+
+    const grid = document.getElementById("grid");
+    const logbook = document.getElementById("logbook");
+
+    function bindItem(item) {
+      const disclosure = item.querySelector(":scope > .row .disclosure");
+      disclosure.addEventListener("pointerenter", event => {
+        if (event.pointerType === "touch") return;
+        item.dataset.open = "true";
+        disclosure.setAttribute("aria-expanded", "true");
+      });
+      item.addEventListener("pointerleave", () => {
+        delete item.dataset.open;
+        disclosure.setAttribute("aria-expanded", "false");
+      });
+    }
+
+    function placeSegments(section) {
+      const rules = section.querySelector(".rules");
+      if (!rules) return;
+      if (!section._line) section._line = 1;
+      const top = section.getBoundingClientRect().top;
+      const pieces = [...section.querySelectorAll(".date, .row")].filter(row => row.getBoundingClientRect().height > 1);
+      const ids = new Set();
+      let fresh = 0;
+      for (const row of pieces) {
+        if (!row.dataset.line) row.dataset.line = String(section._line++);
+        ids.add(row.dataset.line);
+        const box = row.getBoundingClientRect();
+        let seg = rules.querySelector(`[data-line="${row.dataset.line}"]`);
+        if (!seg) {
+          seg = document.createElement("span");
+          seg.className = "seg";
+          seg.dataset.line = row.dataset.line;
+          seg.style.transitionDelay = `${fresh * 35}ms`;
+          fresh += 1;
+          rules.append(seg);
+        }
+        seg.style.top = `${box.top - top}px`;
+        seg.style.height = `${box.height + 1}px`;
+        if (!seg.classList.contains("in")) requestAnimationFrame(() => seg.classList.add("in"));
+      }
+      for (const seg of [...rules.children]) if (!ids.has(seg.dataset.line)) seg.remove();
+    }
+
+    function bindSegments(section) {
+      const rules = document.createElement("div");
+      rules.className = "rules";
+      section.append(rules);
+      let watching = false;
+      const observer = new ResizeObserver(() => { if (watching) placeSegments(section); });
+      section.addEventListener("pointerenter", () => {
+        watching = true;
+        observer.observe(section);
+        placeSegments(section);
+      });
+      section.addEventListener("pointerleave", () => {
+        watching = false;
+        observer.disconnect();
+        rules.querySelectorAll(".seg").forEach(seg => seg.classList.remove("in"));
+      });
+    }
+
+    for (const direction of directions) {
+      const frame = document.createElement("article");
+      frame.className = "frame";
+      frame.dataset.variant = direction.variant;
+      frame.innerHTML = `
+        <div class="kicker">
+          <div class="name"><span class="index">${direction.index}</span>${direction.name}</div>
+          ${direction.badge ? `<div class="badge">${direction.badge}</div>` : ""}
+        </div>
+        <div class="sheet"></div>
+        <p class="caption">${direction.caption}<span class="spec">${direction.spec}</span></p>
+      `;
+      const sheet = frame.querySelector(".sheet");
+      sheet.appendChild(logbook.content.cloneNode(true));
+      sheet.querySelectorAll(".item").forEach(bindItem);
+      if (direction.variant === "rows") sheet.querySelectorAll(".section").forEach(bindSegments);
+      sheet.addEventListener("click", event => {
+        if (event.target.closest("a")) event.preventDefault();
+      });
+      grid.appendChild(frame);
+    }
+
+    const board = document.getElementById("board");
+    const theme = document.getElementById("theme");
+    theme.addEventListener("click", () => {
+      const night = board.dataset.theme !== "night";
+      board.dataset.theme = night ? "night" : "day";
+      theme.textContent = night ? "Dag" : "Natt";
+    });
+  </script>
+</body>
+</html>

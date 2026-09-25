@@ -1,5 +1,13 @@
 # [logbook](https://github.com/divyavenn/logbook)
 
+This is a fork of [divyavenn/logbook](https://github.com/divyavenn/logbook). The guide below is the upstream README, unchanged. This fork adds:
+
+- a Mac app in `macos/Logbook.swift` that opens Logbook from Spotlight and only talks to `127.0.0.1`
+- a web app manifest and service worker, so the local site can be installed; the worker does not cache the journal
+- quieter editing and hover behavior, with the sketches that led there in `design/`
+
+Personal notes stay in the local database and are not part of this repository. The machine-specific path for the Mac app is not committed. The deploy button further down publishes the upstream repository, not this fork.
+
 \> be me, organize ur notes by topic like everyone else
 > 
 \> notes and to do lists all over the place, keep forgetting to do things or where you write smth down

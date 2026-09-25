@@ -986,3 +986,19 @@ if dist.is_dir():
     @app.get("/favicon.svg")
     def favicon():
         return FileResponse(dist / "favicon.svg")
+
+    @app.get("/manifest.webmanifest")
+    def web_manifest():
+        return FileResponse(
+            dist / "manifest.webmanifest",
+            media_type="application/manifest+json",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    @app.get("/sw.js")
+    def service_worker():
+        return FileResponse(
+            dist / "sw.js",
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
+        )

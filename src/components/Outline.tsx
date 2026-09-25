@@ -4,7 +4,7 @@ import styled, { keyframes, css } from 'styled-components';
 import { useJournalContext, registerDraftFlush } from '../JournalContext';
 import { api, ApiError, errorMessage } from '../api';
 import type { EntryKind, OutlineItem } from '../types';
-import { TextButton, VisuallyHidden } from '../styles';
+import { TextButton, VisuallyHidden, rowSurface } from '../styles';
 import { MarkdownContent, markdownText, richTextStyles, mergeMarkdown, formatMarkdown, pastedBullet } from '../markdown';
 import { RichTextEditor, type RichTextHandle, type TextOffsets, type VerticalDirection } from './RichTextEditor';
 import { documentUndo, editDocument, recordEdit } from '../documentHistory';
@@ -72,10 +72,23 @@ const Branch = styled.div<{ $open: boolean }>`
     > ${Children} > ${Item} > ${Row} { transition: none; }
   }
 `;
-const ComposerTarget = styled.button<{ $floating: boolean }>`
-  display: block; width: 100%; min-height: var(--bullet-row-height); padding: 0; border: 0; background: transparent;
+const ComposerTarget = styled.button<{ $floating: boolean; $task?: boolean }>`
+  display: flex; align-items: flex-start; width: 100%; min-height: var(--bullet-row-height); padding: 0; border: 0; background: transparent;
+  color: var(--muted); text-align: left; cursor: text;
   ${({ $floating }) => $floating && 'position: absolute; top: 100%; height: 20px; min-height: 20px;'}
-  @media(pointer: coarse) { min-height: 44px; }
+  /* A ghost marker and hint say that a click here starts a new entry. Only shown while the pointer is over the empty space. */
+  &::before, &::after { opacity: 0; pointer-events: none; transition: opacity var(--t-color) ease-out; }
+  &::before {
+    content: ${({ $task }) => $task ? "''" : "'–'"}; flex-shrink: 0; box-sizing: border-box; font-size: 14px; line-height: 1;
+    ${({ $task }) => $task
+      ? 'width: 12px; height: 12px; margin: calc((var(--bullet-row-height) - 12px) / 2) 14px; border: 1.25px solid currentColor; border-radius: 50%;'
+      : 'display: grid; place-items: center; width: 40px; height: var(--bullet-row-height); translate: 0 var(--bullet-marker-offset);'}
+  }
+  &::after { content: attr(data-hint); font-size: var(--bullet-size); line-height: var(--bullet-line-height); padding: var(--bullet-padding); }
+  ${({ $floating }) => $floating && '&::before, &::after { display: none; }'}
+  &:not([data-hint])::before, &:not([data-hint])::after { display: none; }
+  @media (hover: hover) { &:hover::before, &:hover::after { opacity: .5; } }
+  @media(pointer: coarse) { min-height: 44px; &::before, &::after { display: none; } }
   @media ${compactViewport} { min-height: 36px; }
 `;
 const Marker = styled.span<{ $task: boolean }>`
@@ -115,6 +128,9 @@ const Checkbox = styled.button<{ $checked?: boolean; $suppressPreview?: boolean 
 const Disclosure = styled.button<{ $open: boolean; $task: boolean; $progress: number }>`
   width: 40px; min-width: 40px; height: var(--bullet-row-height); padding: 0; border: 0;
   display: grid; place-items: center; background: transparent; border-radius: 4px; color: ${({ $task }) => $task ? 'var(--ink)' : 'var(--muted)'};
+  transition: color var(--t-color) ease-out;
+  /* The arrow answers with color and the branch itself; no surface behind it (see DESIGN_REVIEW). */
+  @media (hover: hover) { &:hover { color: ${({ $task }) => $task ? 'var(--link)' : 'var(--ink)'}; } }
   &::before { content: ''; width: 5px; height: 5px; border-right: 1.25px solid currentColor; border-bottom: 1.25px solid currentColor; translate: 0 var(--bullet-marker-offset);
     transform: rotate(${({ $open }) => $open ? '45deg' : '-45deg'}); transition: transform 140ms ease-out; }
   ${({ $task, $progress }) => $task && css`&::before { --task-progress: ${$progress * 360}deg; width: 12px; height: 12px; border: 1px solid currentColor; border-radius: 50%; transform: none; background: conic-gradient(currentColor var(--task-progress), transparent 0); transition: --task-progress 240ms ease-out; }`}
@@ -128,6 +144,7 @@ const Text = styled.div<{ $done?: boolean; $action?: boolean }>`
   ${({ $done }) => $done && css`color: var(--muted); text-decoration: line-through; a { color: var(--muted); }`}
   text-align: left; line-height: var(--bullet-line-height); font-size: var(--bullet-size); white-space: pre-wrap; overflow-wrap: anywhere;
   &:focus-visible { outline: none; }
+  ${rowSurface}
   @media(pointer: coarse) { min-height: 44px; padding: 10px 0; }
   @media ${compactViewport} { min-height: 36px; padding: 6px 0; }
 `;
@@ -934,10 +951,10 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     if (event.key === 'Backspace' || event.key === 'Delete') { event.preventDefault(); replaceDocument(); }
     else if (!mod && event.key.length === 1) { event.preventDefault(); replaceDocument(event.key); }
     else if (event.key === 'Escape') { event.preventDefault(); selectionActive.current = false; setSelectedAll(false); window.getSelection()?.removeAllRanges(); focus(); }
-  }}>{renderChildren(null, 0)}{(!archived || defaultKind === 'notes') && (!draft.active || draft.mode === 'edit') && <ComposerTarget type="button" $floating={defaultKind === 'notes' && !composer}
-    data-task-creation-area={defaultKind === 'tasks' || undefined} aria-label={defaultKind === 'tasks' ? 'Add to-do' : 'Add journal bullet'}
+  }}>{renderChildren(null, 0)}{(!archived || defaultKind === 'notes') && (!draft.active || draft.mode === 'edit') && <ComposerTarget type="button" $floating={defaultKind === 'notes' && !composer} $task={defaultKind === 'tasks'}
+    data-task-creation-area={defaultKind === 'tasks' || undefined} data-hint={defaultKind === 'tasks' ? 'new to-do' : 'new bullet'} aria-label={defaultKind === 'tasks' ? 'Add to-do' : 'Add journal bullet'}
     onClick={beginBullet} />}
-    {defaultKind === 'tasks' && draft.active && draft.mode === 'new' && <ComposerTarget type="button" $floating={false} data-task-creation-area
+    {defaultKind === 'tasks' && draft.active && draft.mode === 'new' && <ComposerTarget type="button" $floating={false} $task data-task-creation-area
       aria-label="Continue new to-do" onClick={focus} />}
     <VisuallyHidden>Tab indents. Shift Tab outdents. Enter adds a sibling. Shift Enter adds a line break. Select all twice selects this list.</VisuallyHidden></OutlineSurface>;
 }

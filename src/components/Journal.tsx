@@ -7,32 +7,58 @@ import { Outline } from './Outline';
 import { useJournalContext } from '../JournalContext';
 import { compactViewport, fullViewport } from '../layout';
 
+// A 2px rule in the left margin says which section the pointer (or the caret) is in.
+// It draws downward with the same curve as a branch unfolding, and fades out without moving.
+const ruleShown = css`
+  opacity: .55; transform: scaleY(1);
+  transition: transform var(--t-structure) var(--ease-structure), opacity 200ms ease-out;
+`;
+const sectionRule = (left: string) => css`
+  position: relative;
+  &::before {
+    content: ''; position: absolute; left: ${left}; top: 8px; bottom: 6px; width: 2px; border-radius: 1px;
+    background: var(--sage); opacity: 0; transform: scaleY(0); transform-origin: top center; pointer-events: none;
+    transition: opacity var(--t-structure-out) ease-out, transform 0s linear var(--t-structure-out);
+  }
+  &:has(:focus-visible)::before { ${ruleShown} }
+  @media (hover: hover) { &:hover::before { ${ruleShown} } }
+  @media ${compactViewport} { &::before { display: none; } }
+`;
 const SectionTitle = styled.button`font-size: 20px; line-height: 1.4; margin-bottom: 4px; font-weight: 500; border: 0; padding: 0; height: calc(var(--todo-heading-height) - 4px); background: transparent; text-align: left;`;
 const TodoSection = styled.section`
   align-self: stretch; display: flex; flex-direction: column; flex-shrink: 0; min-width: 180px; min-height: calc(var(--todo-heading-height) + 100px); width: 100%; padding: 0 12px 4px 8px; margin-bottom: 16px;
+  ${sectionRule('-10px')}
+  &::before { background: var(--link); }
   @media ${compactViewport} {
     min-width: 0; min-height: calc(var(--todo-heading-height) + 36px); padding: 0; margin: 0;
   }
 `;
 const DayBlock = styled.section<{ $today: boolean; $showHistory: boolean }>`
   margin-bottom: 20px;
+  ${sectionRule('-18px')}
   @media(pointer: coarse) { margin-bottom: 44px; }
   @media ${compactViewport} { display: ${({ $today, $showHistory }) => $today || $showHistory ? 'block' : 'none'}; margin-bottom: 10px; }
-`;
-const DateHead = styled.button`
-  display: flex; align-items: center; gap: 10px; min-height: 40px; margin-bottom: 3px;
-  padding: 0; border: 0; background: transparent; text-align: left; white-space: nowrap;
-  &:hover > span { text-decoration: underline; }
-  &:disabled { cursor: default; opacity: 1; }
-  @media(pointer: coarse) { min-height: 44px; }
-  @media ${compactViewport} { min-height: 36px; gap: 6px; margin-bottom: 0; }
 `;
 const DateLabel = styled.time`
   display: inline-block; font-size: 15px; line-height: 24px; padding: 0 6px; margin-left: -6px;
   border-radius: 9px; background: var(--date-bg); transform: translateY(1px);
+  transition: background-color var(--t-color) ease-out;
   @media ${compactViewport} { margin-left: 0; }
 `;
-const FocusTotal = styled.span`font-size: 12px; line-height: 24px; color: var(--muted); font-variant-numeric: tabular-nums;`;
+const FocusTotal = styled.span`font-size: 12px; line-height: 24px; color: var(--muted); font-variant-numeric: tabular-nums; transition: color var(--t-color) ease-out;`;
+const dateHeadLit = css`
+  ${DateLabel} { background: color-mix(in srgb, var(--date-bg), var(--ink) 8%); }
+  ${FocusTotal} { color: var(--link); }
+`;
+const DateHead = styled.button`
+  display: flex; align-items: center; gap: 10px; min-height: 40px; margin-bottom: 3px;
+  padding: 0; border: 0; background: transparent; text-align: left; white-space: nowrap;
+  &:disabled { cursor: default; opacity: 1; }
+  &:focus-visible { ${dateHeadLit} }
+  @media (hover: hover) { &:not(:disabled):hover { ${dateHeadLit} } }
+  @media(pointer: coarse) { min-height: 44px; }
+  @media ${compactViewport} { min-height: 36px; gap: 6px; margin-bottom: 0; }
+`;
 const EventList = styled.ul`
   list-style: none; padding: 0; margin: 0 0 0 20px;
   @media ${compactViewport} { margin-left: 0; }

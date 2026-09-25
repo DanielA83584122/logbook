@@ -1,11 +1,13 @@
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from 'react';
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react';
+import { createPortal } from 'react-dom';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import { Markdown } from '@tiptap/markdown';
 import type { Mark, Node as DocumentNode } from '@tiptap/pm/model';
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
-import styled from 'styled-components';
+import styled, { keyframes } from 'styled-components';
+import { Bold, Code, Italic, Link2, Strikethrough, Underline } from 'lucide-react';
 import { formattingExtensions, documentWithTags, serializeBullet, richTextStyles, safeHref } from '../markdown';
-import { Field } from '../styles';
+import { Field, rowSurface } from '../styles';
 import { Modal } from './Modal';
 import { useJournalContext } from '../JournalContext';
 import { normalizeTag } from '../tagSyntax';
@@ -15,11 +17,50 @@ import { errorMessage } from '../api';
 
 const Surface = styled.div`
   flex: 1; min-width: 0;
+  ${rowSurface}
   .tiptap { ${richTextStyles}; min-height: var(--bullet-row-height, 40px); padding: var(--bullet-padding, 7px 0); outline: none; caret-color: var(--ink); }
   .tiptap:focus-visible { outline: none; }
 
   @media(pointer: coarse) { .tiptap { min-height: 44px; padding: 10px 0; } }
 `;
+
+// Formatting menu shown beside a text selection. Same surface as the modals, same
+// shortcut notation as the shortcut panel; each label wears its own format.
+const menuIn = keyframes`from { opacity: 0; transform: translateY(var(--menu-shift)) scale(.98); } to { opacity: 1; transform: none; }`;
+const FormatMenu = styled.div<{ $left: number; $top: number; $above: boolean }>`
+  position: fixed; z-index: 20; left: ${({ $left }) => $left}px; min-width: 212px; padding: 5px;
+  ${({ $above, $top }) => $above ? `bottom: ${$top}px;` : `top: ${$top}px;`}
+  --menu-shift: ${({ $above }) => $above ? '4px' : '-4px'};
+  transform-origin: ${({ $above }) => $above ? 'bottom left' : 'top left'};
+  border-radius: 12px; color: var(--ink); background: var(--surface);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), 0 10px 32px #202a2526;
+  font-size: 13px; font-weight: 300; line-height: 1.3;
+  animation: ${menuIn} var(--t-surface-in) var(--ease-structure) both;
+  @media (pointer: coarse) { display: none; }
+`;
+const FormatItem = styled.button<{ $active: boolean }>`
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  width: 100%; min-height: 32px; padding: 0 9px 0 8px; border: 0; border-radius: 8px; background: transparent;
+  color: ${({ $active }) => $active ? 'var(--link)' : 'var(--ink)'}; text-align: left;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+  svg { width: 14px; height: 14px; stroke-width: 1.75; }
+  strong { font-weight: 700; } em { font-style: italic; } u { text-underline-offset: 2px; } s { text-decoration-thickness: 1px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: ${({ $active }) => $active ? 'var(--link)' : 'var(--code-ink)'}; }
+  @media (hover: hover) { &:hover { background: var(--soft); } }
+  &:focus-visible { background: var(--soft); }
+`;
+const FormatKeys = styled.span`color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums;`;
+const FormatDivider = styled.div`height: 1px; margin: 4px 8px; background: color-mix(in srgb, var(--line) 80%, transparent);`;
+type FormatMark = 'bold' | 'italic' | 'underline' | 'strike' | 'code';
+const FORMATS: { mark: FormatMark; keys: string; icon: typeof Bold; label: ReactNode }[] = [
+  { mark: 'bold', keys: '⌘ + b', icon: Bold, label: <strong>bold</strong> },
+  { mark: 'italic', keys: '⌘ + i', icon: Italic, label: <em>italic</em> },
+  { mark: 'underline', keys: '⌘ + u', icon: Underline, label: <u>underline</u> },
+  { mark: 'strike', keys: '⌘ + shift + s', icon: Strikethrough, label: <s>strikethrough</s> },
+  { mark: 'code', keys: '⌘ + shift + c', icon: Code, label: <code>code</code> },
+];
+const MENU_WIDTH = 212, MENU_HEIGHT = 6 * 32 + 9 + 10, MENU_GAP = 8;
+type MenuPlacement = { left: number; top: number; above: boolean; from: number; to: number; active: string };
 const LinkForm = styled.form`display: grid; gap: 8px; margin: 0;`;
 const LinkField = styled(Field)<{ $url?: boolean }>`
   color: ${({ $url }) => $url ? "var(--url)" : "var(--link)"};
@@ -115,6 +156,15 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
   const previousSelectAll = useRef(false);
   const linkPrefix = useRef<{ from: number; to: number; mark: Mark; doc: DocumentNode } | null>(null);
   const linkReplacement = useRef<{ to: number; mark: Mark; doc: DocumentNode } | null>(null);
+  const [menu, setMenu] = useState<MenuPlacement | null>(null);
+  const menuRef = useRef<MenuPlacement | null>(null);
+  const menuDismissed = useRef<{ from: number; to: number } | null>(null);
+  const selecting = useRef(false);
+  const placeMenu = (next: MenuPlacement | null) => {
+    const current = menuRef.current;
+    if (current === next || current && next && current.left === next.left && current.top === next.top && current.above === next.above && current.from === next.from && current.to === next.to && current.active === next.active) return;
+    menuRef.current = next; setMenu(next);
+  };
   const editor: Editor | null = useEditor({
     extensions: [...formattingExtensions(), Markdown, TagDecorations],
     content: documentWithTags(value, bulletTags), injectCSS: false, immediatelyRender: true,
@@ -227,6 +277,10 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
           event.preventDefault(); chooseTag(pending.names[pending.index]); return true;
         }
         if (pending && event.key === 'Escape') { event.preventDefault(); suggest(null); return true; }
+        if (event.key === 'Escape' && menuRef.current) {
+          // Escape hides the menu for this selection; the text stays selected.
+          event.preventDefault(); menuDismissed.current = { from: menuRef.current.from, to: menuRef.current.to }; placeMenu(null); return true;
+        }
         const mod = event.metaKey || event.ctrlKey;
         if (!mod && !event.shiftKey && editor && (event.key === 'ArrowLeft' || event.key === 'ArrowRight') &&
             selectTypedTag(editor, event.key === 'ArrowLeft' ? 'left' : 'right')) {
@@ -301,14 +355,60 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
       callbacks.current.onChange(bullet.content, bullet.tags);
       updateSuggestion(editor);
       commitTypedTags(editor);
+      updateMenu(editor);
     },
     onSelectionUpdate({ editor }) {
       if (!editor.state.selection.empty || editor.state.selection.from !== linkPrefix.current?.to) linkPrefix.current = null;
       if (!editor.state.selection.empty || editor.state.selection.from !== linkReplacement.current?.to) linkReplacement.current = null;
       updateSuggestion(editor);
+      updateMenu(editor);
     },
-    onBlur({ event }) { linkPrefix.current = null; linkReplacement.current = null; previousSelectAll.current = false; suggest(null); if (!linkOpen.current) { if (editor) commitTypedTags(editor, true); callbacks.current.onBlur(event); } },
+    onFocus({ editor }) { updateMenu(editor); },
+    onBlur({ event }) { linkPrefix.current = null; linkReplacement.current = null; previousSelectAll.current = false; suggest(null); placeMenu(null); if (!linkOpen.current) { if (editor) commitTypedTags(editor, true); callbacks.current.onBlur(event); } },
   });
+
+  // The menu appears once a non-empty text selection has settled: not while the
+  // mouse is still dragging, not while the link dialog is open, not after Escape.
+  const updateMenu = (current: Editor) => {
+    if (current.isDestroyed || !current.isEditable || !current.isFocused || linkOpen.current || selecting.current) { placeMenu(null); return; }
+    const { selection } = current.state;
+    const { from, to } = selection;
+    if (selection.empty || selection instanceof NodeSelection || !current.state.doc.textBetween(from, to, ' ', ' ').trim()) { placeMenu(null); return; }
+    if (menuDismissed.current && menuDismissed.current.from === from && menuDismissed.current.to === to) { placeMenu(null); return; }
+    menuDismissed.current = null;
+    const start = current.view.coordsAtPos(from), end = current.view.coordsAtPos(to, -1);
+    const viewport = current.view.dom.closest('[data-testid="log-scroll"]')?.getBoundingClientRect();
+    const visibleTop = Math.max(0, viewport?.top ?? 0), visibleBottom = Math.min(window.innerHeight, viewport?.bottom ?? window.innerHeight);
+    if (end.bottom < visibleTop || start.top > visibleBottom) { placeMenu(null); return; }
+    const left = Math.max(12, Math.min(Math.min(start.left, end.left) - 8, window.innerWidth - MENU_WIDTH - 12));
+    const below = end.bottom + MENU_GAP;
+    const above = below + MENU_HEIGHT > window.innerHeight - 12 && start.top - MENU_GAP - MENU_HEIGHT >= 12;
+    const active = [...FORMATS.map(format => format.mark), 'link' as const].filter(mark => current.isActive(mark)).join(' ');
+    placeMenu({ left, top: above ? window.innerHeight - start.top + MENU_GAP : below, above, from, to, active });
+  };
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom;
+    const begin = (event: PointerEvent) => { if (event.button === 0) { selecting.current = true; placeMenu(null); } };
+    const settle = () => { if (!selecting.current) return; selecting.current = false; if (!editor.isDestroyed) updateMenu(editor); };
+    dom.addEventListener('pointerdown', begin);
+    window.addEventListener('pointerup', settle);
+    window.addEventListener('pointercancel', settle);
+    const follow = () => { if (menuRef.current && !editor.isDestroyed) updateMenu(editor); };
+    window.addEventListener('scroll', follow, true);
+    window.addEventListener('resize', follow);
+    return () => {
+      dom.removeEventListener('pointerdown', begin);
+      window.removeEventListener('pointerup', settle); window.removeEventListener('pointercancel', settle);
+      window.removeEventListener('scroll', follow, true); window.removeEventListener('resize', follow);
+    };
+  }, [editor]);
+  const applyFormat = (mark: FormatMark) => {
+    if (!editor || editor.isDestroyed) return;
+    const chain = editor.chain().focus();
+    ({ bold: () => chain.toggleBold(), italic: () => chain.toggleItalic(), underline: () => chain.toggleUnderline(), strike: () => chain.toggleStrike(), code: () => chain.toggleCode() })[mark]();
+    chain.run();
+  };
 
   const updateSuggestion = (current: Editor) => {
     const { $from, empty, from } = current.state.selection;
@@ -389,7 +489,7 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
     setUrl(existing ? String(editor.getAttributes('link').href ?? '') : '');
     urlEdited.current = false;
     urlField.current?.setCustomValidity('');
-    linkOpen.current = true; setLinkMode(actualMode); setLink({ from, to, mode: actualMode });
+    linkOpen.current = true; placeMenu(null); setLinkMode(actualMode); setLink({ from, to, mode: actualMode });
     const request = ++clipboardRequest.current;
     if (mode === 'shortcut' || actualMode === 'insert') {
       // Read only for this user gesture. Denial leaves manual URL entry usable.
@@ -525,11 +625,25 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
   };
 
   return <Surface><EditorContent editor={editor} />
-    {suggestion && <TagCompletion id="tag-suggestions" role="listbox" aria-label="Tags" $left={suggestion.left} $top={suggestion.top}>
+    {/* Floating layers are portaled: the row surface makes Surface a stacking context, so later rows would paint over them. */}
+    {menu && editor && createPortal(<FormatMenu role="menu" aria-label="Format selection" data-testid="format-menu" $left={menu.left} $top={menu.top} $above={menu.above}>
+      {FORMATS.map(({ mark, keys, icon: Icon, label }) => {
+        const active = menu.active.split(' ').includes(mark);
+        return <FormatItem key={mark} type="button" role="menuitemcheckbox" aria-checked={active} $active={active}
+          onMouseDown={event => event.preventDefault()} onClick={() => applyFormat(mark)}>
+          <Icon aria-hidden="true" /><span>{label}</span><FormatKeys>{keys}</FormatKeys>
+        </FormatItem>;
+      })}
+      <FormatDivider role="separator" />
+      <FormatItem type="button" role="menuitem" $active={menu.active.split(' ').includes('link')} onMouseDown={event => event.preventDefault()} onClick={() => openLink('shortcut')}>
+        <Link2 aria-hidden="true" /><span>{menu.active.split(' ').includes('link') ? 'edit link' : 'link'}</span><FormatKeys>⌘ + k</FormatKeys>
+      </FormatItem>
+    </FormatMenu>, document.body)}
+    {suggestion && createPortal(<TagCompletion id="tag-suggestions" role="listbox" aria-label="Tags" $left={suggestion.left} $top={suggestion.top}>
       <HiddenTagOption id="tag-option-0" role="option" aria-selected={suggestion.index === 0} aria-label={`#${suggestion.names[0]}`}>#{suggestion.names[0]}</HiddenTagOption>
       <TagAlternatives>{suggestion.names.slice(1, 3).map((name, offset) => { const index = offset + 1; return <TagOption $selected={suggestion.index === index} key={name} id={`tag-option-${index}`} role="option" aria-selected={suggestion.index === index}
         onMouseDown={event => event.preventDefault()} onClick={() => chooseTag(name)}>#{name}</TagOption>; })}</TagAlternatives>
-    </TagCompletion>}
+    </TagCompletion>, document.body)}
     <Modal open={link !== null} onClose={() => close()} title="Link" compact>
       <LinkForm onKeyDown={event => {
         if (event.key === 'Enter' && !event.nativeEvent.isComposing) {

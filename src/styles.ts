@@ -1,4 +1,5 @@
 import styled, { createGlobalStyle, css } from 'styled-components';
+import { compactViewport } from './layout';
 
 export const GlobalStyle = createGlobalStyle`
   @property --task-progress { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
@@ -8,7 +9,7 @@ export const GlobalStyle = createGlobalStyle`
     color-scheme: light;
     --paper: #f2f1ed; --ink: #242422; --muted: #626762; --line: #d4d2cb; --sage: #59605d; --soft: #e8e6df;
     --surface: #faf9f6; --field: #fffefa; --date-bg: #dfe7ed; --tag-bg: #e8e6df; --tag-ink: #525a56; --tag-selected: #1871ba;
-    --code-bg: #e6e7e1; --code-ink: #4d615d; --quote: #5f645f; --selection: #ccdbe7; --focus: #6f7f88;
+    --code-bg: #e6e7e1; --code-ink: #4d615d; --quote: #5f645f; --selection: #ccdbe7; --selection-ink: #1b2a35; --focus: #6f7f88;
     --link: #1871ba; --url: #70588f; --checkbox: #747773; --scrollbar: #c0beb7;
     --timer-ring: #9ba6ad; --timer: #56626b; --timer-hover: #626f78; --timer-ink: #faf9f6;
     --timer-running: #1871ba; --timer-running-hover: #267bc3; --timer-running-ring: #6f91b3;
@@ -16,12 +17,15 @@ export const GlobalStyle = createGlobalStyle`
     --chrome-opacity: .76; --focus-chrome-opacity: .6;
     --primary: #354047; --primary-hover: #49565d; --primary-ink: #ffffff;
     --danger: #99493b; --backdrop: #2d343033; --chart: #a8b8c6; --chart-today: #557fa5; --chart-hover: #7395b4;
+    /* Motion: surfaces answer quickly and let go slowly; anything that changes layout shares one curve. */
+    --t-surface-in: 140ms; --t-surface-out: 200ms; --t-color: 160ms;
+    --t-structure: 320ms; --t-structure-out: 180ms; --ease-structure: cubic-bezier(.2, 0, 0, 1);
   }
   :root[data-theme='night'] {
     color-scheme: dark;
     --paper: #011627; --ink: #c0c7d1; --muted: #a3b0bf; --line: #294559; --sage: #b1c4cc; --soft: #193447;
     --surface: #0a2133; --field: #102a3f; --date-bg: #173449; --tag-bg: #26394a; --tag-ink: #c0c7d1; --tag-selected: #75d1c4;
-    --code-bg: #183340; --code-ink: #9bc2b9; --quote: #a3b9be; --selection: #315366; --focus: #75d1c4;
+    --code-bg: #183340; --code-ink: #9bc2b9; --quote: #a3b9be; --selection: #1f4f55; --selection-ink: #e6f4f1; --focus: #75d1c4;
     --link: #75d1c4; --url: #b7a4dd; --checkbox: #8ca0b0; --scrollbar: #35556a;
     --timer-ring: #486578; --timer: #24394a; --timer-hover: #304b60; --timer-ink: #dbe4ea;
     --timer-running: #335e62; --timer-running-hover: #3b686c; --timer-running-ring: #75a39e;
@@ -39,7 +43,7 @@ export const GlobalStyle = createGlobalStyle`
   button:not(:disabled), summary { cursor: pointer; }
   button:disabled { cursor: wait; opacity: .5; }
   :focus, :focus-visible { outline: none; }
-  ::selection { background: var(--selection); }
+  ::selection { background: var(--selection); color: var(--selection-ink); }
   h1, h2, h3, p { margin: 0; }
   h1, h2, h3 { text-wrap: balance; font-weight: 400; }
   p, li { text-wrap: pretty; }
@@ -50,6 +54,18 @@ export const GlobalStyle = createGlobalStyle`
   }
 `;
 
+// The soft surface behind an editable row lives in a pseudo-element 7px outside the text, so the text never moves.
+// Hover lights it quickly and lets go a little slower; keyboard focus uses the same surface.
+export const rowSurface = css`
+  position: relative; isolation: isolate;
+  &::before {
+    content: ''; position: absolute; inset: 1px -7px; z-index: -1; border-radius: 7px; background: var(--soft);
+    opacity: 0; pointer-events: none; transition: opacity var(--t-surface-out) ease-out;
+  }
+  &:focus-visible::before { opacity: 1; transition-duration: var(--t-surface-in); }
+  @media (hover: hover) { &:hover::before { opacity: 1; transition-duration: var(--t-surface-in); } }
+  @media ${compactViewport} { &::before { inset: 1px -4px; } }
+`;
 export const press = css`
   transition: background-color 120ms ease-out, color 120ms ease-out, scale 150ms ease-out;
   &:active:not(:disabled) { scale: .96; }
