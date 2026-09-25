@@ -7,7 +7,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private var server: Process?
     private var logHandle: FileHandle?
     private var stopping = false
-    private let origin = URL(string: "http://127.0.0.1:8000/")!
+    // LogbookPort in Info.plist picks the local port; 8000 when absent.
+    private let port: Int = {
+        let configured = Bundle.main.object(forInfoDictionaryKey: "LogbookPort")
+        let value = (configured as? Int) ?? Int((configured as? String) ?? "") ?? 8000
+        return (1...65535).contains(value) ? value : 8000
+    }()
+    private var origin: URL { URL(string: "http://127.0.0.1:\(port)/")! }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -67,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: python)
-        process.arguments = ["-m", "uvicorn", "backend.app:app", "--host", "127.0.0.1", "--port", "8000"]
+        process.arguments = ["-m", "uvicorn", "backend.app:app", "--host", "127.0.0.1", "--port", String(port)]
         process.currentDirectoryURL = URL(fileURLWithPath: root)
         process.terminationHandler = { [weak self] proc in
             guard let self, !self.stopping, proc.terminationStatus != 0 else { return }
@@ -104,7 +110,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             }
             return
         }
-        if attempt >= 40 {
+        // A first start seeds the database and warms Python imports, which can take a while.
+        if attempt >= 240 {
             DispatchQueue.main.async {
                 self.showMessage("Logbook svarade inte. Se ~/Library/Logs/Logbook/server.log")
             }
@@ -115,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     }
 
     private func healthy() -> Bool {
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:8000/api/health")!)
+        var request = URLRequest(url: origin.appendingPathComponent("api/health"))
         request.timeoutInterval = 1
         let semaphore = DispatchSemaphore(value: 0)
         var ok = false

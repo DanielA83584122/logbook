@@ -68,10 +68,27 @@ def valid_auth(request, password):
     return supplied.startswith('Bearer ') and hmac.compare_digest(supplied[7:], password)
 
 
+def preferred_media(accept):
+    """Pick the journal representation an Accept header asks for; HTML wins ties."""
+    choices = []
+    for index, part in enumerate((accept or 'text/html').split(',')):
+        media, *parameters = part.strip().lower().split(';')
+        try:
+            quality = next((float(p.strip()[2:]) for p in parameters if p.strip().startswith('q=')), 1)
+        except ValueError:
+            continue
+        if quality > 0 and media in ('text/html', '*/*', 'application/json', 'text/markdown'):
+            choices.append((quality, -index, media))
+    return max(choices)[2] if choices else 'text/html'
+
+
 @app.middleware('http')
 async def authenticate(request: Request, call_next):
     path = request.url.path
-    protected = path.startswith('/api/') or path == '/journal.md'
+    # The root page serves the journal as JSON or Markdown through content
+    # negotiation, so those representations need the same gate as /api.
+    protected = path.startswith('/api/') or path == '/journal.md' or (
+        path == '/' and preferred_media(request.headers.get('accept')) in ('application/json', 'text/markdown'))
     if not auth_enabled() or not protected or path in PUBLIC_AUTH_PATHS:
         return await call_next(request)
     password = os.environ.get('STILL_AUTH_PASSWORD', '')
@@ -966,16 +983,7 @@ if dist.is_dir():
 
     @app.get("/")
     def index(request: Request, query: Annotated[AgentQuery, Query()]):
-        choices = []
-        for index, part in enumerate(request.headers.get('accept', 'text/html').split(',')):
-            media, *parameters = part.strip().lower().split(';')
-            try:
-                quality = next((float(p.strip()[2:]) for p in parameters if p.strip().startswith('q=')), 1)
-            except ValueError:
-                continue
-            if quality > 0 and media in ('text/html', '*/*', 'application/json', 'text/markdown'):
-                choices.append((quality, -index, media))
-        preferred = max(choices)[2] if choices else 'text/html'
+        preferred = preferred_media(request.headers.get('accept'))
         headers = {**READ_HEADERS, 'Vary': 'Accept'}
         if preferred == 'text/markdown':
             return MarkdownResponse(markdown_journal(agent_snapshot(query)), headers=headers)

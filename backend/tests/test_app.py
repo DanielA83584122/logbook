@@ -229,6 +229,19 @@ def test_backup_download_is_a_complete_consistent_sqlite_file(client, tmp_path, 
     assert client.get('/api/backup').status_code == 401
 
 
+def test_root_journal_representations_require_the_password(client, monkeypatch):
+    monkeypatch.setenv('STILL_AUTH_ENABLED', 'true')
+    monkeypatch.setenv('STILL_AUTH_PASSWORD', 'private-test-password')
+    for accept in ('application/json', 'text/markdown', 'text/html;q=0.5, application/json'):
+        assert client.get('/', headers={'Accept': accept}).status_code == 401, accept
+    # The HTML shell stays reachable so the password gate can render.
+    for accept in ('text/html', '*/*', 'text/html, application/json;q=0.9'):
+        assert client.get('/', headers={'Accept': accept}).status_code != 401, accept
+    assert client.get('/', headers={'Accept': 'application/json', 'Authorization': 'Bearer private-test-password'}).status_code != 401
+    assert module.preferred_media(None) == 'text/html'
+    assert module.preferred_media('text/markdown;q=0.8, text/html;q=0.2') == 'text/markdown'
+
+
 def test_task_completion_is_atomic_and_idempotent(client):
     task = client.post("/api/tasks", json={"content": "overdue trainings"}).json()
     for _ in range(2):
