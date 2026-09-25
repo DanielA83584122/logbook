@@ -1,6 +1,8 @@
 """Ordered adjacency lists shared by journal bullets and to-dos."""
 from fastapi import HTTPException
 
+from .tags import is_section
+
 MAX_LEVELS = 8
 
 
@@ -57,6 +59,8 @@ def validate_parent(db, table, parent_id, day_id=None, item_id=None, allow_compl
         parent = get_row(db, table, cursor)
         if parent["day_id"] != day_id:
             raise HTTPException(409, "Nested entries must belong to the same list or date.")
+        if cursor == parent_id and is_section(parent):
+            raise HTTPException(409, "A section row groups the bullets after it; it cannot hold nested bullets.")
         if table == "tasks" and parent["completed_at"] and not allow_completed:
             raise HTTPException(409, "Cannot nest under a completed to-do.")
         level += 1

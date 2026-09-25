@@ -1,9 +1,18 @@
-"""Tags are JSON arrays on bullets; Markdown content contains only the note text."""
+"""Tags are JSON arrays on bullets; Markdown content contains only the note text.
+
+A section row is a root journal bullet whose Markdown is a level-1 heading
+(`# title #tag`). Its tags apply to every root bullet after it on that date,
+and to their descendants, until the next section row. A bullet also inherits
+the tags of its ancestors. Inheritance is derived from order, never stored.
+"""
 import json
 import re
 import unicodedata
+from collections import defaultdict
 
 NAME = re.compile(r'[\w][\w-]{0,63}', re.UNICODE)
+SECTION = re.compile(r'#(?:\s|$)')
+EMPTY_HEADING = re.compile(r'#{1,6}')
 
 
 def normalize_tag(value):
@@ -56,17 +65,69 @@ def initialize_tags(db):
     db.execute('PRAGMA user_version = 5')
 
 
-def list_tags(db):
-    return [dict(row) for row in db.execute('''SELECT name, SUM(note_count) AS note_count, SUM(task_count) AS task_count FROM (
-        SELECT value AS name, COUNT(*) AS note_count, 0 AS task_count FROM entries, json_each(entries.tags) WHERE kind = 'note' GROUP BY value
-        UNION ALL
-        SELECT value AS name, 0 AS note_count, COUNT(*) AS task_count FROM entries, json_each(entries.tags) WHERE kind = 'task' GROUP BY value
-        ) GROUP BY name ORDER BY name''')]
+def is_section(row):
+    """A root journal note whose Markdown starts as a level-1 heading."""
+    return row['kind'] == 'note' and row['parent_id'] is None and row.get('day_id') is not None \
+        and bool(SECTION.match(row['content'] or ''))
 
 
-def matching_ids(db, table, name):
+def empty_content(content):
+    """Blank text, or a heading marker with nothing after it (an untitled section row)."""
+    stripped = content.strip()
+    return not stripped or bool(EMPTY_HEADING.fullmatch(stripped))
+
+
+def inherited_tags(db):
+    """Tags each entry carries without holding them itself: {id: [tag, ...]}.
+
+    Day roots inherit the tags of the most recent section row above them; nested
+    entries inherit their parent's own and inherited tags. Entries that inherit
+    nothing are absent from the result.
+    """
+    rows = [bullet_dict(r) for r in db.execute(
+        'SELECT id, kind, day_id, parent_id, position, content, tags FROM entries ORDER BY day_id, position, id')]
+    children = defaultdict(list)
+    roots = defaultdict(list)
+    for row in rows:
+        if row['parent_id'] is None:
+            roots[row['day_id']].append(row)
+        else:
+            children[row['parent_id']].append(row)
+    result = {}
+
+    def spread(row, tags):
+        inherited = [tag for tag in tags if tag not in row['tags']]
+        if inherited:
+            result[row['id']] = inherited
+        passed = list(dict.fromkeys([*tags, *row['tags']]))
+        for child in children[row['id']]:
+            spread(child, passed)
+
+    for day_id, day_roots in roots.items():
+        current = []
+        for root in day_roots:
+            if day_id is not None and is_section(root):
+                current = root['tags']
+                for child in children[root['id']]:
+                    spread(child, root['tags'])
+                continue
+            spread(root, current)
+    return result
+
+
+def list_tags(db, inherited=None):
+    inherited = inherited_tags(db) if inherited is None else inherited
+    counts = defaultdict(lambda: {'note_count': 0, 'task_count': 0})
+    for row in db.execute('SELECT id, kind, tags FROM entries'):
+        for name in {*json.loads(row['tags']), *inherited.get(row['id'], [])}:
+            counts[name]['note_count' if row['kind'] == 'note' else 'task_count'] += 1
+    return [{'name': name, **counts[name]} for name in sorted(counts)]
+
+
+def matching_ids(db, table, name, inherited=None):
+    """Entries of one kind that carry the tag themselves or inherit it from a section row or an ancestor."""
     kind = 'note' if table == 'notes' else 'task'
-    return [r[0] for r in db.execute('''WITH RECURSIVE matching(id) AS (
-        SELECT item.id FROM entries item WHERE item.kind = ? AND EXISTS(SELECT 1 FROM json_each(item.tags) WHERE value = ?)
-        UNION SELECT child.id FROM entries child JOIN matching ON child.parent_id = matching.id WHERE child.kind = ?
-        ) SELECT id FROM matching''', (kind, normalize_tag(name), kind))]
+    name = normalize_tag(name)
+    inherited = inherited_tags(db) if inherited is None else inherited
+    return [row['id'] for row in db.execute('SELECT id, tags FROM entries WHERE kind = ? ORDER BY id', (kind,))
+            if name in json.loads(row['tags']) or name in inherited.get(row['id'], [])]

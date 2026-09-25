@@ -9,6 +9,7 @@ import { MarkdownContent, markdownText, richTextStyles, mergeMarkdown, formatMar
 import { RichTextEditor, type RichTextHandle, type TextOffsets, type VerticalDirection } from './RichTextEditor';
 import { documentUndo, editDocument, recordEdit } from '../documentHistory';
 import { compactViewport } from '../layout';
+import { blankContent, inheritedTagsAt, isSectionContent, isSectionRow } from '../sections';
 
 const MAX_LEVELS = 8;
 const OutlineSurface = styled.div`
@@ -34,12 +35,34 @@ const slideIn = keyframes`from { opacity: 0; transform: translateY(-7px); } to {
 const shiftIn = keyframes`from { opacity: .72; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); }`;
 const shiftOut = keyframes`from { opacity: .72; transform: translateX(10px); } to { opacity: 1; transform: translateX(0); }`;
 const Item = styled.li<{ $leaving?: boolean; $arriving?: boolean; $shifting?: 'in' | 'out' | null }>`
-  min-width: 0; transform-origin: left center;
+  position: relative; min-width: 0; transform-origin: left center;
+  /* Rows of one section share a rule in the margin while any of them is under the pointer or holds the caret.
+     Each row draws its own segment; the rows touch, so the segments read as one line. */
+  &[data-section-start] { margin-top: 6px; }
+  &[data-section-start]:first-child { margin-top: 0; }
+  &[data-in-section]::before {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; border-radius: 1px; background: var(--sage);
+    opacity: 0; pointer-events: none; transition: opacity var(--t-structure-out) ease-out;
+  }
+  &[data-section-start]::before { top: 8px; }
+  &[data-section-end]::before { bottom: 4px; }
+  &[data-section-lit]::before { opacity: .45; transition-duration: 200ms; }
   ${({ $leaving }) => $leaving && css`animation: ${popOut} 180ms ease-out both; pointer-events: none;`}
   ${({ $arriving }) => $arriving && css`animation: ${slideIn} 280ms cubic-bezier(.2,.7,.3,1) both;`}
   ${({ $shifting }) => $shifting && css`animation: ${$shifting === 'in' ? shiftIn : shiftOut} 220ms cubic-bezier(.2, 0, 0, 1) both;`}
 `;
-const Row = styled.div`position: relative; display: flex; align-items: flex-start; min-height: var(--bullet-row-height); @media(pointer: coarse) { min-height: 44px; } @media ${compactViewport} { min-height: 36px; }`;
+const Row = styled.div`
+  position: relative; display: flex; align-items: flex-start; min-height: var(--bullet-row-height);
+  /* A section row: the heading reads at bullet size, and a hairline runs from its tags to the edge. */
+  &[data-section] { align-items: center; }
+  &[data-section] h1 { font-size: 1em; font-weight: 400; line-height: inherit; }
+  &[data-section] > div:has(.tiptap) { flex: 0 1 auto; min-width: min(160px, 60%); }
+  @media(pointer: coarse) { min-height: 44px; } @media ${compactViewport} { min-height: 36px; }
+`;
+const Hairline = styled.span`
+  flex: 1; min-width: 24px; align-self: center; margin-left: 14px; border-top: 1px solid var(--line); opacity: .9;
+  @media ${compactViewport} { min-width: 12px; margin-left: 10px; }
+`;
 const Branch = styled.div<{ $open: boolean }>`
   display: grid; min-height: 0;
   grid-template-rows: ${({ $open }) => $open ? '1fr' : '0fr'};
@@ -91,8 +114,9 @@ const ComposerTarget = styled.button<{ $floating: boolean; $task?: boolean }>`
   @media(pointer: coarse) { min-height: 44px; &::before, &::after { display: none; } }
   @media ${compactViewport} { min-height: 36px; }
 `;
-const Marker = styled.span<{ $task: boolean }>`
+const Marker = styled.span<{ $task: boolean; $hidden?: boolean }>`
   display: flex; width: 40px; min-width: 40px; height: var(--bullet-row-height); align-items: center; justify-content: center; color: var(--ink);
+  ${({ $hidden }) => $hidden && 'visibility: hidden;'}
   &::before { content: ${({ $task }) => $task ? "''" : "'–'"}; font-size: 14px; translate: 0 var(--bullet-marker-offset);
     ${({ $task }) => $task ? 'width: 12px; height: 12px; border: 1.25px solid currentColor; border-radius: 50%;' : ''} }
   @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px; }
@@ -138,15 +162,26 @@ const Disclosure = styled.button<{ $open: boolean; $task: boolean; $progress: nu
   }
   @media ${compactViewport} { width: 36px; min-width: 36px; height: 36px; }
 `;
-const Text = styled.div<{ $done?: boolean; $action?: boolean }>`
+const Text = styled.div<{ $done?: boolean; $action?: boolean; $section?: boolean }>`
   ${richTextStyles}; cursor: text;
-  flex: ${({ $action }) => $action ? '0 1 auto' : '1'}; min-width: 0; min-height: var(--bullet-row-height); padding: var(--bullet-padding); border: 0; background: transparent; color: var(--ink);
+  flex: ${({ $action, $section }) => $action || $section ? '0 1 auto' : '1'}; min-width: 0; min-height: var(--bullet-row-height); padding: var(--bullet-padding); border: 0; background: transparent; color: var(--ink);
   ${({ $done }) => $done && css`color: var(--muted); text-decoration: line-through; a { color: var(--muted); }`}
   text-align: left; line-height: var(--bullet-line-height); font-size: var(--bullet-size); white-space: pre-wrap; overflow-wrap: anywhere;
   &:focus-visible { outline: none; }
   ${rowSurface}
   @media(pointer: coarse) { min-height: 44px; padding: 10px 0; }
   @media ${compactViewport} { min-height: 36px; padding: 6px 0; }
+`;
+// Tags a row carries from its section row or its ancestors, shown as hollow pills only while the row is under the pointer.
+const Inherited = styled.span`
+  margin-left: 8px; white-space: normal; opacity: 0; transition: opacity var(--t-surface-out) ease-out;
+  ${Text}:focus-visible & { opacity: 1; transition-duration: var(--t-surface-in); }
+  @media (hover: hover) { ${Row}:hover & { opacity: 1; transition-duration: var(--t-surface-in); } }
+  @media (hover: none) { display: none; }
+`;
+const Ghost = styled.span`
+  display: inline-block; padding: 0 8px 0 7px; margin-right: 4px; border: 1px solid var(--line); border-radius: 999px;
+  color: var(--muted); font-size: calc(1em - 2px); line-height: 18px; white-space: nowrap; vertical-align: baseline;
 `;
 type Draft = {
   active: boolean; mode: 'new' | 'edit'; id: number | null; content: string; saved: string;
@@ -194,8 +229,11 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     return value === 'task' || value === 'tasks' ? 'tasks' : value === 'note' || value === 'notes' ? 'notes' : defaultKind;
   };
   const { activeTag, completed, onComplete, reopened, onReopen, target } = useJournalContext();
-  const blank = (rows: OutlineItem[], active: boolean, parentId: number | null = null, afterId?: number | null, draftKind: EntryKind = defaultKind): Draft =>
-    ({ ...fresh(rows, active, draftKind, parentId, afterId), hiddenTag: activeTag });
+  const blank = (rows: OutlineItem[], active: boolean, parentId: number | null = null, afterId?: number | null, draftKind: EntryKind = defaultKind): Draft => {
+    const base = fresh(rows, active, draftKind, parentId, afterId);
+    const inherited = kind === 'mixed' ? inheritedTagsAt(rows, base.parentId, base.afterId) : new Set<string>();
+    return { ...base, hiddenTag: activeTag && !inherited.has(activeTag) ? activeTag : null };
+  };
   const [expanded, setExpanded] = useState(new Set<number>());
   const [previewed, setPreviewed] = useState(new Set<number>());
   const seenCompleted = useRef(new Set<number>());
@@ -209,6 +247,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   const [suppressedPreviews, setSuppressedPreviews] = useState(new Set<number>());
   const previewSuppressedAt = useRef(new Map<number, number>());
   const [shifting, setShifting] = useState<'in' | 'out' | null>(null);
+  const [litSection, setLitSection] = useState<string | null>(null);
   const [, setSelectedAll] = useState(false);
   const selectionActive = useRef(false);
   const surface = useRef<HTMLDivElement>(null);
@@ -281,7 +320,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   useEffect(() => {
     const value = current.current;
     if (kind !== 'tasks' || !composer || !value.active || value.mode !== 'new' ||
-        value.id !== null || value.parentId !== null || value.content.trim() || value.tags.length) return;
+        value.id !== null || value.parentId !== null || !blankContent(value.content) || value.tags.length) return;
     const afterId = siblings(items, null).at(-1)?.id ?? null;
     if (value.afterId !== afterId) persist({ ...value, afterId });
   }, [items, kind, composer, persist]);
@@ -306,7 +345,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   const dismissEmptyDraft = () => {
     if (lock.current) return false;
     const snapshot = current.current;
-    if (snapshot.id !== null || snapshot.content.trim() || snapshot.tags.length) return false;
+    if (snapshot.id !== null || !blankContent(snapshot.content) || snapshot.tags.length) return false;
     persist(blank(records.current, false));
     return true;
   };
@@ -347,7 +386,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
             return editDocument(changes(snapshot), snapshot.clientId, snapshot.requestId);
           }
         };
-        if (!snapshot.content.trim() && !snapshot.tags.length) {
+        if (blankContent(snapshot.content) && !snapshot.tags.length) {
           if (snapshot.id) {
             await edit(value => [{ kind: value.kind, id: value.id, delete: true, expected_revision: value.revision }]);
             setRemoved(previous => new Set([...previous, snapshot.id!]));
@@ -399,7 +438,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   useEffect(() => {
     if (!composer) {
       const value = current.current;
-      const emptyNewDraft = value.active && value.mode === 'new' && value.id === null && !value.content.trim() && !value.tags.length;
+      const emptyNewDraft = value.active && value.mode === 'new' && value.id === null && blankContent(value.content) && !value.tags.length;
       if (emptyNewDraft) {
         persist({ ...value, active: false });
       } else if (previouslyComposer.current && defaultKind === 'notes') {
@@ -480,6 +519,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     const group = siblings(records.current, snapshot.parentId).filter(item => item.id !== snapshot.id);
     const previous = snapshot.afterId !== null ? group.find(item => item.id === snapshot.afterId) : undefined;
     if (outdent ? !parent : !previous) return;
+    if (!outdent && kind === 'mixed' && (isSectionRow(previous!) || snapshot.parentId === null && snapshot.kind === 'notes' && isSectionContent(snapshot.content))) return;
     const parentId = outdent ? parent!.parent_id : previous!.id;
     const afterId = outdent ? parent!.id : siblings(records.current, previous!.id).at(-1)?.id ?? null;
     const targetParent = parentId === null ? null : records.current.find(item => item.id === parentId);
@@ -595,7 +635,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     const backwards = direction === 'backspace';
     const adjacent = elements[index + (backwards ? -1 : 1)];
     if (!adjacent || adjacent.dataset.outlineKey !== key) {
-      if (direction === 'backspace' && !current.current.content.trim() && !current.current.tags.length) {
+      if (direction === 'backspace' && blankContent(current.current.content) && !current.current.tags.length) {
         await save(); persist(blank(records.current, false));
       }
       return;
@@ -691,7 +731,11 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
         const li = document.createElement('li');
         const element = surface.current?.querySelector(`[data-item-id="${row.id}"]`);
         const text = element?.querySelector(':scope > div > [role="group"], :scope > div .tiptap');
-        if (text) li.innerHTML = text.innerHTML;
+        if (text) {
+          const copy = text.cloneNode(true) as HTMLElement;
+          copy.querySelectorAll('[data-inherited]').forEach(ghost => ghost.remove());
+          li.innerHTML = copy.innerHTML;
+        }
         else li.textContent = markdownText(row.content);
         const children = build(row.id, depth + 1);
         if (children.children.length) li.append(children);
@@ -734,7 +778,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     const childCount = row?.child_count ?? items.filter(item => item.parent_id === id).length;
     const doneCount = row?.completed_child_count ?? items.filter(item => item.parent_id === id && item.completed_at).length;
     const rowKind = row ? entryKind(row) : draft.kind;
-    if (id === null || !childCount && !(draft.active && draft.parentId === id && (draft.content.trim() || draft.tags.length))) return null;
+    if (id === null || !childCount && !(draft.active && draft.parentId === id && (!blankContent(draft.content) || draft.tags.length))) return null;
     const open = isExpanded(id);
     const pinned = expanded.has(id) || draftInside(id) || (!!row?.completed_at && rowKind === 'tasks' && !collapsed.has(id));
     const progressTask = rowKind === 'tasks' && !row?.completed_at;
@@ -761,10 +805,16 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   };
 
   const inputLabel = draft.mode === 'edit' ? draft.kind === 'notes' ? 'Edit note' : 'Edit to-do' : draft.kind === 'notes' ? 'New journal bullet' : 'New to-do';
+  const isSection = (id: number | null, content: string) => {
+    if (kind !== 'mixed') return false;
+    const row = items.find(item => item.id === id);
+    return row ? isSectionRow(row) : draft.parentId === null && draft.kind === 'notes' && isSectionContent(content);
+  };
   const renderMarker = (id: number | null, content: string) => {
     const toggle = renderToggle(id, content);
     const row = items.find(item => item.id === id);
     const rowKind = row ? entryKind(row) : draft.kind;
+    if (isSection(id, content)) return toggle ?? <Marker data-focus-chrome $task={false} $hidden aria-hidden="true" />;
     if (rowKind === 'tasks' && id !== null) {
       const done = !!row?.completed_at;
       return toggle ?? <Checkbox type="button" data-focus-chrome data-preview-suppressed={suppressedPreviews.has(id) || undefined} $checked={done} $suppressPreview={suppressedPreviews.has(id)} aria-pressed={done} disabled={busy} aria-label={`${done ? 'Reopen' : 'Complete'} ${markdownText(content)}`}
@@ -782,18 +832,29 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     }
     return toggle ?? <Marker data-focus-chrome $task={rowKind === 'tasks'} aria-hidden="true" />;
   };
-  const renderDraft = (depth: number): ReactNode => <DraftItem key="draft" data-depth={depth}
-    data-outline-key={key} data-kind={draft.kind} data-item-id={draft.id ?? 'draft'}
+  const renderInherited = (item: OutlineItem) => {
+    const inherited = (item.inherited_tags ?? []).filter(tag => tag !== activeTag);
+    if (!inherited.length || isSection(item.id, item.content)) return null;
+    return <Inherited aria-hidden="true" data-inherited>{inherited.map(tag => <Ghost key={tag}>#{tag}</Ghost>)}</Inherited>;
+  };
+  type SectionPlace = { section: string | null; start: boolean; end: boolean };
+  const sectionAttributes = ({ section, start, end }: SectionPlace) => section === null ? {} : {
+    'data-in-section': section, 'data-section-start': start || undefined, 'data-section-end': end || undefined,
+    'data-section-lit': litSection === section || undefined,
+    onPointerEnter: () => setLitSection(section), onFocusCapture: () => setLitSection(section),
+  };
+  const renderDraft = (depth: number, place: SectionPlace = { section: null, start: false, end: false }): ReactNode => <DraftItem key="draft" data-depth={depth}
+    data-outline-key={key} data-kind={draft.kind} data-item-id={draft.id ?? 'draft'} {...sectionAttributes(place)}
     onPointerLeave={() => clearPreview(draft.id)}
-    $emptyTask={draft.kind === 'tasks' && draft.id === null && !draft.content.trim() && !draft.tags.length}
+    $emptyTask={draft.kind === 'tasks' && draft.id === null && blankContent(draft.content) && !draft.tags.length}
     $shifting={shifting}
     $leaving={completing === draft.id && completing !== null}>
-    <Row aria-busy={saving}>{renderMarker(draft.id, draft.content)}<RichTextEditor key={draft.clientId} ref={input} label={archived && draft.kind === 'tasks' && draft.parentId !== null && draft.mode === 'new' ? 'New completed subtask' : inputLabel} value={draft.content} tags={draft.tags.filter(tag => tag !== activeTag)} readOnly={false}
+    <Row aria-busy={saving} data-section={isSection(draft.id, draft.content) || undefined}>{renderMarker(draft.id, draft.content)}<RichTextEditor key={draft.clientId} ref={input} label={archived && draft.kind === 'tasks' && draft.parentId !== null && draft.mode === 'new' ? 'New completed subtask' : inputLabel} value={draft.content} tags={draft.tags.filter(tag => tag !== activeTag)} readOnly={false}
       onBoundary={boundary} onVerticalBoundary={verticalBoundary} onSelectDocument={selectDocument}
       onChange={(content, tags) => {
         verticalX.current = null;
         const hiddenTag = current.current.hiddenTag ?? (activeTag && current.current.savedTags.includes(activeTag) ? activeTag : null);
-        persist({ ...current.current, content, tags: [...new Set([...tags, ...(hiddenTag && (content.trim() || tags.length) ? [hiddenTag] : [])])] });
+        persist({ ...current.current, content, tags: [...new Set([...tags, ...(hiddenTag && (!blankContent(content) || tags.length) ? [hiddenTag] : [])])] });
       }}
       onBlur={event => {
         const blurredClientId = draft.clientId;
@@ -859,7 +920,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
           }
         } else if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault();
-          if (!current.current.content.trim() && !current.current.tags.length && !current.current.id) {
+          if (blankContent(current.current.content) && !current.current.tags.length && !current.current.id) {
             if (current.current.parentId !== null) void run(() => move(true));
             return;
           }
@@ -867,7 +928,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
             const split = input.current?.splitAtSelection();
             const hiddenTag = current.current.hiddenTag ?? (activeTag && current.current.savedTags.includes(activeTag) ? activeTag : null);
             const keepHiddenTag = (content: string, tags: string[], value = hiddenTag) =>
-              [...new Set([...tags, ...(value && (content.trim() || tags.length) ? [value] : [])])];
+              [...new Set([...tags, ...(value && (!blankContent(content) || tags.length) ? [value] : [])])];
             if (split) persist({ ...current.current, content: split.before.content, tags: keepHiddenTag(split.before.content, split.before.tags) });
             const snapshot = current.current;
             let id = await save();
@@ -895,7 +956,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
         } else if (event.key === 'Escape' && draft.mode === 'edit') {
           event.preventDefault(); persist(blank(records.current, composer)); focus();
         }
-      }} /></Row>
+      }} />{isSection(draft.id, draft.content) && <Hairline aria-hidden="true" />}</Row>
     {failed && <TextButton onClick={() => void run(async () => { await save(); })}>Retry saving</TextButton>}
     {draft.id !== null && <Branch data-branch-for={draft.id} $open={isExpanded(draft.id)} aria-hidden={!isExpanded(draft.id)}>{renderChildren(draft.id, depth + 1)}</Branch>}
   </DraftItem>;
@@ -914,24 +975,38 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       group.splice(index, 0, null);
     }
     if (!group.length) return null;
-    const content = group.map(item => item === null ? renderDraft(depth) : <Item key={item.id} data-outline-key={key} data-done={!!item.completed_at && !archived} data-kind={entryKind(item)} data-item-id={item.id} data-depth={depth} $leaving={completing === item.id}
+    // Root rows of a mixed day belong to the section row above them, up to the next section row.
+    const places: SectionPlace[] = [];
+    if (parentId === null && kind === 'mixed') {
+      let current: string | null = null;
+      group.forEach((item, index) => {
+        const section = item === null ? isSection(draft.id, draft.content) : isSectionRow(item);
+        if (section) current = item === null ? 'draft' : String(item.id);
+        const next = group[index + 1];
+        const nextStarts = next === undefined || (next === null ? isSection(draft.id, draft.content) : isSectionRow(next));
+        places.push({ section: current, start: section, end: current !== null && nextStarts });
+      });
+    }
+    const placeOf = (index: number): SectionPlace => places[index] ?? { section: null, start: false, end: false };
+    const content = group.map((item, index) => item === null ? renderDraft(depth, placeOf(index)) : <Item key={item.id} data-outline-key={key} data-done={!!item.completed_at && !archived} data-kind={entryKind(item)} data-item-id={item.id} data-depth={depth} $leaving={completing === item.id} {...sectionAttributes(placeOf(index))}
       onPointerLeave={() => clearPreview(item.id)}
       $arriving={entryKind(item) === 'tasks' && (completed.has(item.id) || reopened.has(item.id))}>
-      <Row>{renderMarker(item.id, item.content)}<Text $done={!!item.completed_at && !archived} $action={archived && entryKind(item) === 'tasks'} role="group" tabIndex={0} aria-label={markdownText(item.content) || (item.tags ?? []).filter(tag => tag !== activeTag).map(tag => '#' + tag).join(' ')}
+      <Row data-section={isSection(item.id, item.content) || undefined}>{renderMarker(item.id, item.content)}<Text $done={!!item.completed_at && !archived} $action={archived && entryKind(item) === 'tasks'} $section={isSection(item.id, item.content)} role="group" tabIndex={0} aria-label={markdownText(item.content) || (item.tags ?? []).filter(tag => tag !== activeTag).map(tag => '#' + tag).join(' ')}
         onClick={event => { if ((archived || !item.completed_at) && !(event.target as HTMLElement).closest('a')) select(item, event.currentTarget); }}
         onContextMenu={event => {
           const link = (event.target as HTMLElement).closest('a');
           if (link && (archived || !item.completed_at)) { event.preventDefault(); select(item, event.currentTarget, link); }
         }}
         onKeyDown={event => { if ((archived || !item.completed_at) && event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); select(item); } }}
-      ><MarkdownContent content={item.content} tags={activeTag ? item.tags?.filter(tag => tag !== activeTag) : item.tags} /></Text>
+      ><MarkdownContent content={item.content} tags={activeTag ? item.tags?.filter(tag => tag !== activeTag) : item.tags} trailing={renderInherited(item)} /></Text>{isSection(item.id, item.content) && <Hairline aria-hidden="true" />}
       </Row>
       <Branch data-branch-for={item.id} $open={isExpanded(item.id)} aria-hidden={!isExpanded(item.id)}>{renderChildren(item.id, depth + 1)}</Branch>
     </Item>);
     const parent = parentId === null ? null : items.find(item => item.id === parentId);
     return parentId === null ? <List>{content}</List> : <Children $task={parent ? entryKind(parent) === 'tasks' : draft.kind === 'tasks'}>{content}</Children>;
   };
-  return <OutlineSurface ref={surface} data-outline-kind={defaultKind} tabIndex={-1} onPointerDown={() => { verticalX.current = null; selectionActive.current = false; setSelectedAll(false); }} onCopyCapture={event => {
+  return <OutlineSurface ref={surface} data-outline-kind={defaultKind} tabIndex={-1} onPointerDown={() => { verticalX.current = null; selectionActive.current = false; setSelectedAll(false); }}
+  onPointerLeave={() => setLitSection(null)} onBlurCapture={event => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setLitSection(null); }} onCopyCapture={event => {
     if (!selectionActive.current) return;
     event.preventDefault(); event.stopPropagation(); copyDocument(event.clipboardData);
   }} onCutCapture={event => { if (selectionActive.current) { event.preventDefault(); event.stopPropagation(); copyDocument(event.clipboardData); replaceDocument(); } }}

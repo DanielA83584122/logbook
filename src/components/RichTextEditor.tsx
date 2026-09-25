@@ -118,6 +118,7 @@ function sharedMarks(doc: DocumentNode, from: number, to: number): Mark[] {
   return marks;
 }
 
+const plainParagraph = (doc: DocumentNode) => doc.childCount === 1 && doc.firstChild?.type.name === 'paragraph';
 type LinkMode = 'shortcut' | 'insert' | 'context';
 export type VerticalDirection = 'up' | 'down';
 export type TextOffsets = { anchor: number; head: number };
@@ -186,8 +187,9 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
         input(view) {
           // ProseMirror normally reports this through onUpdate. Browser fake
           // clocks can defer its DOM observer, so propagate an explicit clear
-          // immediately from the native input event.
-          if (!view.dom.textContent?.trim() && !view.dom.querySelector('[data-tag]')) callbacks.current.onChange('', []);
+          // immediately from the native input event. An empty heading is not
+          // a cleared bullet: it is a section row waiting for its title.
+          if (!view.dom.textContent?.trim() && !view.dom.querySelector('[data-tag]') && plainParagraph(view.state.doc)) callbacks.current.onChange('', []);
           return false;
         },
         contextmenu(view, event) {
@@ -205,6 +207,20 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
         if (view.composing) return false;
         if (from === to) {
           const { state } = view;
+          // Literal punctuation stays literal, with one Markdown exception: a
+          // space after a lone `#` opening the bullet turns it into a level-1
+          // heading. At the root of a date that heading is a section row.
+          const $from = state.doc.resolve(from);
+          const block = $from.parent;
+          // Browsers insert a no-break space when typing at the end of a text node.
+          if (/^[ \u00a0]$/.test(text) && $from.depth === 1 && $from.index(0) === 0 && block.type.name === 'paragraph' && block.textContent === '#' && $from.parentOffset === 1 && state.schema.nodes.heading) {
+            const start = $from.before(1);
+            // Change the block in place rather than replacing it, so the focused DOM node survives and no blur fires.
+            const tr = state.tr.delete(start + 1, start + 2).setBlockType(start + 1, start + 1, state.schema.nodes.heading, { level: 1 });
+            tr.setSelection(TextSelection.create(tr.doc, start + 1));
+            view.dispatch(tr.scrollIntoView());
+            return true;
+          }
           const replacement = linkReplacement.current;
           linkReplacement.current = null;
           // Replacing a selected linked label is one edit, including spaces.
@@ -341,7 +357,7 @@ export function RichTextEditor({ ref, value, tags: bulletTags, label, readOnly, 
           // The parent may save immediately in this same key event. Read the
           // editor document synchronously so a just-cleared entry is deleted
           // even if React has not delivered the last onUpdate render yet.
-          const visiblyEmpty = !editor.view.dom.textContent?.trim() && !editor.view.dom.querySelector('[data-tag]');
+          const visiblyEmpty = !editor.view.dom.textContent?.trim() && !editor.view.dom.querySelector('[data-tag]') && plainParagraph(editor.state.doc);
           const bullet = visiblyEmpty ? { content: '', tags: [] as string[] } : serializeBullet(editor.getJSON());
           callbacks.current.onChange(bullet.content, bullet.tags);
         }

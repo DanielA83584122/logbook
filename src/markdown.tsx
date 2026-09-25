@@ -196,8 +196,8 @@ export const richTextStyles = css`
   h4, h5, h6 { font-size: 1em; }
 `;
 
-function renderNode(node: JSONContent, key: number): ReactNode {
-  const content = node.content?.map(renderNode);
+function renderNode(node: JSONContent, key: number, trailing?: ReactNode): ReactNode {
+  const content = node.content?.map((child, index) => renderNode(child, index));
   if (node.type === 'text') {
     let result: ReactNode = node.text;
     for (const mark of node.marks ?? []) {
@@ -218,7 +218,7 @@ function renderNode(node: JSONContent, key: number): ReactNode {
   }
   switch (node.type) {
     case 'journalTag': return <TagBubble key={key} data-tag={node.attrs?.name}>#{node.attrs?.name}</TagBubble>;
-    case 'paragraph': return <p key={key}>{content}</p>;
+    case 'paragraph': return <p key={key}>{content}{trailing}</p>;
     case 'hardBreak': return <br key={key} />;
     case 'blockquote': return <blockquote key={key}>{content}</blockquote>;
     case 'codeBlock': return <pre key={key}><code>{node.content?.map(child => child.text ?? '').join('')}</code></pre>;
@@ -230,8 +230,11 @@ function renderNode(node: JSONContent, key: number): ReactNode {
   }
 }
 
-export const MarkdownContent = memo(function MarkdownContent({ content, tags = [] }: { content: string; tags?: string[] }) {
+export const MarkdownContent = memo(function MarkdownContent({ content, tags = [], trailing }: { content: string; tags?: string[]; trailing?: ReactNode }) {
   const document = useMemo(() => documentWithTags(content, tags), [content, tags]);
+  const blocks = document.content ?? [];
+  const last = blocks.at(-1);
   // Explicit React elements only: raw HTML, scripts, images and unsafe links never execute.
-  return <>{document.content?.map(renderNode)}</>;
+  // Trailing decoration joins the last paragraph's line instead of opening a line of its own.
+  return <>{blocks.map((node, index) => renderNode(node, index, index === blocks.length - 1 && node.type === 'paragraph' ? trailing : undefined))}{last?.type !== 'paragraph' && trailing}</>;
 });

@@ -123,3 +123,81 @@ def test_migration_keeps_content_ids_and_hierarchy_while_allowing_tag_only_rows(
         assert db.execute('PRAGMA foreign_key_check').fetchall() == []
         db.execute("INSERT INTO entries(kind, day_id, content, tags, created_at) VALUES ('note', 1, '', '[\"tag-only\"]', 'created')")
         assert db.execute('PRAGMA user_version').fetchone()[0] == 11
+
+
+def section_day(client):
+    """Rows created in order: a plain root, a tagged section, its rows, a title-only section, a trailing root."""
+    before = note(client, 'Before any section')
+    section = note(client, '# fence and hedge #garden #house', ['garden', 'house'])
+    first = note(client, 'Moved the bench')
+    parent = note(client, 'Reading notes', ['reading'])
+    child = note(client, 'Chapter four', parent_id=parent['id'])
+    closing = note(client, '# other things')
+    after = note(client, 'Not in the section')
+    return before, section, first, parent, child, closing, after
+
+
+def test_section_row_tags_apply_to_following_roots_until_the_next_section(client):
+    before, section, first, parent, child, closing, after = section_day(client)
+    data = client.get('/api/journal?tag=garden').json()
+    ids = {row['id'] for day in data['days'] for row in day['notes']}
+    assert ids == {section['id'], first['id'], parent['id'], child['id']}
+    by_id = {row['id']: row for day in data['days'] for row in day['notes']}
+    assert by_id[section['id']]['inherited_tags'] == []
+    assert by_id[first['id']]['inherited_tags'] == ['garden', 'house']
+    assert by_id[child['id']]['inherited_tags'] == ['garden', 'house', 'reading']
+    assert by_id[first['id']]['tags'] == []
+    unfiltered = {row['id']: row for day in client.get('/api/journal').json()['days'] for row in day['notes']}
+    assert unfiltered[before['id']]['inherited_tags'] == []
+    assert unfiltered[after['id']]['inherited_tags'] == []
+    assert unfiltered[closing['id']]['inherited_tags'] == []
+    assert client.get('/api/tags').json() == [
+        {'name': 'garden', 'note_count': 4, 'task_count': 0},
+        {'name': 'house', 'note_count': 4, 'task_count': 0},
+        {'name': 'reading', 'note_count': 2, 'task_count': 0},
+    ]
+    assert {row['id'] for row in client.get('/api/search?q=%23house').json()['results']} == {section['id'], first['id'], parent['id'], child['id']}
+
+
+def test_completed_task_tree_inside_a_section_inherits_its_tags(client):
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).date().isoformat()
+    note(client, '# shipping #work', ['work'], date=today)
+    task = client.post('/api/tasks', json={'content': 'Ship it'}).json()
+    sub = client.post('/api/tasks', json={'content': 'Write the notes', 'parent_id': task['id']}).json()
+    client.post(f"/api/tasks/{sub['id']}/complete")
+    day = client.get('/api/journal?tag=work').json()['days'][0]
+    assert {row['id'] for row in day['tasks']} == {task['id'], sub['id']}
+    assert {row['id']: row['inherited_tags'] for row in day['tasks']} == {task['id']: ['work'], sub['id']: ['work']}
+    assert client.get('/api/tags').json() == [{'name': 'work', 'note_count': 1, 'task_count': 2}]
+
+
+def test_section_rows_cannot_hold_nested_bullets(client):
+    section = note(client, '# fence #garden', ['garden'])
+    response = client.post('/api/notes', json={'date': '2026-09-15', 'content': 'Nested', 'parent_id': section['id']})
+    assert response.status_code == 409
+    row = note(client, 'A root row')
+    moved = client.post('/api/document/edit', json={'changes': [{'kind': 'notes', 'id': row['id'], 'move': True, 'parent_id': section['id']}]})
+    assert moved.status_code == 409
+    assert client.get('/api/journal?on=2026-09-15').json()['days'][0]['notes'][1]['parent_id'] is None
+
+
+def test_untitled_section_row_needs_a_tag(client):
+    assert client.post('/api/notes', json={'date': '2026-09-15', 'content': '#'}).status_code == 422
+    assert client.post('/api/notes', json={'date': '2026-09-15', 'content': '# '}).status_code == 422
+    tagged = client.post('/api/notes', json={'date': '2026-09-15', 'content': '# #garden', 'tags': ['garden']})
+    assert tagged.status_code == 201
+    row = note(client, 'Inside the untitled section')
+    assert client.get('/api/journal?tag=garden&on=2026-09-15').json()['days'][0]['notes'][1]['id'] == row['id']
+
+
+def test_agent_journal_reports_inherited_tags_and_matches_through_them(client):
+    before, section, first, parent, child, closing, after = section_day(client)
+    data = client.get('/api/agent/journal', params={'start': '2026-09-15', 'end': '2026-09-15', 'tag': 'garden'}).json()
+    bullets = {row['id']: row for row in data['days'][0]['bullets']}
+    assert set(bullets) == {section['id'], first['id'], parent['id']}
+    assert bullets[first['id']]['matched'] is True
+    assert bullets[first['id']]['inherited_tags'] == ['garden', 'house']
+    assert bullets[parent['id']]['children'][0]['inherited_tags'] == ['garden', 'house', 'reading']
+    markdown = client.get('/journal.md', params={'start': '2026-09-15', 'end': '2026-09-15', 'tag': 'garden'}).text
+    assert '"inherited_tags": ["garden", "house"]' in markdown

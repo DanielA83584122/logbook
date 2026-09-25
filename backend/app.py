@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.background import BackgroundTask
 
 from .db import connection, ensure_day, initialize
-from .tags import bullet_dict, list_tags, matching_ids, normalize_tag, normalize_tags
+from .tags import bullet_dict, empty_content, inherited_tags, list_tags, matching_ids, normalize_tag, normalize_tags
 from .stats import EMPTY_TOTALS, daily_totals, parse, slices, stamp
 from .hierarchy import descendants, next_position, place, remove_preserving_children, validate_parent
 from .tasks import visible_tasks
@@ -136,7 +136,7 @@ class Content(BaseModel):
 
     @model_validator(mode="after")
     def nonempty(self):
-        if not self.content.strip() and not self.tags:
+        if empty_content(self.content) and not self.tags:
             raise ValueError("A bullet needs text or a tag.")
         return self
 
@@ -353,8 +353,9 @@ def journal(timezone: str = "UTC", before: CalendarDate | None = None, tag: str 
         dates.add(today)
         if not tag:
             dates.update(calendar_days)
-        note_ids = matching_ids(db, "notes", tag) if tag else None
-        task_ids = set(matching_ids(db, "tasks", tag)) if tag else None
+        inherited = inherited_tags(db)
+        note_ids = matching_ids(db, "notes", tag, inherited) if tag else None
+        task_ids = set(matching_ids(db, "tasks", tag, inherited)) if tag else None
         if note_ids is not None:
             all_ids = [*note_ids, *task_ids]
             dates = {r[0] for r in db.execute("SELECT DISTINCT days.date FROM days JOIN entries ON entries.day_id = days.id WHERE entries.id IN (SELECT value FROM json_each(?))", (json.dumps(all_ids),))}
@@ -368,7 +369,7 @@ def journal(timezone: str = "UTC", before: CalendarDate | None = None, tag: str 
             for row in db.execute(f"SELECT entries.*, days.date FROM entries JOIN days ON entries.day_id = days.id WHERE days.date IN ({placeholders}) ORDER BY entries.position, entries.id", selected):
                 included = note_ids is None or row['kind'] == 'note' and row['id'] in note_ids or row['kind'] == 'task' and row['id'] in task_ids
                 if included:
-                    item = {**bullet_dict(row), 'kind': 'notes' if row['kind'] == 'note' else 'tasks'}
+                    item = {**bullet_dict(row), 'kind': 'notes' if row['kind'] == 'note' else 'tasks', 'inherited_tags': inherited.get(row['id'], [])}
                     entries.setdefault(row['date'], []).append(item)
         days = []
         for d in selected:
@@ -379,11 +380,11 @@ def journal(timezone: str = "UTC", before: CalendarDate | None = None, tag: str 
                          "entries": day_entries,
                          "events": calendar_days.get(d, []),
                          **totals.get(d, EMPTY_TOTALS)})
-        tasks = visible_tasks(db)
+        tasks = [{**task, 'inherited_tags': inherited.get(task['id'], [])} for task in visible_tasks(db)]
         if task_ids is not None:
             tasks = [task for task in tasks if task["id"] in task_ids]
         active = next((session_dict(s, now) for s in sessions if s["ended_at"] is None), None)
-        return {"today": today, "content_format": "markdown", "tag": normalize_tag(tag) if tag else None, "tags": list_tags(db), "days": days, "tasks": tasks, "active_session": active,
+        return {"today": today, "content_format": "markdown", "tag": normalize_tag(tag) if tag else None, "tags": list_tags(db, inherited), "days": days, "tasks": tasks, "active_session": active,
                 "server_time": stamp(now), "next_cursor": selected[-1] if len(ordered) > limit else None}
 
 
@@ -541,8 +542,9 @@ def search(q: Annotated[str, Query(min_length=1, max_length=200)],
             "SELECT entries.*, days.date FROM entries JOIN days ON entries.day_id = days.id WHERE entries.kind = 'task' ORDER BY days.date DESC, entries.position, entries.id")]
         active = [{**bullet_dict(r), 'kind': 'tasks', 'date': None} for r in db.execute(
             "SELECT * FROM entries WHERE kind = 'task' AND day_id IS NULL ORDER BY position, id")]
-        rows = active + archived + rows
-        matches = [r for r in rows if terms and all(term in (r['content'] + ' ' + ' '.join('#' + tag for tag in r['tags'])).casefold() for term in terms)]
+        inherited = inherited_tags(db)
+        rows = [{**r, 'inherited_tags': inherited.get(r['id'], [])} for r in active + archived + rows]
+        matches = [r for r in rows if terms and all(term in (r['content'] + ' ' + ' '.join('#' + tag for tag in [*r['tags'], *r['inherited_tags']])).casefold() for term in terms)]
         return {'results': matches[offset:offset + limit], 'next_offset': offset + limit if len(matches) > offset + limit else None}
 
 

@@ -8,7 +8,7 @@ from markdown_it import MarkdownIt
 from pydantic import BaseModel, Field
 
 from .stats import parse, slices, stamp
-from .tags import bullet_dict
+from .tags import bullet_dict, inherited_tags
 from .tasks import visible_tasks
 
 
@@ -43,8 +43,9 @@ class AgentBullet(BaseModel):
     kind: Literal['note', 'task']
     parent_id: int | None
     position: int
-    content_markdown: str = Field(description="Original stored Markdown, without tag metadata.")
-    tags: list[str]
+    content_markdown: str = Field(description="Original stored Markdown, without tag metadata. A root note starting with `# ` is a section row.")
+    tags: list[str] = Field(description="Tags stored on this bullet.")
+    inherited_tags: list[str] = Field(default_factory=list, description="Tags this bullet carries from the section row above it on its date, or from its ancestors, without holding them itself.")
     links: list[AgentLink]
     matched: bool = Field(description="True for a direct filter match; false for included ancestor or descendant context.")
     created_at: str
@@ -115,7 +116,8 @@ def parsed_content(content):
     return ''.join(text), links
 
 
-def bullet_tree(rows, kind, tag, query):
+def bullet_tree(rows, kind, tag, query, inherited=None):
+    inherited = inherited or {}
     children = defaultdict(list)
     by_id = {row['id']: row for row in rows}
     parsed = {row['id']: parsed_content(row['content']) for row in rows}
@@ -124,7 +126,7 @@ def bullet_tree(rows, kind, tag, query):
         children[row['parent_id']].append(row)
         text, links = parsed[row['id']]
         searchable = '\n'.join([row['content'], text, *(link['url'] for link in links)]).casefold()
-        if (not tag or tag in row['tags']) and (not query or query.casefold() in searchable):
+        if (not tag or tag in row['tags'] or tag in inherited.get(row['id'], [])) and (not query or query.casefold() in searchable):
             matched.add(row['id'])
     included = set(matched)
     stack = list(matched)
@@ -142,7 +144,8 @@ def bullet_tree(rows, kind, tag, query):
     def node(row):
         return {
             'id': row['id'], 'kind': kind, 'parent_id': row['parent_id'], 'position': row['position'],
-            'content_markdown': row['content'], 'tags': row['tags'], 'links': parsed[row['id']][1],
+            'content_markdown': row['content'], 'tags': row['tags'], 'inherited_tags': inherited.get(row['id'], []),
+            'links': parsed[row['id']][1],
             'matched': row['id'] in matched, 'created_at': row['created_at'],
             'updated_at': row.get('updated_at'), 'completed_at': row.get('completed_at'),
             'source_task_id': row.get('source_task_id'),
@@ -159,6 +162,7 @@ def read_journal(db, query, zone, now):
     count = max(0, min(query.limit, (upper - start).days + 1))
     selected = [(upper - timedelta(days=i)).isoformat() for i in range(count)]
     notes_by_day, tasks_by_day, by_session_day = defaultdict(list), defaultdict(list), defaultdict(list)
+    inherited = inherited_tags(db)
     if selected:
         for row in db.execute('''SELECT entries.*, days.date FROM entries JOIN days ON entries.day_id = days.id
                                 WHERE days.date BETWEEN ? AND ? ORDER BY entries.position, entries.id''', (selected[-1], selected[0])):
@@ -185,8 +189,8 @@ def read_journal(db, query, zone, now):
         completed = [row['seconds_on_day'] for row in sessions if row['status'] == 'completed']
         running = sum(row['seconds_on_day'] for row in sessions if row['status'] == 'running')
         bullets = [
-            *bullet_tree(notes_by_day[day], 'note', query.tag, query.q),
-            *bullet_tree(tasks_by_day[day], 'task', query.tag, query.q),
+            *bullet_tree(notes_by_day[day], 'note', query.tag, query.q, inherited),
+            *bullet_tree(tasks_by_day[day], 'task', query.tag, query.q, inherited),
         ]
         bullets.sort(key=lambda row: (row['position'], row['id']))
         days.append({'date': day, 'bullets': bullets, 'focus': {
@@ -202,7 +206,7 @@ def read_journal(db, query, zone, now):
     next_query = {**query.model_dump(mode='json', exclude_none=True), 'before': cursor, 'tasks': 'none'}
     return AgentJournal(
         generated_at=stamp(now), timezone=zone.key, query=query, days=days,
-        tasks=bullet_tree(tasks, 'task', query.tag, query.q), next_cursor=cursor,
+        tasks=bullet_tree(tasks, 'task', query.tag, query.q, inherited), next_cursor=cursor,
         next_url='/api/agent/journal?' + urlencode(next_query) if cursor else None,
     )
 
@@ -223,7 +227,7 @@ def markdown_journal(journal):
             content = row.content_markdown.splitlines() or ['']
             lines.append(f'{indent}- {marker}{content[0]}')
             lines.extend(f'{indent}    {line}' for line in content[1:])
-            metadata = {'id': f'{row.kind}:{row.id}', 'parent_id': row.parent_id, 'tags': row.tags,
+            metadata = {'id': f'{row.kind}:{row.id}', 'parent_id': row.parent_id, 'tags': row.tags, 'inherited_tags': row.inherited_tags,
                         'matched': row.matched, 'source_task_id': row.source_task_id, 'completed_at': row.completed_at}
             lines.extend([f'{indent}    ', f'{indent}    Metadata: `{json.dumps(metadata, ensure_ascii=False)}`'])
             bullets(row.children, depth + 1)
