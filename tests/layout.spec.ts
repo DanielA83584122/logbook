@@ -187,24 +187,24 @@ test('swipe log loads earlier dates infinitely and preserves its active tag filt
   expect(requests.some(url => url.searchParams.has('before') && url.searchParams.get('tag') === 'work')).toBe(true);
 });
 
-test('journal ink wash appears only after content is clipped', async ({ page }) => {
+test('journal opacity wash remains above the first date at the top of the viewport', async ({ page }) => {
   await page.goto('/');
   const journal = page.getByTestId('log-scroll');
   const wash = page.getByTestId('log-top-ink-wash');
   await journal.evaluate(element => { element.scrollTop = 0; });
-  await expect(journal).not.toHaveAttribute('data-top-fade', 'true');
-  await expect(wash).toHaveCSS('opacity', '0');
-  await journal.evaluate(el => { el.scrollTop = 80; });
-  await expect(journal).toHaveAttribute('data-top-fade', 'true');
+  await expect(wash).toHaveCSS('opacity', '1');
   await expect(wash).toHaveCSS('backdrop-filter', 'none');
+  const firstDate = page.getByRole('button', { name: `Focus sessions for ${today}`, exact: true });
+  const [topDateBox, topWashBox] = await Promise.all([firstDate.boundingBox(), wash.boundingBox()]);
+  expect(topDateBox!.y).toBeGreaterThanOrEqual(topWashBox!.y + topWashBox!.height);
+  await journal.evaluate(el => { el.scrollTop = 80; });
+  await expect(wash).toHaveCSS('opacity', '1');
   await expect(wash).toHaveCSS('background-image', /linear-gradient/);
   expect((await wash.evaluate(element => getComputedStyle(element, '::after').backgroundImage)).match(/radial-gradient/g)?.length).toBe(5);
   const [journalBox, washBox] = await Promise.all([journal.boundingBox(), wash.boundingBox()]);
   expect(washBox!.x).toBeLessThan(journalBox!.x);
   expect(washBox!.x + washBox!.width).toBeGreaterThan(journalBox!.x + journalBox!.width);
   await page.screenshot({ path: '/tmp/still-log-top-ink-wash.png' });
-  await journal.evaluate(el => { el.scrollTop = 0; });
-  await expect(journal).not.toHaveAttribute('data-top-fade', 'true');
 });
 
 test('task checkmarks preview completion and reopening on hover', async ({ page }) => {

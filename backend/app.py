@@ -9,7 +9,7 @@ import tempfile
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -22,6 +22,7 @@ from .hierarchy import descendants, next_position, place, remove_preserving_chil
 from .tasks import visible_tasks
 from .history import snapshot, record, restore
 from .agent import AgentJournal, AgentQuery, DISCOVERY_LINKS, READ_HEADERS, markdown_journal, read_journal
+from .calendars import CalendarLoadError, calendar_host, calendar_name, drop_calendar, events_by_day, load_calendar, normalize_calendar_url
 
 
 def utcnow():
@@ -233,8 +234,82 @@ if os.environ.get('STILL_TEST_MODE') == '1':
             db.execute('DELETE FROM entries')
             db.execute('DELETE FROM sessions')
             db.execute('DELETE FROM days')
+            db.execute('DELETE FROM calendar_subscriptions')
             db.execute("DELETE FROM sqlite_sequence WHERE name = 'entries'")
+        drop_calendar()
         return Response(status_code=204)
+
+
+class CalendarSubscriptionInput(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+
+    @field_validator('url')
+    @classmethod
+    def clean_url(cls, value):
+        try:
+            return normalize_calendar_url(value)
+        except ValueError as error:
+            raise ValueError(str(error)) from error
+
+
+def calendar_subscription(row):
+    return {'id': row['id'], 'name': row['name'] or calendar_host(row['url']), 'host': calendar_host(row['url']),
+            'status': row['status'], 'error': row['error'], 'created_at': row['created_at']}
+
+
+MAX_CALENDAR_SUBSCRIPTIONS = 5
+
+
+@app.get('/api/calendars')
+def list_calendars():
+    with connection() as db:
+        return [calendar_subscription(row) for row in db.execute('SELECT * FROM calendar_subscriptions ORDER BY id')]
+
+
+def connect_calendar(calendar_id: int, url: str):
+    try:
+        calendar = load_calendar(url, force=True)
+        name, status, error = calendar_name(calendar, url), 'connected', None
+    except CalendarLoadError as failure:
+        name, status, error = calendar_host(url), 'error', str(failure)
+    with connection() as db:
+        db.execute('UPDATE calendar_subscriptions SET name = ?, status = ?, error = ? WHERE id = ?',
+                   (name, status, error, calendar_id))
+
+
+@app.post('/api/calendars', status_code=201)
+def add_calendar(body: CalendarSubscriptionInput, background_tasks: BackgroundTasks):
+    with connection() as db:
+        existing = db.execute('SELECT * FROM calendar_subscriptions WHERE url = ?', (body.url,)).fetchone()
+        if existing:
+            raise HTTPException(409, 'That calendar is already connected.')
+        if db.execute('SELECT COUNT(*) FROM calendar_subscriptions').fetchone()[0] >= MAX_CALENDAR_SUBSCRIPTIONS:
+            raise HTTPException(409, 'You can connect up to five calendars.')
+    with connection() as db:
+        try:
+            db.execute('BEGIN IMMEDIATE')
+            existing = db.execute('SELECT * FROM calendar_subscriptions WHERE url = ?', (body.url,)).fetchone()
+            if existing:
+                raise HTTPException(409, 'That calendar is already connected.')
+            if db.execute('SELECT COUNT(*) FROM calendar_subscriptions').fetchone()[0] >= MAX_CALENDAR_SUBSCRIPTIONS:
+                raise HTTPException(409, 'You can connect up to five calendars.')
+            cursor = db.execute("INSERT INTO calendar_subscriptions(url, name, status, created_at) VALUES (?, ?, 'connecting', ?)",
+                                (body.url, calendar_host(body.url), stamp(utcnow())))
+        except sqlite3.IntegrityError as error:
+            raise HTTPException(409, 'That calendar is already connected.') from error
+        row = db.execute('SELECT * FROM calendar_subscriptions WHERE id = ?', (cursor.lastrowid,)).fetchone()
+        background_tasks.add_task(connect_calendar, row['id'], row['url'])
+        return calendar_subscription(row)
+
+
+@app.delete('/api/calendars/{calendar_id}', status_code=204)
+def delete_calendar(calendar_id: int):
+    with connection() as db:
+        row = db.execute('SELECT * FROM calendar_subscriptions WHERE id = ?', (calendar_id,)).fetchone()
+        if row:
+            db.execute('DELETE FROM calendar_subscriptions WHERE id = ?', (calendar_id,))
+            drop_calendar(row['url'])
+    return Response(status_code=204)
 
 
 @app.get("/api/journal")
@@ -246,13 +321,21 @@ def journal(timezone: str = "UTC", before: CalendarDate | None = None, tag: str 
     except ValueError as error:
         raise HTTPException(422, str(error))
     now = utcnow()
-    today = now.astimezone(zone).date().isoformat()
+    today_date = now.astimezone(zone).date()
+    today = today_date.isoformat()
+    with connection() as db:
+        calendar_urls = [row['url'] for row in db.execute("SELECT url FROM calendar_subscriptions WHERE status = 'connected' ORDER BY id")]
+    calendar_end = on + timedelta(days=1) if on else before or today_date + timedelta(days=1)
+    calendar_start = on if on else calendar_end - timedelta(days=366 * 5)
+    calendar_days = events_by_day(calendar_urls, calendar_start, calendar_end, zone)
     with connection() as db:
         sessions = [dict(r) for r in db.execute("SELECT * FROM sessions ORDER BY started_at")]
         totals = daily_totals(sessions, zone, now)
         dates = {r["date"] for r in db.execute("SELECT date FROM days")}
         dates.update(totals)
         dates.add(today)
+        if not tag:
+            dates.update(calendar_days)
         note_ids = matching_ids(db, "notes", tag) if tag else None
         task_ids = set(matching_ids(db, "tasks", tag)) if tag else None
         if note_ids is not None:
@@ -277,6 +360,7 @@ def journal(timezone: str = "UTC", before: CalendarDate | None = None, tag: str 
             day_tasks = [row for row in day_entries if row['kind'] == 'tasks']
             days.append({"date": d, "notes": day_notes, "tasks": day_tasks,
                          "entries": day_entries,
+                         "events": calendar_days.get(d, []),
                          **totals.get(d, EMPTY_TOTALS)})
         tasks = visible_tasks(db)
         if task_ids is not None:

@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 module = importlib.import_module("backend.app")
+calendar_module = importlib.import_module("backend.calendars")
 NOW = datetime(2026, 9, 16, 18, tzinfo=timezone.utc)
 
 
@@ -55,6 +56,133 @@ def test_journal_starts_on_local_day_and_persists_notes(client):
     assert client.get("/api/journal?timezone=Asia/Tokyo").json()["days"][0]["notes"] == []
 
 
+def test_multiple_calendar_feeds_expand_events_and_live_deletions(client, monkeypatch):
+    first_url = 'https://calendar.example/one.ics'
+    second_url = 'https://calendar.example/two.ics'
+    first_feed = {'value': b'''BEGIN:VCALENDAR\r
+VERSION:2.0\r
+X-WR-CALNAME:Work calendar\r
+BEGIN:VEVENT\r
+UID:offsite\r
+DTSTART;VALUE=DATE:20260916\r
+DTEND;VALUE=DATE:20260917\r
+SUMMARY:Company offsite\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+UID:cancelled\r
+DTSTART:20260916T150000Z\r
+DTEND:20260916T153000Z\r
+SUMMARY:Cancelled standup\r
+STATUS:CANCELLED\r
+END:VEVENT\r
+BEGIN:VEVENT\r
+UID:planning\r
+DTSTART:20260916T160000Z\r
+DTEND:20260916T170000Z\r
+SUMMARY:Planning\r
+URL:https://zoom.us/j/12345\r
+END:VEVENT\r
+END:VCALENDAR\r
+'''}
+    second_feed = b'''BEGIN:VCALENDAR\r
+VERSION:2.0\r
+BEGIN:VEVENT\r
+UID:daily-sync\r
+DTSTART:20260915T190000Z\r
+DTEND:20260915T193000Z\r
+RRULE:FREQ=DAILY;COUNT=3\r
+SUMMARY:Daily sync\r
+DESCRIPTION:Join https://meet.google.com/abc-defg-hij\r
+END:VEVENT\r
+END:VCALENDAR\r
+'''
+
+    class FeedResponse:
+        status_code = 200
+        headers = {}
+
+        def __init__(self, content):
+            self.content = content
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setenv('STILL_CALENDAR_REFRESH_SECONDS', '0')
+    monkeypatch.setattr(calendar_module, '_assert_public_destination', lambda _url: None)
+    monkeypatch.setattr(calendar_module.httpx, 'get', lambda url, **_kwargs: FeedResponse(first_feed['value'] if url == first_url else second_feed))
+    calendar_module.drop_calendar()
+
+    first = client.post('/api/calendars', json={'url': first_url})
+    second = client.post('/api/calendars', json={'url': second_url})
+    assert first.status_code == second.status_code == 201
+    assert first.json()['status'] == second.json()['status'] == 'connecting'
+    accounts = client.get('/api/calendars').json()
+    assert [(item['name'], item['status']) for item in accounts] == [('Work calendar', 'connected'), ('calendar.example', 'connected')]
+
+    journal = client.get('/api/journal?timezone=America/Los_Angeles').json()
+    today = next(day for day in journal['days'] if day['date'] == '2026-09-16')
+    assert [event['title'] for event in today['events']] == ['Company offsite', 'Cancelled standup', 'Planning', 'Daily sync']
+    assert today['events'][0]['all_day'] is True
+    assert today['events'][1]['cancelled'] is True
+    assert today['events'][2]['url'] == 'https://zoom.us/j/12345'
+    assert today['events'][3]['url'] == 'https://meet.google.com/abc-defg-hij'
+    assert any(day['date'] == '2026-09-15' and day['events'][0]['title'] == 'Daily sync' for day in journal['days'])
+
+    first_feed['value'] = b'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n'
+    refreshed = client.get('/api/journal?timezone=America/Los_Angeles').json()
+    refreshed_today = next(day for day in refreshed['days'] if day['date'] == '2026-09-16')
+    assert [event['title'] for event in refreshed_today['events']] == ['Daily sync']
+
+    assert client.delete(f"/api/calendars/{second.json()['id']}").status_code == 204
+    assert client.get('/api/calendars').json() == [accounts[0]]
+
+
+def test_calendar_subscriptions_reject_private_network_urls(client):
+    calendar_module.drop_calendar()
+    response = client.post('/api/calendars', json={'url': 'https://127.0.0.1/private.ics'})
+    assert response.status_code == 201
+    assert response.json()['status'] == 'connecting'
+    failed = client.get('/api/calendars').json()[0]
+    assert failed['status'] == 'error'
+    assert failed['error'] == 'Calendar URLs cannot point to a private network.'
+
+
+def test_calendar_subscriptions_report_google_rate_limits(client, monkeypatch):
+    requests = {'count': 0}
+
+    class RateLimited:
+        status_code = 429
+        headers = {}
+        content = b'rate limited'
+
+    monkeypatch.setattr(calendar_module, '_assert_public_destination', lambda _url: None)
+    def rate_limited(*_args, **_kwargs):
+        requests['count'] += 1
+        return RateLimited()
+
+    monkeypatch.setattr(calendar_module.httpx, 'get', rate_limited)
+    response = client.post('/api/calendars', json={'url': 'https://calendar.google.com/calendar/ical/public/basic.ics'})
+    assert response.status_code == 201
+    assert response.json()['status'] == 'connecting'
+    failed = client.get('/api/calendars').json()[0]
+    assert failed['status'] == 'error'
+    assert failed['error'] == 'Google is temporarily rate-limiting this calendar feed. Try again in a few minutes.'
+    assert requests['count'] == 1
+
+
+def test_calendar_subscriptions_are_limited_to_five(client, monkeypatch):
+    monkeypatch.setattr(module, 'load_calendar', lambda _url, force=False: None)
+    monkeypatch.setattr(module, 'calendar_name', lambda _calendar, url: url.rsplit('/', 1)[-1])
+    responses = [client.post('/api/calendars', json={'url': f'https://calendar.example/public-{index}.ics'}) for index in range(5)]
+    assert all(response.status_code == 201 for response in responses)
+    sixth = client.post('/api/calendars', json={'url': 'https://calendar.example/public-6.ics'})
+    assert sixth.status_code == 409
+    assert sixth.json()['detail'] == 'You can connect up to five calendars.'
+    assert len(client.get('/api/calendars').json()) == 5
+    assert client.delete(f"/api/calendars/{responses[0].json()['id']}").status_code == 204
+    assert client.post('/api/calendars', json={'url': 'https://calendar.example/public-6.ics'}).status_code == 201
+
+
 def test_authentication_flag_defaults_off_and_can_protect_the_api(client, monkeypatch):
     assert client.get('/api/export').status_code == 200
     assert client.delete('/api/test/reset').status_code == 404
@@ -92,7 +220,7 @@ def test_backup_download_is_a_complete_consistent_sqlite_file(client, tmp_path, 
     downloaded.write_bytes(response.content)
     with sqlite3.connect(downloaded) as db:
         assert db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 8
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 11
         assert db.execute('SELECT content FROM entries WHERE id = ?', (note['id'],)).fetchone()[0] == 'Back me up'
         assert db.execute('SELECT COUNT(*) FROM sessions').fetchone()[0] == 1
 

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import styled, { css, keyframes } from 'styled-components';
-import { ChartNoAxesColumn, Github, Moon, Sun, Timer as TimerIcon } from 'lucide-react';
+import { CalendarDays, ChartNoAxesColumn, Github, Moon, Sun, Timer as TimerIcon } from 'lucide-react';
 import { api, errorMessage, localDate, recoverEarlierDrafts, timerDuration } from './api';
 import { FocusSound } from './audio';
 import type { Day, JournalData, Session } from './types';
@@ -18,6 +18,7 @@ const REPOSITORY_URL = import.meta.env.VITE_REPOSITORY_URL || 'https://github.co
 const SessionsModal = lazy(() => import('./components/SessionsModal').then(module => ({ default: module.SessionsModal })));
 const StatsModal = lazy(() => import('./components/StatsModal').then(module => ({ default: module.StatsModal })));
 const SearchModal = lazy(() => import('./components/SearchModal').then(module => ({ default: module.SearchModal })));
+const CalendarModal = lazy(() => import('./components/CalendarModal').then(module => ({ default: module.CalendarModal })));
 
 const Page = styled.div<{ $focusing: boolean }>`
   --current-page-paper: ${({ $focusing }) => $focusing ? 'var(--page-focus-paper)' : 'var(--page-paper)'};
@@ -91,6 +92,7 @@ const ThemeGlyph = styled.span<{ $shown: boolean }>`
   transition: opacity 150ms cubic-bezier(.2,0,0,1), scale 150ms cubic-bezier(.2,0,0,1), filter 150ms cubic-bezier(.2,0,0,1);
 `;
 const StatsToggle = styled.button`${pageControl}`;
+const CalendarToggle = styled.button`${pageControl}`;
 const SidebarControls = styled.div`display: flex; align-items: center;`;
 const TimerChrome = styled.div`
   position: fixed; top: 20px; right: 24px; z-index: 43;
@@ -184,14 +186,13 @@ const LogFrame = styled.div`
 `;
 const LogViewport = styled.div`
   flex: 1; min-height: min(240px, max(64px, calc(100dvh - 160px))); overflow-y: auto; overflow-x: hidden; overscroll-behavior-y: contain;
-  padding: 4px 12px 24px 8px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent;
-  @media ${compactViewport} { min-height: 0; padding: 0 2px 10px 0; }
+  padding: 30px 12px 24px 8px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent;
+  @media ${compactViewport} { min-height: 0; padding: 24px 2px 10px 0; }
 `;
-const LogEdgeWash = styled.div<{ $shown: boolean }>`
+const LogEdgeWash = styled.div`
   position: absolute; z-index: 7; top: -2px; left: -24px; right: -24px; height: 30px; pointer-events: none;
-  opacity: ${({ $shown }) => $shown ? 1 : 0};
+  opacity: 1;
   background: linear-gradient(to bottom, var(--current-page-paper) 0%, color-mix(in srgb, var(--current-page-paper) 72%, transparent) 34%, transparent 82%);
-  transition: opacity 140ms ease-out;
   &::after {
     content: ''; position: absolute; inset: 0;
     background-image:
@@ -204,6 +205,7 @@ const LogEdgeWash = styled.div<{ $shown: boolean }>`
     -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000d 40%, transparent 100%);
     opacity: .88;
   }
+  @media ${compactViewport} { height: 24px; }
 `;
 const Toast = styled.div`position: fixed; bottom: max(25px, calc(env(safe-area-inset-bottom) + 12px)); left: 50%; transform: translateX(-50%); z-index: 30; max-width: min(540px, calc(100% - 32px)); display: flex; align-items: center; gap: 12px; padding: 7px 8px 7px 19px; background: var(--surface); border-radius: 12px; box-shadow: 0 0 0 1px #00000007, 0 4px 24px #31392b19; font-size: 12px;`;
 const QuietStatus = styled.div`
@@ -250,6 +252,7 @@ export default function App({ locked = false, load = !locked, onReady, onLoadErr
   const [message, setMessage] = useState('');
   const [now, setNow] = useState(Date.now());
   const [statsOpen, setStatsOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [soundOpen, setSoundOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -259,7 +262,6 @@ export default function App({ locked = false, load = !locked, onReady, onLoadErr
   const mobilePager = useRef<HTMLDivElement>(null);
   const quietStatus = useRef<HTMLDivElement>(null);
   const quietStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [logScrolled, setLogScrolled] = useState(false);
   const [sessionsDate, setSessionsDate] = useState<string | null>(null);
   const [timerBusy, setTimerBusy] = useState(false);
   const [timerPulse, setTimerPulse] = useState(false);
@@ -469,6 +471,7 @@ export default function App({ locked = false, load = !locked, onReady, onLoadErr
 
   const sidebarControls = <SidebarControls role="group" aria-label="Page controls" data-focus-chrome>
     {REPOSITORY_URL && <RepositoryLink href={REPOSITORY_URL} target="_blank" rel="noopener noreferrer" aria-label="GitHub repository" title="GitHub"><Github size={15} aria-hidden="true" /></RepositoryLink>}
+    <CalendarToggle aria-label="Manage calendars" title="Calendars" onClick={() => setCalendarOpen(true)}><CalendarDays size={15} aria-hidden="true" /></CalendarToggle>
     <StatsToggle aria-label="Open focus statistics" title="Statistics" onClick={() => setStatsOpen(true)}><ChartNoAxesColumn size={15} aria-hidden="true" /></StatsToggle>
     <ShortcutToggle aria-label="Keyboard shortcuts" title="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)}><ShortcutGlyph data-shortcut-icon aria-hidden="true" /></ShortcutToggle>
     <ThemeToggle role="switch" aria-label="Night mode" aria-checked={night}
@@ -504,11 +507,10 @@ export default function App({ locked = false, load = !locked, onReady, onLoadErr
           setMobileView(previous => previous === next ? previous : next);
         }}>
           <MobilePane id="mobile-panel-todos" role="tabpanel" aria-labelledby="mobile-tab-todos" aria-hidden={mobileView !== 'todos'} inert={mobileView !== 'todos'}>{data ? <Todos key={data.tag ?? 'all'} tasks={data.tasks} refresh={refresh} notify={notify} /> : null}</MobilePane>
-          <MobilePane id="mobile-panel-log" role="tabpanel" aria-labelledby="mobile-tab-log" aria-hidden={mobileView !== 'log'} inert={mobileView !== 'log'}>{data && <LogFrame><LogViewport ref={logViewport} data-testid="log-scroll" data-top-fade={logScrolled || undefined}
-            onScroll={event => { const clipped = event.currentTarget.scrollTop > 12; setLogScrolled(previous => previous === clipped ? previous : clipped); }}>
+          <MobilePane id="mobile-panel-log" role="tabpanel" aria-labelledby="mobile-tab-log" aria-hidden={mobileView !== 'log'} inert={mobileView !== 'log'}>{data && <LogFrame><LogViewport ref={logViewport} data-testid="log-scroll">
             <Journal key={data.tag ?? 'all'} scrollRoot={logViewport} days={data.days} today={data.today} refresh={refresh} notify={notify} openSessions={setSessionsDate}
               sessionsEnabled={false} showHistory secondsForDay={secondsForDay} hasMore={!!data.next_cursor} loadMore={loadMore} />
-          </LogViewport><LogEdgeWash data-testid="log-top-ink-wash" $shown={logScrolled} aria-hidden="true" /></LogFrame>}</MobilePane>
+          </LogViewport><LogEdgeWash data-testid="log-top-ink-wash" aria-hidden="true" /></LogFrame>}</MobilePane>
           <MobilePane id="mobile-panel-tags" role="tabpanel" aria-labelledby="mobile-tab-tags" aria-hidden={mobileView !== 'tags'} inert={mobileView !== 'tags'}>
             <MobileTags>
               <MobileTagCollection aria-label="Filter by tag">
@@ -524,14 +526,10 @@ export default function App({ locked = false, load = !locked, onReady, onLoadErr
         {!data ? <ConnectionState><Muted>{error || 'Loading…'}</Muted>{error && <Button onClick={() => { setError(''); void refresh().catch(e => setError(errorMessage(e))); }}>Retry</Button>}</ConnectionState> :
           <Todos key={data.tag ?? 'all'} tasks={data.tasks} refresh={refresh} notify={notify} />}
       {data &&
-        <LogFrame><LogViewport ref={logViewport} data-testid="log-scroll" data-top-fade={logScrolled || undefined}
-          onScroll={event => {
-            const clipped = event.currentTarget.scrollTop > 12;
-            setLogScrolled(previous => previous === clipped ? previous : clipped);
-          }}>
+        <LogFrame><LogViewport ref={logViewport} data-testid="log-scroll">
         <Journal key={data.tag ?? 'all'} scrollRoot={logViewport} days={data.days} today={data.today} refresh={refresh} notify={notify} openSessions={setSessionsDate} secondsForDay={secondsForDay} hasMore={!!data.next_cursor} loadMore={loadMore} />
         {error && <TextButton onClick={() => void refresh().catch(e => notify(errorMessage(e)))}>Connection lost · retry</TextButton>}
-        </LogViewport><LogEdgeWash data-testid="log-top-ink-wash" $shown={logScrolled} aria-hidden="true" /></LogFrame>
+        </LogViewport><LogEdgeWash data-testid="log-top-ink-wash" aria-hidden="true" /></LogFrame>
       }
       </>}
     </Main>
@@ -539,6 +537,7 @@ export default function App({ locked = false, load = !locked, onReady, onLoadErr
       {sessionsDate && <SessionsModal date={sessionsDate} onClose={() => setSessionsDate(null)} onChange={refresh} />}
       {statsOpen && <StatsModal open onClose={() => setStatsOpen(false)} />}
       {searchOpen && <SearchModal open onClose={() => setSearchOpen(false)} onSelect={jumpTo} />}
+      {calendarOpen && <CalendarModal open onClose={() => setCalendarOpen(false)} onChange={refresh} />}
     </Suspense>
     <Modal open={soundOpen} onClose={() => setSoundOpen(false)} title="Focus sound" compact><SoundMenu>
       <TextButton aria-label={audible ? 'Mute focus sound' : 'Play focus sound'} onClick={() => void toggleSound()}>{audible ? 'Mute' : 'Play sound'}</TextButton>

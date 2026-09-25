@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
-import styled from 'styled-components';
+import styled, { css } from 'styled-components';
 import { dateObject, duration, errorMessage } from '../api';
-import type { Day, Task } from '../types';
+import type { CalendarEvent, Day, Task } from '../types';
 import { TextButton } from '../styles';
 import { Outline } from './Outline';
 import { useJournalContext } from '../JournalContext';
@@ -33,6 +33,36 @@ const DateLabel = styled.time`
   @media ${compactViewport} { margin-left: 0; }
 `;
 const FocusTotal = styled.span`font-size: 12px; line-height: 24px; color: var(--muted); font-variant-numeric: tabular-nums;`;
+const EventList = styled.ul`
+  list-style: none; padding: 0; margin: 0 0 0 20px;
+  @media ${compactViewport} { margin-left: 0; }
+`;
+const EventRow = styled.li`
+  min-width: 0; display: flex; align-items: flex-start; min-height: 28px;
+  @media(pointer: coarse) { min-height: 44px; }
+  @media ${compactViewport} { min-height: 36px; }
+`;
+const EventMarker = styled.span`
+  display: flex; width: 40px; min-width: 40px; height: 28px; align-items: center; justify-content: center;
+  color: color-mix(in srgb, var(--link), var(--paper) 38%);
+  &::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; translate: 0 -1px; }
+  :root[data-theme='night'] & { color: color-mix(in srgb, var(--link), #000 12%); }
+  @media(pointer: coarse) { width: 44px; min-width: 44px; height: 44px; }
+  @media ${compactViewport} { width: 36px; min-width: 36px; height: 36px; }
+`;
+const eventEntry = css<{ $cancelled: boolean }>`
+  position: relative; min-width: 0; min-height: 28px; padding: 4px 0; border: 0; background: transparent;
+  color: var(--ink); font-size: 15px; line-height: 1.2; overflow-wrap: anywhere;
+  text-decoration: ${({ $cancelled }) => $cancelled ? 'line-through' : 'none'};
+  @media(pointer: coarse) { min-height: 44px; padding: 10px 0; font-size: 16px; line-height: 1.35; }
+  @media ${compactViewport} { min-height: 36px; padding: 6px 0; line-height: 1.3; }
+`;
+const EventText = styled.span<{ $cancelled: boolean }>`${eventEntry};`;
+const EventLink = styled.a<{ $cancelled: boolean }>`
+  ${eventEntry}; color: color-mix(in srgb, var(--link), #000 12%);
+  &:hover { text-decoration: ${({ $cancelled }) => $cancelled ? 'line-through underline' : 'underline'}; text-underline-offset: 2px; }
+`;
+const EventMeta = styled.span`color: inherit;`;
 const Body = styled.div`
   min-width: 0; padding-left: 20px; flex: 1; display: flex; flex-direction: column;
   > [data-outline-kind='tasks'] { flex: 1; display: flex; flex-direction: column; }
@@ -44,6 +74,16 @@ const HistoryEnd = styled.div<{ $showHistory: boolean }>`
   @media ${compactViewport} { display: ${({ $showHistory }) => $showHistory ? 'flex' : 'none'}; padding: 8px 0; }
 `;
 type Actions = { refresh: () => Promise<void>; notify: (message: string) => void };
+
+function eventText(event: CalendarEvent) {
+  return `${event.title} ${eventDetail(event)}`;
+}
+
+function eventDetail(event: CalendarEvent) {
+  if (event.all_day) return '(all day)';
+  const format = (value: string) => new Date(value).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return `(${format(event.start)} – ${format(event.end)})`;
+}
 
 export function Todos({ tasks, refresh, notify }: { tasks: Task[] } & Actions) {
   const [folded, setFolded] = useState(false);
@@ -93,7 +133,7 @@ export function Journal({ days, today, refresh, notify, openSessions, sessionsEn
       const targeted = target && entries.some(entry => entry.kind === target.kind && entry.id === target.id);
       return <DayBlock key={day.date} $today={isToday || !!targeted} $showHistory={showHistory} aria-label={`${title}, ${day.date}`}
         onClick={event => {
-          if ((event.target as Element).closest('button, a, input, [contenteditable], [role="group"]') || window.getSelection()?.toString()) return;
+          if ((event.target as Element).closest('button, a, input, [contenteditable], [role="group"], [data-calendar-event]') || window.getSelection()?.toString()) return;
           window.dispatchEvent(new CustomEvent('still-new-bullet', { detail: `still-draft-${day.date}` }));
         }}>
         <DateHead type="button" data-focus-chrome aria-label={`Focus sessions for ${day.date}`} disabled={!sessionsEnabled}
@@ -101,6 +141,20 @@ export function Journal({ days, today, refresh, notify, openSessions, sessionsEn
           <DateLabel dateTime={day.date}>{date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</DateLabel>
           {seconds >= 1 && <FocusTotal>{duration(seconds, true)}</FocusTotal>}
         </DateHead>
+        {!!day.events?.length && <EventList aria-label={`Calendar events for ${day.date}`}>
+          {day.events.map(event => {
+            const text = eventText(event);
+            const content = <>{event.title} <EventMeta>{eventDetail(event)}</EventMeta></>;
+            return <EventRow key={event.id} data-calendar-event>
+              <EventMarker data-calendar-marker aria-hidden="true" />
+              {event.url
+                ? <EventLink $cancelled={event.cancelled} href={event.url} target="_blank" rel="noopener noreferrer"
+                    aria-label={event.cancelled ? `${text}, cancelled` : text}>{content}</EventLink>
+                : <EventText $cancelled={event.cancelled} role="group"
+                    aria-label={event.cancelled ? `${text}, cancelled` : text}>{content}</EventText>}
+            </EventRow>;
+          })}
+        </EventList>}
         <Body>
           <Outline kind="mixed" items={entries} day={day.date} archived composer={isToday} refresh={refresh} notify={notify} />
         </Body>

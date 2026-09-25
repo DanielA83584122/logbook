@@ -63,6 +63,14 @@ I personally like to live and die honestly. If you don't want your lack of actio
     <img width="883" height="598" alt="image" src="https://github.com/user-attachments/assets/6653ef6c-7017-4691-bebb-3b5c0fdc89a3" />
 
 
+#### calendar context
+  - Open the calendar icon in the sidebar and paste public or private ICS/webcal subscription URLs, including public calendars you do not own.
+  - Add up to five calendars without redeploying or configuring Render environment variables.
+  - For Google Calendar, use the desktop website: Settings → click the calendar’s name → Integrate calendar → Secret address in iCal format. A public address appears only when the owner makes the calendar public; sharing with named people does not make it public. Google does not expose these addresses in the mobile app, and Workspace administrators can restrict them.
+  - Events appear as read-only pills beneath their date, ordered by start time. All-day and cancelled events remain explicit; deleted feed events disappear after refresh.
+  - Zoom, Meet, Teams, and other attached HTTPS links make the event pill clickable.
+
+
 #### text-editor esque formatting and shortcuts
   - all text editor navigation and shortcuts work. in fact I improved on them a bit (linking, for example)
   - Also, i added one: Cmd + Shift + C formats something as code
@@ -86,6 +94,7 @@ I personally like to live and die honestly. If you don't want your lack of actio
 - Refreshing or closing the page does not stop a running timer. Reopening it restores elapsed time from the server. Browsers require a gesture to resume audio after a reload: open the timer’s sound menu and choose Play sound.
 - Total focused time appears beside each date, including seconds and the running session (for example, `30s`, `2m 05s`, or `1h 02m 05s`). Zero-second totals are hidden. Click the date or total to open sessions: the date and total form the heading, followed by borderless start-time and duration rows. Click a time to edit; Enter saves. Editing preserves the original start date, and changing only the duration preserves the original start seconds. The small animated × deletes a session and updates the total; + at the bottom adds one. Click outside or press Escape to close. Statistics open separately from the icon beside the theme toggle.
 - Today appears automatically at local midnight, including when the page resumes after sleep. Historical days appear newest first and load in pages of 14 dates as you reach the bottom of the logbook. Background refreshes update the current page and retain already-loaded history.
+- Private ICS calendars are managed from the calendar icon in the sidebar. Calendar-only dates participate in normal journal pagination. Events are read-only pills ordered by local start time; all-day events say “all day,” explicit cancellations are struck through, and events removed from a feed disappear after the next ten-minute refresh. Attached HTTPS meeting links open from the pill. Calendar URLs remain server-side in SQLite and are never stored as journal entries.
 - The document uses Söhne at a light weight, a dusty cool gray background, and wider side margins. The compact ringed timer is always fixed at the top right with its full incrementing time beside it; it retains the pulse and switches to link-coordinated blue in light mode or teal in night mode while running. While the timer runs, light mode noticeably darkens the paper and the complete document surface—text, markers, links, and pills move together—while leaving the timer crisp. The to-do list sits above the independently scrolling logbook. Click “to do” to fold or reopen it. Margins shrink progressively on smaller windows; nested indentation also shrinks to preserve readable lines.
 - Height chooses the document mode independently of width. Viewports taller than 480 px always stack the to-do list above the log, even on very narrow phones. Viewports 480 px tall or shorter use three horizontally swipable pages, represented by three pagination dots level with the timer; the middle log page opens first. Mobile spacing contracts proportionally across rows, dates, panels, tags, and page edges. The tags page carries the sidebar’s tag grouping and utility controls. Sidebar tags are hollow outlined pills; a selected tag uses a blue outline and text in light mode (teal in night mode) and filters both other pages, while “all” clears the filter. Entry-level inline tags keep their existing treatment. The log page shows every date and automatically loads earlier pages as the reader approaches the bottom, including under a tag filter. Width only controls chrome in the stacked layout: at 640 px or narrower the timer is the sole header control and the left sidebar is hidden; on wider screens, hovering the left margin opens the tag sidebar, with repository, statistics, keyboard-help, and theme controls directly beneath the tag pills. Today’s writing area uses nearly the full screen width on narrow screens.
 - The statistics icon next to the theme toggle opens 7- or 30-day summaries. Choose all calendar days or days with focus as the averaging denominator. Statistics explicitly include completed sessions only. Exact durations and averages display seconds; averages are floored to whole seconds. Zero days have zero-height bars and the scale follows recorded focus.
@@ -146,7 +155,7 @@ Override the runtime location with `STILL_DB_PATH`. Custom locations start empty
 
 After editing the fictional starter content in `scripts/build_seed.py`, rebuild the tracked database with `python -m scripts.build_seed`.
 
-SQLite fits a personal logbook: no cloud account, no secrets to configure, and a portable database. Foreign keys, WAL mode, transactional writes, and a unique index allowing only one running session protect consistency. Numbered, transactional schema upgrades run at startup; the current schema is version 8. Entry IDs use SQLite AUTOINCREMENT so a deleted ID is never assigned to a different entry. The legacy migration preserves note IDs, remaps the former task ID space, and retains each list's saved order.
+SQLite fits a personal logbook: no cloud account, no deployment-time secrets to configure, and a portable database. Foreign keys, WAL mode, transactional writes, and a unique index allowing only one running session protect consistency. Numbered, transactional schema upgrades run at startup; the current schema is version 11. Entry IDs use SQLite AUTOINCREMENT so a deleted ID is never assigned to a different entry. The legacy migration preserves note IDs, remaps the former task ID space, and retains each list's saved order.
 
 The normalized tables are:
 
@@ -155,6 +164,7 @@ The normalized tables are:
 | `days` | Unique journal date and creation timestamp |
 | `entries` | Note/task kind, optional day, Markdown content, JSON tags, parent entry, shared sibling position, timestamps, retry ID |
 | `sessions` | UTC start and end timestamps; a null end means running |
+| `calendar_subscriptions` | Public/private ICS URLs, feed-provided names, and background connection status |
 | `document_operations` | IDs, timestamps, and undo/redo state for document transactions |
 | `document_changes` | Relational before/after row images for each changed bullet; Markdown and tag arrays retain their normal representation |
 
@@ -172,7 +182,7 @@ Export a normalized snapshot with `GET /api/export`. For a complete SQLite backu
 sqlite3 data/still.sqlite3 ".backup 'still-backup.sqlite3'"
 ```
 
-The download icon in focus statistics performs the same kind of consistent online backup through `GET /api/backup`. The response is a complete `.sqlite3` file that can be opened independently in SQLite, DB Browser, TablePlus, Datasette, Python, or R. Authentication protects this endpoint whenever `STILL_AUTH_ENABLED=true`.
+The download icon in focus statistics performs the same kind of consistent online backup through `GET /api/backup`. The response is a complete `.sqlite3` file that can be opened independently in SQLite, DB Browser, TablePlus, Datasette, Python, or R. Backups include private calendar subscription URLs, so handle them as secrets. Authentication protects this endpoint whenever `STILL_AUTH_ENABLED=true`.
 
 Authentication is available but disabled by default. With `STILL_AUTH_ENABLED=true`, the app opens behind a password gate and successful entry creates an HTTP-only session cookie; there is no username. Bearer authentication with the same password remains available for API clients. While authentication is disabled, an internet deployment is public: anyone with its URL can read and modify the journal. Render supplies HTTPS at the edge, but HTTPS alone does not restrict access.
 

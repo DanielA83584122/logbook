@@ -21,9 +21,17 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS one_running_session ON sessions((1)) WHERE ended_at IS NULL;
 CREATE INDEX IF NOT EXISTS sessions_start ON sessions(started_at);
+CREATE TABLE IF NOT EXISTS calendar_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT NOT NULL UNIQUE,
+    name TEXT,
+    status TEXT NOT NULL DEFAULT 'connected' CHECK(status IN ('connecting', 'connected', 'error')),
+    error TEXT,
+    created_at TEXT NOT NULL
+);
 """
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 11
 
 ENTRY_SCHEMA = """
 CREATE TABLE IF NOT EXISTS entries (
@@ -290,6 +298,14 @@ def initialize():
         db.execute('PRAGMA journal_mode = WAL')
         db.execute('BEGIN IMMEDIATE')
         _execute_schema(db, BASE_SCHEMA)
+        calendar_columns = {row['name'] for row in db.execute('PRAGMA table_info(calendar_subscriptions)')}
+        if 'name' not in calendar_columns:
+            db.execute('ALTER TABLE calendar_subscriptions ADD COLUMN name TEXT')
+        if 'status' not in calendar_columns:
+            db.execute("ALTER TABLE calendar_subscriptions ADD COLUMN status TEXT NOT NULL DEFAULT 'connected'")
+        if 'error' not in calendar_columns:
+            db.execute('ALTER TABLE calendar_subscriptions ADD COLUMN error TEXT')
+        db.execute("UPDATE calendar_subscriptions SET status = 'error', error = 'Connection was interrupted. Remove and add this calendar again.' WHERE status = 'connecting'")
         version = db.execute('PRAGMA user_version').fetchone()[0]
         entries = db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'entries'").fetchone()
         legacy = db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notes'").fetchone()

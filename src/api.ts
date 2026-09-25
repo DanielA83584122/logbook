@@ -7,16 +7,17 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+export async function api<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const url = new URL(`/api${path}`, window.location.origin);
   url.searchParams.set('timezone', timezone);
   let response: Response;
   try {
     response = await fetch(url, {
       method, headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
+      body: body ? JSON.stringify(body) : undefined, signal,
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new Error('Couldn’t connect. Your draft is safe on this device; try again in a moment.');
   }
   if (!response.ok) {

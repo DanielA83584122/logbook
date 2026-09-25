@@ -3,11 +3,13 @@ export type OutlineItem = { id: number; kind?: EntryKind | 'note' | 'task'; cont
 export type Note = OutlineItem & { date: string };
 export type Task = OutlineItem;
 export type Session = { id: number; started_at: string; ended_at: string | null; duration_seconds: number; seconds_on_day?: number };
+export type CalendarEvent = { id: string; title: string; start: string; end: string; all_day: boolean; cancelled: boolean; url: string | null };
 export type Day = {
   date: string; notes: Note[]; focused_seconds: number;
   longest_session_seconds: number; session_count: number;
   tasks?: Task[];
   entries?: OutlineItem[];
+  events?: CalendarEvent[];
 };
 export type JournalData = {
   tag?: string | null; tags?: import('./JournalContext').Tag[];
