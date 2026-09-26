@@ -1,6 +1,6 @@
 export type EntryKind = 'notes' | 'tasks';
-/** '' is a plain bullet; 'scratch' folds a note away; 'wait' is something its parent to-do waits on. */
-export type Role = '' | 'scratch' | 'wait';
+/** '' is a plain bullet; 'wait' is something its parent to-do waits on. */
+export type Role = '' | 'wait';
 export type OutlineItem = { id: number; kind?: EntryKind | 'note' | 'task'; content: string; parent_id: number | null; position: number; revision: number; created_at?: string; client_id?: string | null; tags?: string[]; inherited_tags?: string[]; role?: Role; completed_at?: string | null; child_count?: number; completed_child_count?: number };
 export type Note = OutlineItem & { date: string };
 export type Task = OutlineItem;

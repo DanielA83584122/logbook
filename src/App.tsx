@@ -592,13 +592,11 @@ export default function App({ locked = false, load = !locked, onReady, onLoadErr
         <HelpNote>Type <code>#</code> to pick from existing tags. Hover the left margin for the tag list: a tag shows its entries with everything nested beneath. A section row is a heading typed as <code>#</code> and a space, with tags after its title; every bullet below it on that date carries those tags until the next section row. Hover a bullet to see the tags it carries.</HelpNote>
       </HelpSection>
       <HelpSection>
-        <HelpHeading>Scratch and waiting</HelpHeading>
+        <HelpHeading>Waiting</HelpHeading>
         <ShortcutRows>
-          <ShortcutRow><Demo>scratch note</Demo><Keys>// at the start</Keys></ShortcutRow>
-          <ShortcutRow><Demo>toggle scratch on this entry</Demo><Keys>⌘ + shift + .</Keys></ShortcutRow>
           <ShortcutRow><Demo>note what a to-do waits on</Demo><Keys>⌘ + shift + ,</Keys></ShortcutRow>
         </ShortcutRows>
-        <HelpNote>Scratch notes fold into a short dashed strip so they do not clutter the day. Hover the strip to read them; click it to keep them open. For a to-do, rest on its checkbox and choose the dotted mark, or use the shortcut, to add a row for what you are waiting on. The checkbox stays dotted until every waiting row is settled: click its dots when the answer arrives, and hover a waiting row for a follow-up step.</HelpNote>
+        <HelpNote>Rest on a to-do’s checkbox and choose the dotted mark, or use the shortcut, to add a row for what you are waiting on. The checkbox stays dotted until every waiting row is settled: click its dots when the answer arrives, and hover a waiting row for a follow-up step.</HelpNote>
       </HelpSection>
       <HelpSection>
         <HelpHeading>Focus timer</HelpHeading>

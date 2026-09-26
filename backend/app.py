@@ -124,13 +124,11 @@ def authentication_logout():
     return response
 
 
-Role = Literal['', 'scratch', 'wait']
+Role = Literal['', 'wait']
 
 
 def check_role(role, kind, parent_id):
-    """Scratch is a quiet note kept folded away; wait is what a to-do waits on, nested under it."""
-    if role == 'scratch' and kind != 'note':
-        raise HTTPException(422, 'Only journal bullets can be scratch rows.')
+    """Wait is what a to-do waits on, nested under it."""
     if role == 'wait' and (kind != 'task' or parent_id is None):
         raise HTTPException(422, 'A waiting row belongs under a to-do.')
 
@@ -138,7 +136,7 @@ def check_role(role, kind, parent_id):
 class Content(BaseModel):
     content: str = Field(max_length=10000, description="Markdown text only. Tags are separate metadata, not hashtags embedded in content.")
     tags: list[str] | None = Field(default=None, max_length=50, description="Optional list of tag names. Omit when editing to preserve existing tags; use [] to clear them.")
-    role: Role | None = Field(default=None, description="'' for a plain bullet, 'scratch' for a folded scratch note, 'wait' for something a to-do waits on. Omit when editing to keep the current role.")
+    role: Role | None = Field(default=None, description="'' for a plain bullet, 'wait' for something a to-do waits on. Omit when editing to keep the current role.")
     expected_revision: int | None = Field(default=None, ge=1, exclude=True)
 
     @field_validator("tags")
@@ -226,7 +224,7 @@ def move_entry(db, table, item_id, parent_id, after_id, now):
                            (position, sibling['id'], position))
         for entry, _ in tree:
             completed_at = now if target_kind == 'task' and entry['day_id'] is not None else None
-            role = entry['role'] if entry['role'] == ('scratch' if target_kind == 'note' else 'wait') else ''
+            role = entry['role'] if target_kind == 'task' and entry['role'] == 'wait' else ''
             db.execute('UPDATE entries SET kind = ?, completed_at = ?, role = ?, updated_at = ?, revision = revision + 1 WHERE id = ?',
                        (target_kind, completed_at, role, now, entry['id']))
     elif target_kind == 'task' and parent and parent['completed_at']:

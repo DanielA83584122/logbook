@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS calendar_subscriptions (
 );
 """
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 ENTRY_SCHEMA = """
 CREATE TABLE IF NOT EXISTS entries (
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS entries (
     completed_at TEXT,
     client_id TEXT,
     revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
-    role TEXT NOT NULL DEFAULT '' CHECK(role IN ('', 'scratch', 'wait')),
+    role TEXT NOT NULL DEFAULT '' CHECK(role IN ('', 'wait')),
     CHECK(kind != 'note' OR (day_id IS NOT NULL AND completed_at IS NULL)),
     CHECK(kind != 'task' OR day_id IS NULL OR completed_at IS NOT NULL)
 );
@@ -289,10 +289,12 @@ def _upgrade_entries_v8(db):
 
 
 def _upgrade_entries_v12(db):
-    """A role marks scratch notes and the rows a to-do waits on; plain bullets keep ''."""
+    """A role marks the rows a to-do waits on; plain bullets keep ''."""
     columns = {row['name'] for row in db.execute('PRAGMA table_info(entries)')}
     if 'role' not in columns:
-        db.execute("ALTER TABLE entries ADD COLUMN role TEXT NOT NULL DEFAULT '' CHECK(role IN ('', 'scratch', 'wait'))")
+        db.execute("ALTER TABLE entries ADD COLUMN role TEXT NOT NULL DEFAULT '' CHECK(role IN ('', 'wait'))")
+    # Version 12 briefly had folded scratch notes; they are plain bullets again.
+    db.execute("UPDATE entries SET role = '' WHERE role = 'scratch'")
 
 
 def initialize():
@@ -337,6 +339,8 @@ def initialize():
             if 'role' not in columns and {field for field in HISTORY_FIELDS if field != 'role'} <= columns:
                 db.execute('ALTER TABLE document_changes ADD COLUMN role TEXT')
                 columns.add('role')
+            if 'role' in columns:
+                db.execute("UPDATE document_changes SET role = '' WHERE role = 'scratch'")
             required = {'operation_id', 'entity', 'row_id', 'phase', 'present', *HISTORY_FIELDS}
             if not required <= columns:
                 # Pre-unification history refers to two independent ID spaces

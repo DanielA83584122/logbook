@@ -47,12 +47,6 @@ const Item = styled.li<{ $leaving?: boolean; $arriving?: boolean; $shifting?: 'i
   &[data-section-start]::before { top: 8px; }
   &[data-section-end]::before { bottom: 4px; }
   &[data-section-lit]::before { opacity: .45; transition-duration: 200ms; }
-  /* Scratch notes fold to nothing under their strip and unfold while the group is under the pointer or pinned open. */
-  &[data-scratch] { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--t-structure-out) var(--ease-structure), opacity 120ms ease-out; }
-  &[data-scratch] > * { min-height: 0; }
-  &[data-scratch]:not([data-scratch-open]) > * { overflow: hidden; }
-  &[data-scratch][data-scratch-open] { grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows var(--t-structure) var(--ease-structure), opacity 160ms ease-out 60ms; }
-  @media (prefers-reduced-motion: reduce) { &[data-scratch] { transition: none; } }
   ${({ $leaving }) => $leaving && css`animation: ${popOut} 180ms ease-out both; pointer-events: none;`}
   ${({ $arriving }) => $arriving && css`animation: ${slideIn} 280ms cubic-bezier(.2,.7,.3,1) both;`}
   ${({ $shifting }) => $shifting && css`animation: ${$shifting === 'in' ? shiftIn : shiftOut} 220ms cubic-bezier(.2, 0, 0, 1) both;`}
@@ -63,8 +57,6 @@ const Row = styled.div`
   &[data-section] { align-items: center; }
   &[data-section] h1 { font-size: 1em; font-weight: 400; line-height: inherit; }
   &[data-section] > div:has(.tiptap) { flex: 0 1 auto; min-width: min(160px, 60%); }
-  /* Scratch text reads quieter and smaller; the tokens the row's parts already use carry the change. */
-  &[data-role='scratch'] { --ink: var(--muted); --bullet-size: 14px; }
   /* An empty waiting row shows what to write until the first character arrives. */
   > [data-hint-text] { display: none; }
   &:has(.tiptap > p:only-child > br.ProseMirror-trailingBreak:only-child) > [data-hint-text] { display: block; }
@@ -75,19 +67,6 @@ const Hint = styled.span`
   color: var(--muted); opacity: .6; pointer-events: none; white-space: nowrap;
   @media(pointer: coarse) { left: 44px; padding: 10px 0; } @media ${compactViewport} { left: 36px; padding: 6px 0; }
 `;
-// The folded strip that stands for a run of scratch notes: a short dashed line, and a count while it is open.
-const StripItem = styled.li`
-  list-style: none; min-width: 0;
-  &[data-open] > button > span:first-child { border-color: var(--muted); }
-  &[data-pinned] > button > span:first-child { border-top-style: solid; border-color: var(--sage); }
-  &[data-open] > button > span:last-child { opacity: .85; }
-`;
-const StripButton = styled.button`
-  display: flex; align-items: center; gap: 8px; width: 100%; height: 16px; padding: 0 0 0 40px; border: 0; background: transparent; text-align: left; cursor: pointer;
-  @media(pointer: coarse) { height: 28px; padding-left: 44px; } @media ${compactViewport} { padding-left: 36px; }
-`;
-const Dash = styled.span`width: 36px; height: 0; border-top: 1.5px dashed var(--line); transition: border-color var(--t-color) ease-out;`;
-const StripCount = styled.span`font-size: 11px; line-height: 1; color: var(--muted); white-space: nowrap; opacity: 0; transition: opacity var(--t-color) ease-out;`;
 const Hairline = styled.span`
   flex: 1; min-width: 24px; align-self: center; margin-left: 14px; border-top: 1px solid var(--line); opacity: .9;
   @media ${compactViewport} { min-width: 12px; margin-left: 10px; }
@@ -275,13 +254,6 @@ function selectedTextOffsets(element?: HTMLElement, link?: HTMLElement): TextOff
 
 const sorted = (items: OutlineItem[]) => [...items].sort((a, b) => a.position - b.position || a.id - b.id);
 const siblings = (items: OutlineItem[], parentId: number | null) => sorted(items.filter(item => item.parent_id === parentId));
-/** The first row of the run of scratch notes a scratch row sits in, which names the run's strip. */
-function scratchGroupOf(items: OutlineItem[], row: OutlineItem) {
-  const group = siblings(items, row.parent_id);
-  let index = group.findIndex(item => item.id === row.id);
-  while (index > 0 && group[index - 1].role === 'scratch') index--;
-  return String(group[index]?.id ?? row.id);
-}
 const fresh = (items: OutlineItem[], active: boolean, kind: EntryKind, parentId: number | null = null, afterId?: number | null): Draft => ({
   tags: [], savedTags: [], hiddenTag: null, active, mode: 'new', id: null, content: '', saved: '', role: '', savedRole: '',
   clientId: crypto.randomUUID(), requestId: crypto.randomUUID(), revision: null, parentId,
@@ -315,14 +287,6 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   const previewSuppressedAt = useRef(new Map<number, number>());
   const [shifting, setShifting] = useState<'in' | 'out' | null>(null);
   const [litSection, setLitSection] = useState<string | null>(null);
-  const [litScratch, setLitScratch] = useState<string | null>(null);
-  const [pinnedScratch, setPinnedScratch] = useState(new Set<string>());
-  const scratchLeave = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lightScratch = (group: string) => { if (scratchLeave.current) clearTimeout(scratchLeave.current); scratchLeave.current = null; setLitScratch(group); };
-  const unlightScratch = () => {
-    if (scratchLeave.current) clearTimeout(scratchLeave.current);
-    scratchLeave.current = setTimeout(() => { scratchLeave.current = null; if (mounted.current) setLitScratch(null); }, 120);
-  };
   const [, setSelectedAll] = useState(false);
   const selectionActive = useRef(false);
   const surface = useRef<HTMLDivElement>(null);
@@ -362,7 +326,6 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
     if (!target || kind !== 'mixed' && target.kind !== kind) return;
     const item = records.current.find(row => row.id === target.id);
     if (!item) return;
-    if (item.role === 'scratch') setPinnedScratch(previous => new Set([...previous, scratchGroupOf(records.current, item)]));
     const parents: number[] = [];
     let parent = item.parent_id;
     while (parent !== null) { parents.push(parent); parent = records.current.find(row => row.id === parent)?.parent_id ?? null; }
@@ -963,7 +926,7 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
   };
   const renderDraft = (depth: number, attributes: Record<string, unknown> = {}): ReactNode => <DraftItem key="draft" data-depth={depth}
     data-outline-key={key} data-kind={draft.kind} data-item-id={draft.id ?? 'draft'} {...attributes}
-    onPointerLeave={() => { clearPreview(draft.id); if ('data-scratch' in attributes) unlightScratch(); }}
+    onPointerLeave={() => clearPreview(draft.id)}
     $emptyTask={draft.kind === 'tasks' && draft.id === null && blankContent(draft.content) && !draft.tags.length}
     $shifting={shifting}
     $leaving={completing === draft.id && completing !== null}>
@@ -971,12 +934,6 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       onBoundary={boundary} onVerticalBoundary={verticalBoundary} onSelectDocument={selectDocument}
       onChange={(content, tags) => {
         verticalX.current = null;
-        // Two slashes opening a journal bullet, new or existing, fold it into a scratch note; the slashes themselves are not kept.
-        const opened = current.current.role === '' && current.current.kind === 'notes' ? /^\/\/[ \u00a0]?([\s\S]*)$/.exec(content) : null;
-        if (opened) {
-          persist({ ...current.current, content: opened[1], tags, role: 'scratch' });
-          return;
-        }
         const hiddenTag = current.current.hiddenTag ?? (activeTag && current.current.savedTags.includes(activeTag) ? activeTag : null);
         persist({ ...current.current, content, tags: [...new Set([...tags, ...(hiddenTag && (!blankContent(content) || tags.length) ? [hiddenTag] : [])])] });
       }}
@@ -1007,11 +964,6 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
         }
         if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') verticalX.current = null;
         const mod = event.metaKey || event.ctrlKey;
-        if (mod && event.shiftKey && event.code === 'Period' && current.current.kind === 'notes') {
-          event.preventDefault();
-          persist({ ...current.current, role: current.current.role === 'scratch' ? '' : 'scratch' });
-          return;
-        }
         if (mod && event.shiftKey && event.code === 'Comma' && current.current.kind === 'tasks' && !archived) {
           event.preventDefault();
           const owner = current.current.role === 'wait' ? current.current.parentId : current.current.id;
@@ -1125,38 +1077,8 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       });
     }
     const placeOf = (index: number): SectionPlace => places[index] ?? { section: null, start: false, end: false };
-    // Consecutive scratch notes among these siblings fold under one strip, named after the first of them.
-    const scratchGroups: (string | null)[] = [];
-    group.forEach((item, index) => {
-      const scratch = item === null ? draft.kind === 'notes' && draft.role === 'scratch' : entryKind(item) === 'notes' && item.role === 'scratch';
-      const previous = scratchGroups[index - 1] ?? null;
-      scratchGroups.push(scratch ? previous ?? (item === null ? 'draft' : String(item.id)) : null);
-    });
-    const scratchOpen = (groupId: string) => litScratch === groupId || pinnedScratch.has(groupId) ||
-      draft.active && scratchGroups.some((candidate, at) => candidate === groupId && group[at] === null) ||
-      target !== null && scratchGroups.some((candidate, at) => candidate === groupId && group[at]?.id === target.id);
-    const rowAttributes = (index: number) => {
-      const section = sectionAttributes(placeOf(index));
-      const groupId = scratchGroups[index];
-      if (groupId === null) return { ...section, onFocusCapture: () => { section.onFocusCapture?.(); unlightScratch(); } };
-      return { ...section, 'data-scratch': groupId, 'data-scratch-open': scratchOpen(groupId) || undefined,
-        onPointerEnter: () => { section.onPointerEnter?.(); lightScratch(groupId); }, onPointerLeave: unlightScratch,
-        onFocusCapture: () => { section.onFocusCapture?.(); lightScratch(groupId); } };
-    };
-    const strip = (index: number): ReactNode => {
-      const groupId = scratchGroups[index];
-      if (groupId === null || scratchGroups[index - 1] === groupId) return null;
-      const count = scratchGroups.filter(candidate => candidate === groupId).length;
-      const open = scratchOpen(groupId);
-      return <StripItem key={`strip-${groupId}`} data-open={open || undefined} data-pinned={pinnedScratch.has(groupId) || undefined}
-        onPointerEnter={() => lightScratch(groupId)} onPointerLeave={unlightScratch}>
-        <StripButton type="button" aria-expanded={open} aria-label={`${count} scratch ${count === 1 ? 'note' : 'notes'}`}
-          onClick={() => setPinnedScratch(previous => { const next = new Set(previous); if (next.has(groupId)) next.delete(groupId); else next.add(groupId); return next; })}>
-          <Dash aria-hidden="true" /><StripCount aria-hidden="true">scratch · {count}</StripCount></StripButton>
-      </StripItem>;
-    };
-    const content = group.flatMap((item, index) => [strip(index), item === null ? renderDraft(depth, rowAttributes(index)) : <Item key={item.id} data-outline-key={key} data-done={!!item.completed_at && !archived} data-kind={entryKind(item)} data-item-id={item.id} data-depth={depth} $leaving={completing === item.id} {...rowAttributes(index)}
-      onPointerLeave={() => { clearPreview(item.id); if (scratchGroups[index] !== null) unlightScratch(); }}
+    const content = group.map((item, index) => item === null ? renderDraft(depth, sectionAttributes(placeOf(index))) : <Item key={item.id} data-outline-key={key} data-done={!!item.completed_at && !archived} data-kind={entryKind(item)} data-item-id={item.id} data-depth={depth} $leaving={completing === item.id} {...sectionAttributes(placeOf(index))}
+      onPointerLeave={() => clearPreview(item.id)}
       $arriving={entryKind(item) === 'tasks' && (completed.has(item.id) || reopened.has(item.id))}>
       <Row data-section={isSection(item.id, item.content) || undefined} data-role={item.role || undefined}>{renderMarker(item.id, item.content)}<Text $done={!!item.completed_at && !archived} $action={archived && entryKind(item) === 'tasks'} $section={isSection(item.id, item.content)} role="group" tabIndex={0} aria-label={markdownText(item.content) || (item.tags ?? []).filter(tag => tag !== activeTag).map(tag => '#' + tag).join(' ')}
         onClick={event => { if ((archived || !item.completed_at) && !(event.target as HTMLElement).closest('a')) select(item, event.currentTarget); }}
@@ -1168,12 +1090,12 @@ export function Outline({ kind, items, day, composer = false, archived = false, 
       ><MarkdownContent content={item.content} tags={activeTag ? item.tags?.filter(tag => tag !== activeTag) : item.tags} trailing={<>{renderInherited(item)}{renderWaitExtras(item)}</>} /></Text>{isSection(item.id, item.content) && <Hairline aria-hidden="true" />}
       </Row>
       <Branch data-branch-for={item.id} $open={isExpanded(item.id)} aria-hidden={!isExpanded(item.id)}>{renderChildren(item.id, depth + 1)}</Branch>
-    </Item>]);
+    </Item>);
     const parent = parentId === null ? null : items.find(item => item.id === parentId);
     return parentId === null ? <List>{content}</List> : <Children $task={parent ? entryKind(parent) === 'tasks' : draft.kind === 'tasks'}>{content}</Children>;
   };
   return <OutlineSurface ref={surface} data-outline-kind={defaultKind} tabIndex={-1} onPointerDown={() => { verticalX.current = null; selectionActive.current = false; setSelectedAll(false); }}
-  onPointerLeave={() => { setLitSection(null); unlightScratch(); }} onBlurCapture={event => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) { setLitSection(null); unlightScratch(); } }} onCopyCapture={event => {
+  onPointerLeave={() => setLitSection(null)} onBlurCapture={event => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setLitSection(null); }} onCopyCapture={event => {
     if (!selectionActive.current) return;
     event.preventDefault(); event.stopPropagation(); copyDocument(event.clipboardData);
   }} onCutCapture={event => { if (selectionActive.current) { event.preventDefault(); event.stopPropagation(); copyDocument(event.clipboardData); replaceDocument(); } }}

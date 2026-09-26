@@ -1,4 +1,4 @@
-"""Scratch rows (folded notes) and waiting rows (what a to-do waits on)."""
+"""Waiting rows: what a to-do waits on, nested under it."""
 import sqlite3
 
 from .test_app import client  # noqa: F401
@@ -18,17 +18,15 @@ def task(client, content, **extra):
 
 
 def test_roles_are_validated_per_kind_and_kept_on_edit(client):
-    scratch = note(client, 'maybe reuse the old text', role='scratch')
-    assert scratch['role'] == 'scratch'
-    assert client.patch(f"/api/notes/{scratch['id']}", json={'content': 'reuse the old text'}).json()['role'] == 'scratch'
-    assert client.patch(f"/api/notes/{scratch['id']}", json={'content': 'kept', 'role': ''}).json()['role'] == ''
-    assert client.post('/api/tasks', json={'content': 'no', 'role': 'scratch'}).status_code == 422
+    plain = note(client, 'a plain bullet')
+    assert plain['role'] == ''
+    assert client.post('/api/notes', json={'date': '2026-09-16', 'content': 'no', 'role': 'scratch'}).status_code == 422
     assert client.post('/api/tasks', json={'content': 'no', 'role': 'wait'}).status_code == 422
     assert client.post('/api/notes', json={'date': '2026-09-16', 'content': 'no', 'role': 'wait'}).status_code == 422
-    assert client.post('/api/notes', json={'date': '2026-09-16', 'content': 'no', 'role': 'later'}).status_code == 422
     parent = task(client, 'Fence quote')
     waiting = task(client, "the neighbour's answer", parent_id=parent['id'], role='wait')
     assert waiting['role'] == 'wait'
+    assert client.patch(f"/api/tasks/{waiting['id']}", json={'content': 'their answer'}).json()['role'] == 'wait'
     rows = {row['id']: row for row in client.get('/api/journal').json()['tasks']}
     assert rows[parent['id']]['child_count'] == 0
     assert rows[waiting['id']]['role'] == 'wait'
@@ -68,20 +66,17 @@ def test_waiting_rows_hold_a_parent_open_and_settle_when_it_finishes(client):
     assert {row['id'] for row in day['tasks']} >= {parent['id'], second['id']}
 
 
-def test_scratch_rows_are_undoable_and_survive_a_migration(client, tmp_path, monkeypatch):
-    created = batch(client, [{'kind': 'notes', 'date': '2026-09-16', 'content': 'budget line 4', 'role': 'scratch', 'client_id': 'scratch-1'}])
+def test_waiting_rows_are_undoable_and_survive_a_migration(client, tmp_path, monkeypatch):
+    parent = task(client, 'Fence quote')
+    created = batch(client, [{'kind': 'tasks', 'content': 'the second quote', 'role': 'wait', 'parent_id': parent['id'], 'client_id': 'wait-1'}])
     row = created['items'][0]
-    assert row['role'] == 'scratch'
+    assert row['role'] == 'wait'
     history(client, created['operation_id'])
-    assert client.get('/api/export').json()['notes'] == []
+    assert [r['content'] for r in client.get('/api/export').json()['tasks']] == ['Fence quote']
     history(client, created['operation_id'], redo=True)
-    assert client.get('/api/export').json()['notes'][0]['role'] == 'scratch'
-    edited = batch(client, [{'kind': 'notes', 'id': row['id'], 'content': 'budget line 4', 'role': ''}])
-    assert edited['items'][0]['role'] == ''
-    history(client, edited['operation_id'])
-    assert client.get('/api/export').json()['notes'][0]['role'] == 'scratch'
+    assert client.get('/api/export').json()['tasks'][1]['role'] == 'wait'
     agent = client.get('/api/agent/journal', params={'start': '2026-09-16', 'end': '2026-09-16'}).json()
-    assert agent['days'][0]['bullets'][0]['role'] == 'scratch'
+    assert agent['tasks'][0]['children'][0]['role'] == 'wait'
 
     # A database from before roles gains the columns without losing its history.
     from backend.db import db_path, initialize
@@ -93,8 +88,16 @@ def test_scratch_rows_are_undoable_and_survive_a_migration(client, tmp_path, mon
     initialize()
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 12
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 13
         assert db.execute("SELECT role FROM entries WHERE id = ?", (row['id'],)).fetchone()['role'] == ''
         assert db.execute('SELECT COUNT(*) FROM document_changes').fetchone()[0] > 0
-        assert db.execute('SELECT role FROM document_changes LIMIT 1').fetchone()['role'] is None
-    assert client.get('/api/export').json()['notes'][0]['role'] == ''
+    # Version 12 briefly allowed folded scratch notes; on upgrade they are plain bullets again.
+    with sqlite3.connect(path) as db:
+        db.execute('ALTER TABLE entries DROP COLUMN role')
+        db.execute("ALTER TABLE entries ADD COLUMN role TEXT NOT NULL DEFAULT '' CHECK(role IN ('', 'scratch', 'wait'))")
+        db.execute("UPDATE entries SET role = 'scratch' WHERE id = ?", (parent['id'],))
+        db.execute("UPDATE entries SET role = 'wait' WHERE id = ?", (row['id'],))
+        db.execute('PRAGMA user_version = 12')
+    initialize()
+    tasks = {r['id']: r for r in client.get('/api/export').json()['tasks']}
+    assert tasks[parent['id']]['role'] == '' and tasks[row['id']]['role'] == 'wait'

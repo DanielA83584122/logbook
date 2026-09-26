@@ -8,51 +8,6 @@ type Row = { id: number; content: string; role: string; parent_id: number | null
 const exported = async (request: Parameters<Parameters<typeof test>[2]>[0]['request']) =>
   (await (await request.get('/api/export')).json()).entries as Row[];
 
-test('two slashes fold a journal bullet into a scratch strip that opens on hover and pins on click', async ({ page, request }) => {
-  await page.goto('/');
-  const composer = page.getByRole('textbox', { name: 'New journal bullet', exact: true });
-  await composer.pressSequentially('wrote the intro'); await composer.press('Enter'); await expect(composer).toHaveText('');
-  await composer.pressSequentially('//');
-  await expect(composer).toHaveText('');
-  await composer.pressSequentially('maybe reuse the old text'); await composer.press('Enter'); await expect(composer).toHaveText('');
-  await composer.pressSequentially('ask Sam about line 4'); await composer.press('Enter'); await expect(composer).toHaveText('');
-  await composer.press('Meta+Shift+Period');
-  await composer.pressSequentially('call Mira at 3'); await composer.press('Enter'); await expect(composer).toHaveText('');
-  await expect(page.getByRole('group', { name: 'call Mira at 3', exact: true })).toBeVisible();
-
-  const rows = await exported(request);
-  expect(rows.map(row => [row.content, row.role])).toEqual([
-    ['wrote the intro', ''], ['maybe reuse the old text', 'scratch'], ['ask Sam about line 4', 'scratch'], ['call Mira at 3', ''],
-  ]);
-  const strip = page.getByRole('button', { name: '2 scratch notes', exact: true });
-  await expect(strip).toBeVisible();
-  await expect(strip).toHaveAttribute('aria-expanded', 'false');
-  const scratch = page.getByRole('group', { name: 'ask Sam about line 4', exact: true });
-  await expect(scratch.locator('xpath=ancestor::li[1]')).not.toHaveAttribute('data-scratch-open');
-  await strip.hover();
-  await expect(strip).toHaveAttribute('aria-expanded', 'true');
-  await expect(scratch.locator('xpath=ancestor::li[1]')).toHaveAttribute('data-scratch-open', 'true');
-  await expect(scratch).toHaveCSS('font-size', '14px');
-  await strip.click();
-  await page.mouse.move(640, 950);
-  await expect(strip).toHaveAttribute('aria-expanded', 'true');
-  await strip.click();
-  await page.mouse.move(640, 950);
-  await expect(strip).toHaveAttribute('aria-expanded', 'false');
-
-  // The shortcut alone, on a saved row, is a change worth saving.
-  await page.getByRole('group', { name: 'call Mira at 3', exact: true }).click();
-  const editor = page.getByRole('textbox', { name: 'Edit note', exact: true });
-  await editor.press('Meta+Shift+Period');
-  await editor.press('Enter');
-  await expect.poll(async () => (await exported(request)).find(row => row.content === 'call Mira at 3')!.role).toBe('scratch');
-  // Enter continued with another scratch note; leaving it empty drops it. The toggled row follows the two
-  // earlier scratch notes, so all three now fold under one strip.
-  await page.getByRole('textbox', { name: 'New journal bullet', exact: true }).evaluate(element => (element as HTMLElement).blur());
-  await expect(page.getByRole('button', { name: '3 scratch notes', exact: true })).toBeVisible();
-  await expect(strip).toHaveCount(0);
-});
-
 test('a to-do can say what it waits on, stays dotted until that settles, and takes a follow-up step', async ({ page, request }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Add to-do', exact: true }).click();
@@ -98,7 +53,7 @@ test('the cheat sheet opens with the question-mark shortcut and explains the fea
   await page.keyboard.press('Meta+Shift+?');
   const sheet = page.getByRole('dialog', { name: 'Keyboard shortcuts and how things work', exact: true });
   await expect(sheet).toBeVisible();
-  await expect(sheet.getByRole('heading', { name: 'Scratch and waiting' })).toBeVisible();
+  await expect(sheet.getByRole('heading', { name: 'Waiting' })).toBeVisible();
   await expect(sheet.getByText('start a section', { exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(sheet).toBeHidden();

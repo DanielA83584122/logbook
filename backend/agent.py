@@ -44,7 +44,7 @@ class AgentBullet(BaseModel):
     parent_id: int | None
     position: int
     content_markdown: str = Field(description="Original stored Markdown, without tag metadata. A root note starting with `# ` is a section row.")
-    role: Literal['', 'scratch', 'wait'] = Field('', description="'' for a plain bullet; 'scratch' for a note kept folded away; 'wait' for something its parent to-do waits on, settled when completed_at is set.")
+    role: Literal['', 'wait'] = Field('', description="'' for a plain bullet; 'wait' for something its parent to-do waits on, settled when completed_at is set.")
     tags: list[str] = Field(description="Tags stored on this bullet.")
     inherited_tags: list[str] = Field(default_factory=list, description="Tags this bullet carries from the section row above it on its date, or from its ancestors, without holding them itself.")
     links: list[AgentLink]
