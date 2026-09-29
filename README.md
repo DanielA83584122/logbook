@@ -1,5 +1,9 @@
 # [logbook](https://github.com/divyavenn/logbook)
 
+
+https://github.com/user-attachments/assets/3bee8db2-0c48-4f49-9b2f-9e3c37604e14
+
+
 This is a fork of [divyavenn/logbook](https://github.com/divyavenn/logbook). The guide below is the upstream README, unchanged. This fork adds:
 
 - a Mac app in `macos/Logbook.swift` that opens Logbook from Spotlight and only talks to `127.0.0.1`. Build and install it with `sh macos/build.sh [port]` after creating `.venv` and running `npm run build`; it lands in `~/Applications/Logbook.app` with this checkout's path and port in its `Info.plist`
