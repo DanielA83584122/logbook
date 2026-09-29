@@ -1,0 +1,60 @@
+{
+  "name": "rec-02-check-off-todo",
+  "duration": 13.471,
+  "marks": [
+    {
+      "t": 2.103,
+      "label": "leaf-click"
+    },
+    {
+      "t": 4.419,
+      "label": "leaf-logged"
+    },
+    {
+      "t": 7.054,
+      "label": "expanded"
+    },
+    {
+      "t": 7.92,
+      "label": "tree-click"
+    },
+    {
+      "t": 10.999,
+      "label": "tree-open"
+    },
+    {
+      "t": 12.97,
+      "label": "done"
+    }
+  ],
+  "events": [
+    {
+      "t": 2.208,
+      "type": "click",
+      "x": 372,
+      "y": 190,
+      "label": "complete book flights to lisbon"
+    },
+    {
+      "t": 5.446,
+      "type": "click",
+      "x": 372,
+      "y": 106,
+      "label": "expand ship onboarding v2"
+    },
+    {
+      "t": 8.013,
+      "type": "click",
+      "x": 400,
+      "y": 190,
+      "label": "complete final qa pass"
+    },
+    {
+      "t": 10.999,
+      "type": "click",
+      "x": 372,
+      "y": 367,
+      "label": "expand the logged tree"
+    }
+  ]
+}

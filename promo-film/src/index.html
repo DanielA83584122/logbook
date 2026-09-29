@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>logbook — promo</title>
+<style>
+  @font-face { font-family: 'Inter'; src: url(../assets/fonts/inter-latin-wght-normal.woff2) format('woff2'); font-weight: 100 900; }
+  @font-face { font-family: 'Serif'; src: url(../assets/fonts/instrument-serif-latin-400-italic.woff2) format('woff2'); font-style: italic; }
+  @font-face { font-family: 'Serif'; src: url(../assets/fonts/instrument-serif-latin-400-normal.woff2) format('woff2'); font-style: normal; }
+  @font-face { font-family: 'Mono'; src: url(../assets/fonts/jetbrains-mono-latin-400-normal.woff2) format('woff2'); font-weight: 400; }
+  @font-face { font-family: 'Mono'; src: url(../assets/fonts/jetbrains-mono-latin-700-normal.woff2) format('woff2'); font-weight: 700; }
+
+  /* The whole palette. */
+  :root { --navy: #011627; --deep: #000d18; --paper: #f1efea; --teal: #75d1c4; --slate: #8ca0b0; }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #stage { position: relative; overflow: hidden; background: var(--navy); color: var(--paper);
+    font-family: 'Inter', sans-serif; font-feature-settings: 'ss01', 'cv11'; -webkit-font-smoothing: antialiased; }
+  .layer { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+  .abs { position: absolute; left: 0; top: 0; }
+  .scene { overflow: hidden; }
+
+  /* Kinetic type */
+  .kt { position: absolute; left: 0; top: 0; white-space: nowrap; font-weight: 800; letter-spacing: -0.045em; line-height: .92; }
+  .kt .w { display: inline-block; overflow: hidden; vertical-align: top; padding: .1em .03em .14em; margin: -.1em -.01em -.14em; }
+  .kt .w.serif { padding: .1em .16em .16em .05em; margin: -.1em -.13em -.16em -.05em; }
+  .kt .w > span { display: inline-block; will-change: transform; }
+  .serif { font-family: 'Serif', serif; font-style: italic; font-weight: 400; letter-spacing: -0.02em; }
+  .mono { font-family: 'Mono', monospace; font-weight: 400; letter-spacing: .06em; text-transform: uppercase; }
+
+  /* Footage */
+  .view { position: absolute; overflow: hidden; background: #eeede8; }
+  .view > .cam { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+  .view > .cam > img { display: block; }
+  .view > .ov { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+
+  /* Browser window */
+  .browser { position: absolute; border-radius: 16px; overflow: hidden; background: #e8e6e0;
+    box-shadow: 0 50px 120px -20px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.10), 0 0 80px -30px rgba(117,209,196,.35); }
+  .browser .bar { position: absolute; left: 0; top: 0; right: 0; display: flex; align-items: center; gap: 9px; padding: 0 18px; }
+  .browser .dot { width: 13px; height: 13px; border-radius: 50%; }
+  .browser .title { position: absolute; left: 0; right: 0; text-align: center; font: 500 14px 'Inter'; letter-spacing: -.01em; }
+
+  /* Phone */
+  .phone { position: absolute; background: linear-gradient(145deg, #2a3440, #0b1118 40%, #1b232c); box-shadow: 0 60px 120px -20px rgba(0,0,0,.7), inset 0 0 0 2px rgba(255,255,255,.12); }
+  .phone .glass { position: absolute; overflow: hidden; background: #011627; }
+  .phone .island { position: absolute; background: #000; border-radius: 999px; }
+
+  /* HUD */
+  .hud-label { position: absolute; font-family: 'Mono', monospace; font-size: 15px; letter-spacing: .12em; text-transform: uppercase; color: var(--paper); white-space: nowrap; }
+  .pill { position: absolute; border: 2px solid rgba(241,239,234,.55); border-radius: 999px; padding: 10px 22px 12px; font: 500 30px 'Inter'; letter-spacing: -.01em; color: var(--paper); white-space: nowrap; }
+  .key { position: absolute; display: flex; align-items: center; justify-content: center; border-radius: 22px;
+    background: linear-gradient(180deg, #f7f5f0, #d9d6cf); color: #011627; font: 600 84px 'Inter';
+    box-shadow: 0 14px 0 #9d9a93, 0 30px 60px rgba(0,0,0,.45), inset 0 2px 0 #fff; }
+  .code { position: absolute; border-radius: 18px; overflow: hidden; background: rgba(0,13,24,.92);
+    box-shadow: 0 0 0 1px rgba(117,209,196,.35), 0 40px 120px rgba(0,0,0,.6); }
+  .code pre { margin: 0; font: 400 19px/1.55 'Mono', monospace; color: #b9c7d2; white-space: pre; }
+  .code .h { color: var(--teal); font-weight: 700; }
+  .code .k { color: #f1efea; }
+  .code .d { color: #5d7386; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <!-- chromatic split for glitch hits -->
+    <filter id="rgb" x="-2%" y="-2%" width="104%" height="104%" color-interpolation-filters="sRGB">
+      <feColorMatrix in="SourceGraphic" type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" result="r"/>
+      <feOffset id="rgb-r" in="r" dx="0" dy="0" result="ro"/>
+      <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" result="g"/>
+      <feColorMatrix in="SourceGraphic" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" result="b"/>
+      <feOffset id="rgb-b" in="b" dx="0" dy="0" result="bo"/>
+      <feBlend in="ro" in2="g" mode="screen" result="rg"/>
+      <feBlend in="rg" in2="bo" mode="screen"/>
+    </filter>
+    <!-- directional motion blur for whips -->
+    <filter id="mblur" x="-5%" y="-10%" width="110%" height="120%"><feGaussianBlur id="mblur-g" stdDeviation="0 0"/></filter>
+  </defs>
+</svg>
+<script src="../assets/data.js"></script>
+<script src="engine.js"></script>
+<script src="scenes.js"></script>
+</body>
+</html>

@@ -1,0 +1,103 @@
+{
+  "name": "rec-05-search-and-stats",
+  "duration": 13.289,
+  "marks": [
+    {
+      "t": 1.043,
+      "label": "search-open"
+    },
+    {
+      "t": 2.976,
+      "label": "search-results"
+    },
+    {
+      "t": 3.436,
+      "label": "search-jump"
+    },
+    {
+      "t": 4.939,
+      "label": "search-landed"
+    },
+    {
+      "t": 6.931,
+      "label": "stats-click"
+    },
+    {
+      "t": 8.133,
+      "label": "stats-7"
+    },
+    {
+      "t": 9.112,
+      "label": "stats-30"
+    },
+    {
+      "t": 10.414,
+      "label": "stats-30-open"
+    },
+    {
+      "t": 11.028,
+      "label": "cheatsheet"
+    },
+    {
+      "t": 12.174,
+      "label": "cheatsheet-open"
+    }
+  ],
+  "events": [
+    {
+      "t": 1.057,
+      "type": "key",
+      "key": "Meta+f",
+      "label": "⌘F"
+    },
+    {
+      "t": 1.609,
+      "type": "type",
+      "text": "lisbon"
+    },
+    {
+      "t": 2.981,
+      "type": "key",
+      "key": "ArrowDown",
+      "label": "↓"
+    },
+    {
+      "t": 3.436,
+      "type": "key",
+      "key": "Enter",
+      "label": "open result"
+    },
+    {
+      "t": 7.031,
+      "type": "click",
+      "x": 109,
+      "y": 272,
+      "label": "statistics"
+    },
+    {
+      "t": 9.112,
+      "type": "click",
+      "x": 846,
+      "y": 216,
+      "label": "30 days"
+    },
+    {
+      "t": 10.426,
+      "type": "key",
+      "key": "Escape",
+      "label": null
+    },
+    {
+      "t": 11.071,
+      "type": "key",
+      "key": "Meta+Shift+Slash",
+      "label": "⌘?"
+    },
+    {
+      "t": 12.787,
+      "type": "key",
+      "key": "Escape",
+      "label": null
+    }
+  ]
+}

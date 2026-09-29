@@ -13,3 +13,9 @@ playwright-report/
 .env.*
 !.env.example
 *.tsbuildinfo
+
+# promo film: renders, generated data and review stills stay local
+promo-film/out/
+promo-film/assets/data.js
+promo-capture/clips/
+promo-capture/screen-*.png

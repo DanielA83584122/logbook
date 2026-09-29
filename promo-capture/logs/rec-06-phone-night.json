@@ -1,0 +1,91 @@
+{
+  "name": "rec-06-phone-night",
+  "duration": 11.619,
+  "marks": [
+    {
+      "t": 1.326,
+      "label": "ready"
+    },
+    {
+      "t": 1.326,
+      "label": "timer-start"
+    },
+    {
+      "t": 2.868,
+      "label": "check"
+    },
+    {
+      "t": 4.494,
+      "label": "checked"
+    },
+    {
+      "t": 4.92,
+      "label": "type"
+    },
+    {
+      "t": 10.199,
+      "label": "typed"
+    },
+    {
+      "t": 10.199,
+      "label": "timer-stop"
+    }
+  ],
+  "events": [
+    {
+      "t": 1.366,
+      "type": "tap",
+      "x": 356,
+      "y": 34,
+      "label": "start focus timer"
+    },
+    {
+      "t": 2.892,
+      "type": "tap",
+      "x": 42,
+      "y": 178,
+      "label": "complete book flights to lisbon"
+    },
+    {
+      "t": 4.514,
+      "type": "tap",
+      "x": 84,
+      "y": 408,
+      "label": "blank space under today"
+    },
+    {
+      "t": 4.92,
+      "type": "type",
+      "text": "gate b32, boarding at 18:40 "
+    },
+    {
+      "t": 7.417,
+      "type": "type",
+      "text": "#"
+    },
+    {
+      "t": 7.761,
+      "type": "type",
+      "text": "tr"
+    },
+    {
+      "t": 8.493,
+      "type": "key",
+      "key": "Enter",
+      "label": "accept #travel"
+    },
+    {
+      "t": 8.952,
+      "type": "key",
+      "key": "Enter",
+      "label": "save bullet"
+    },
+    {
+      "t": 10.217,
+      "type": "tap",
+      "x": 356,
+      "y": 34,
+      "label": "stop focus timer"
+    }
+  ]
+}

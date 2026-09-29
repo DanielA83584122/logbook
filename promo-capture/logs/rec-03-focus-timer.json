@@ -1,0 +1,81 @@
+{
+  "name": "rec-03-focus-timer",
+  "duration": 17.206,
+  "marks": [
+    {
+      "t": 2.073,
+      "label": "timer-start"
+    },
+    {
+      "t": 4.522,
+      "label": "timer-running"
+    },
+    {
+      "t": 5.548,
+      "label": "type-focused"
+    },
+    {
+      "t": 11.524,
+      "label": "typed-focused"
+    },
+    {
+      "t": 12.656,
+      "label": "timer-stop"
+    },
+    {
+      "t": 14.784,
+      "label": "sessions"
+    },
+    {
+      "t": 15.687,
+      "label": "sessions-open"
+    }
+  ],
+  "events": [
+    {
+      "t": 2.181,
+      "type": "click",
+      "x": 1234,
+      "y": 42,
+      "label": "start focus timer"
+    },
+    {
+      "t": 5.295,
+      "type": "click",
+      "x": 412,
+      "y": 395,
+      "label": "blank space under today"
+    },
+    {
+      "t": 5.548,
+      "type": "type",
+      "text": "drafting the launch post, phone in the other room"
+    },
+    {
+      "t": 9.985,
+      "type": "key",
+      "key": "Enter",
+      "label": "save bullet"
+    },
+    {
+      "t": 12.755,
+      "type": "click",
+      "x": 1234,
+      "y": 42,
+      "label": "stop focus timer"
+    },
+    {
+      "t": 14.784,
+      "type": "click",
+      "x": 470,
+      "y": 330,
+      "label": "open today’s sessions"
+    },
+    {
+      "t": 16.605,
+      "type": "key",
+      "key": "Escape",
+      "label": null
+    }
+  ]
+}
