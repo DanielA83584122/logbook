@@ -1,0 +1,61 @@
+{
+  "name": "rec-04-tags-and-night",
+  "duration": 15.515,
+  "marks": [
+    {
+      "t": 2.125,
+      "label": "sidebar"
+    },
+    {
+      "t": 2.378,
+      "label": "sidebar-open"
+    },
+    {
+      "t": 3.844,
+      "label": "launch-click"
+    },
+    {
+      "t": 5.946,
+      "label": "filtered"
+    },
+    {
+      "t": 11.095,
+      "label": "night-click"
+    },
+    {
+      "t": 11.897,
+      "label": "night-sidebar"
+    },
+    {
+      "t": 12.693,
+      "label": "all"
+    },
+    {
+      "t": 14.912,
+      "label": "night"
+    }
+  ],
+  "events": [
+    {
+      "t": 3.958,
+      "type": "click",
+      "x": 154,
+      "y": 168,
+      "label": "filter #launch"
+    },
+    {
+      "t": 11.195,
+      "type": "click",
+      "x": 165,
+      "y": 272,
+      "label": "night mode"
+    },
+    {
+      "t": 12.693,
+      "type": "click",
+      "x": 59,
+      "y": 124,
+      "label": "all entries"
+    }
+  ]
+}

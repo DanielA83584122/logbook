@@ -1,0 +1,116 @@
+{
+  "name": "rec-01-write-and-tag",
+  "duration": 16.297,
+  "marks": [
+    {
+      "t": 1.229,
+      "label": "ready"
+    },
+    {
+      "t": 1.229,
+      "label": "type-note"
+    },
+    {
+      "t": 3.746,
+      "label": "tag-hash"
+    },
+    {
+      "t": 4.967,
+      "label": "tag-suggest"
+    },
+    {
+      "t": 5.673,
+      "label": "tag-chip"
+    },
+    {
+      "t": 6.355,
+      "label": "section-start"
+    },
+    {
+      "t": 9.375,
+      "label": "section-chip"
+    },
+    {
+      "t": 15.396,
+      "label": "inherited-hover"
+    }
+  ],
+  "events": [
+    {
+      "t": 1.23,
+      "type": "type",
+      "text": "shipped the new pricing page "
+    },
+    {
+      "t": 3.747,
+      "type": "type",
+      "text": "#"
+    },
+    {
+      "t": 4.158,
+      "type": "type",
+      "text": "la"
+    },
+    {
+      "t": 4.971,
+      "type": "key",
+      "key": "Enter",
+      "label": "accept #launch"
+    },
+    {
+      "t": 5.678,
+      "type": "key",
+      "key": "Enter",
+      "label": "save bullet"
+    },
+    {
+      "t": 6.355,
+      "type": "type",
+      "text": "# "
+    },
+    {
+      "t": 6.99,
+      "type": "type",
+      "text": "afternoon "
+    },
+    {
+      "t": 7.768,
+      "type": "type",
+      "text": "#"
+    },
+    {
+      "t": 8.112,
+      "type": "type",
+      "text": "de"
+    },
+    {
+      "t": 8.824,
+      "type": "key",
+      "key": "Enter",
+      "label": "accept #design"
+    },
+    {
+      "t": 9.378,
+      "type": "key",
+      "key": "Enter",
+      "label": "save section"
+    },
+    {
+      "t": 9.864,
+      "type": "type",
+      "text": "onboarding copy: shorter, warmer"
+    },
+    {
+      "t": 13.001,
+      "type": "key",
+      "key": "Enter",
+      "label": "save bullet"
+    },
+    {
+      "t": 13.55,
+      "type": "key",
+      "key": "Escape",
+      "label": null
+    }
+  ]
+}
